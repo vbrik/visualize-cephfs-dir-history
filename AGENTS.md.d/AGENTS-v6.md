@@ -9,3 +9,4 @@
 - Never push git commits
 - Use best practices of the programming language you are using
 - Follow project-specific instructions in files in `AGENTS.md.d` directory, if it exists.
+- If `<REPO_ROOT>/AGENT-LESSONS-LEARNED.md` exists, read its instructions too.
