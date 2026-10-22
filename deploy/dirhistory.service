@@ -1,6 +1,7 @@
 # Regenerates the website's data files; started by dirhistory.timer.
 # Adjust paths and the database URL. The password goes in the PGPASSFILE,
-# not in TRACKDIR_DB.
+# not in TRACKDIR_DB. The dirhistory user, the PGPASSFILE (mode 600) and the
+# ReadWritePaths directory must exist first; see README.md, "Deploy".
 [Unit]
 Description=Regenerate CephFS directory history data files
 After=network-online.target

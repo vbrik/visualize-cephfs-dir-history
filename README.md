@@ -50,11 +50,23 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 ## Deploy
 
 1. Install as above into `/opt/dirhistory`.
-2. Copy [deploy/dirhistory.service](deploy/dirhistory.service) and
+2. Create the service's account, its data directory and its password file.
+   The data directory must exist before the service first starts: systemd
+   fails a unit whose `ReadWritePaths` is missing, and `ProtectSystem=strict`
+   keeps the rest of `/opt` read-only. libpq ignores a password file that
+   group or others can read.
+
+       useradd --system --no-create-home --shell /usr/sbin/nologin dirhistory
+       install -d -o dirhistory -g dirhistory -m 755 /opt/dirhistory/web/data
+       install -d -m 755 /etc/dirhistory
+       install -o dirhistory -g dirhistory -m 600 /dev/null /etc/dirhistory/pgpass
+       # then add a line to it: db.example.org:5432:trackdir:trackdir:PASSWORD
+
+3. Copy [deploy/dirhistory.service](deploy/dirhistory.service) and
    [deploy/dirhistory.timer](deploy/dirhistory.timer) to
    `/etc/systemd/system/`, set the database URL and password file, and run
    `systemctl enable --now dirhistory.timer`. It regenerates the data hourly.
-3. Serve `/opt/dirhistory/web` with any web server; see
+4. Serve `/opt/dirhistory/web` with any web server; see
    [deploy/nginx.conf.example](deploy/nginx.conf.example). Put access
    control in front of it: directory names and sizes are internal data.
 
