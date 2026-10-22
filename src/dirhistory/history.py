@@ -240,7 +240,9 @@ def _replay(
             row = next(rows, None)
         if (i := point_at.get(sample.id)) is not None:
             for path, value in current.items():
-                series.setdefault(path, [None] * len(points))[i] = value
+                if (s := series.get(path)) is None:
+                    s = series[path] = [None] * len(points)
+                s[i] = value
     if row is not None:
         raise ValueError(f"a row of sample {row[0]} is out of sample order")
     return series
