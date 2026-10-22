@@ -88,7 +88,8 @@ of 1 w that does. The generator refuses a `--recent` that alone needs
 ## Data files
 
 `web/data/trees.json` lists the trees:
-`[{id, label, detail, file, last_sample, units}]`.
+`[{id, label, detail, file, last_sample, generated, units}]`; `generated`
+is the tree file's, so the page refetches a file only when it changed.
 
 `web/data/tree-<id>.json`:
 

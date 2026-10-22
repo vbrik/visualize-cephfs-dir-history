@@ -96,12 +96,13 @@ def test_write_json_is_world_readable_and_leaves_no_temp_files(tmp_path):
 
 
 def test_index_entry():
-    assert index_entry(TREE, HISTORY) == {
+    assert index_entry(TREE, HISTORY, T2) == {
         "id": 2,
         "label": "/npx/ana",
         "detail": "cluster ad1bf53c, default filesystem, depth 5",
         "file": "tree-2.json",
         "last_sample": "2026-10-21T20:00:00Z",
+        "generated": "2026-10-21T20:00:00Z",
         "units": 2,
     }
 

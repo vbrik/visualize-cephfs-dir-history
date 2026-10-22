@@ -91,7 +91,7 @@ async function fetchJson(file) {
 async function load(treeId) {
   const entry = index.find((t) => t.id === treeId);
   if (!entry) throw new Error(`no tree ${treeId} in data/trees.json`);
-  if (data?.tree.id === treeId && data.times.at(-1) === entry.last_sample) return null;
+  if (data?.tree.id === treeId && data.generated === entry.generated) return null;
   const fresh = await fetchJson(entry.file);
   if (data?.tree.id !== treeId || range === null || range[0] === 0) {
     return { data: fresh, range: [0, fresh.times.length - 1] };

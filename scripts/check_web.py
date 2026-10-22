@@ -154,6 +154,30 @@ def check_slow_index(page: Page, base: str) -> None:
     assert page.inner_text("#crumbs") == "/fixture2", "tree 2 not shown"
 
 
+def refresh_with(page: Page, index: list, tree: dict) -> None:
+    """Serve INDEX and tree 1 as TREE, and let the page's refresh fetch them;
+    the page must have installed page.clock before loading."""
+    page.route("**/data/trees.json", lambda r: r.fulfill(json=index))
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    page.clock.fast_forward("10:00")  # main.REFRESH_MS
+    page.wait_for_timeout(SETTLE_MS)
+
+
+def check_refresh_after_regeneration(page: Page, base: str) -> None:
+    """A regenerated tree file is fetched even with no new sample."""
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    tree["threshold"] = 2**40  # e.g. a rerun with another --threshold
+    tree["generated"] = "2026-10-01T04:00:00Z"
+    index = json.loads((FIXTURE / "trees.json").read_text())
+    index[0]["generated"] = tree["generated"]
+
+    page.clock.install()
+    page.goto(f"{base}#tree=1")
+    page.wait_for_timeout(SETTLE_MS)
+    refresh_with(page, index, tree)
+    assert "≥ 1.00 TiB" in page.inner_text("#summary"), "regenerated file not fetched"
+
+
 def check_refresh_keeps_zoom(page: Page, base: str) -> None:
     """A zoomed start keeps its date when a refresh drops older points."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
@@ -166,6 +190,7 @@ def check_refresh_keeps_zoom(page: Page, base: str) -> None:
     ]:
         series[:] = [*series[1:], series[-1]]
     index = json.loads((FIXTURE / "trees.json").read_text())
+    tree["generated"] = index[0]["generated"] = "2026-10-01T04:00:00Z"
     index[0]["last_sample"] = later
 
     page.clock.install()
@@ -177,10 +202,7 @@ def check_refresh_keeps_zoom(page: Page, base: str) -> None:
         [times[1], times[-1]],
     )
     page.wait_for_timeout(SETTLE_MS)
-    page.route("**/data/trees.json", lambda r: r.fulfill(json=index))
-    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
-    page.clock.fast_forward("10:00")  # main.REFRESH_MS
-    page.wait_for_timeout(SETTLE_MS)
+    refresh_with(page, index, tree)
     shown = page.inner_text("#table-range")
     start, end = page.evaluate(
         "(ts) => ts.map((t) => new Date(t).toLocaleString())", [times[1], later]
@@ -248,6 +270,7 @@ def main() -> int:
             check_fixture,
             check_slow_tree,
             check_slow_index,
+            check_refresh_after_regeneration,
             check_refresh_keeps_zoom,
         ):
             run_checks(

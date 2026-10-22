@@ -135,8 +135,8 @@ def tree_document(
     }
 
 
-def index_entry(tree: Tree, history: TreeHistory) -> dict:
-    """Return the trees.json entry of a tree."""
+def index_entry(tree: Tree, history: TreeHistory, generated: datetime) -> dict:
+    """Return the trees.json entry of a tree whose file was written at GENERATED."""
     fs = f"filesystem {tree.fs_name}" if tree.fs_name else "default filesystem"
     return {
         "id": tree.id,
@@ -144,6 +144,7 @@ def index_entry(tree: Tree, history: TreeHistory) -> dict:
         "detail": f"cluster {tree.cluster_fsid[:8]}, {fs}, depth {tree.max_depth}",
         "file": f"tree-{tree.id}.json",
         "last_sample": iso(history.times[-1]),
+        "generated": iso(generated),
         "units": len(history.units),
     }
 
@@ -353,7 +354,7 @@ def run(args: argparse.Namespace) -> int:
             history, errors = result
             path = args.out / f"tree-{tree.id}.json"
             write_json(path, tree_document(tree, history, args.threshold, generated))
-            entries.append(index_entry(tree, history))
+            entries.append(index_entry(tree, history, generated))
             print(path)
             if errors:
                 _note(
