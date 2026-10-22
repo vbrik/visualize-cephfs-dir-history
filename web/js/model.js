@@ -185,20 +185,19 @@ function bandLabel(g, data, inPath) {
   return `${rel}/ (${n} unit${n === 1 ? "" : "s"})`;
 }
 
-/** Index of the time point nearest to MS. */
-export function nearestIndex(times, ms) {
-  let best = 0;
-  times.forEach((t, i) => {
-    if (Math.abs(Date.parse(t) - ms) < Math.abs(Date.parse(times[best]) - ms)) best = i;
-  });
-  return best;
-}
-
-/** Index of the layer (bottom first) whose stacked span at point I holds VALUE, or -1. */
-export function layerAt(layers, i, value) {
+/**
+ * Index of the layer (bottom first) whose stacked span at time MS holds
+ * VALUE, or -1. Layers are linear between TIMES, as the chart draws them,
+ * and flat beyond the first and last points.
+ */
+export function layerAt(layers, times, ms, value) {
+  const t = times.map((x) => Date.parse(x));
+  const i = Math.max(0, t.findLastIndex((x) => x <= ms));
+  const j = Math.min(i + 1, t.length - 1);
+  const f = t[j] > t[i] ? Math.min(1, Math.max(0, (ms - t[i]) / (t[j] - t[i]))) : 0;
   let top = 0;
   for (const [k, values] of layers.entries()) {
-    top += values[i];
+    top += values[i] + f * (values[j] - values[i]);
     if (value >= 0 && value <= top) return k;
   }
   return -1;

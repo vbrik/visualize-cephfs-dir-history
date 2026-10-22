@@ -210,6 +210,38 @@ def check_refresh_keeps_zoom(page: Page, base: str) -> None:
     assert shown == f"{start} \u2013 {end}", f"zoom after refresh: {shown}"
 
 
+def check_click_between_points(page: Page, base: str) -> None:
+    """A click drills into the band drawn under it, which lies between
+    points on the line joining them, not at the nearest point."""
+    gib = 2**30
+    t0, t1 = "2026-10-01T00:00:00Z", "2026-10-01T04:00:00Z"
+    g, h = [100 * gib, 0], [100 * gib, 100 * gib]  # G shrinks below H
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    tree["tree"]["max_depth"] = 2
+    tree["times"] = [t0, t1]
+    tree["rbytes"] = {".": [200 * gib, 100 * gib], "G": g, "G/x": g, "H": h, "H/y": h}
+    tree["units"] = {"G/x": {"own": g, "leaf": True}, "H/y": {"own": h, "leaf": True}}
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    page.goto(f"{base}#tree=1&group=1")
+    page.wait_for_timeout(SETTLE_MS)
+    # A quarter of the way along, G's top is at 75 GiB; the nearest point's 100.
+    x, y = page.evaluate(
+        """([t0, t1, bytes]) => {
+            const el = document.getElementById("chart");
+            const ms = Date.parse(t0) + (Date.parse(t1) - Date.parse(t0)) / 4;
+            const chart = echarts.getInstanceByDom(el);
+            const [x, y] = chart.convertToPixel("grid", [ms, bytes]);
+            const box = el.getBoundingClientRect();
+            return [box.left + x, box.top + y];
+        }""",
+        [t0, t1, 80 * gib],
+    )
+    page.mouse.click(x, y)
+    page.wait_for_timeout(SETTLE_MS)
+    state = page.evaluate("location.hash")
+    assert "in=H" in state, f"click between points drilled to {state}"
+
+
 def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     """Generic checks of one tree of real data."""
 
@@ -272,6 +304,7 @@ def main() -> int:
             check_slow_index,
             check_refresh_after_regeneration,
             check_refresh_keeps_zoom,
+            check_click_between_points,
         ):
             run_checks(
                 browser, "light", lambda pg, c=check: c(pg, url(fixture)), problems

@@ -13,7 +13,6 @@ import {
   indexRange,
   isUnder,
   layerAt,
-  nearestIndex,
   parseSize,
   stack,
 } from "./model.js";
@@ -361,8 +360,7 @@ $("reset").addEventListener("click", () => writeState({ ...DEFAULTS, tree: readS
 chart.getZr().on("click", (e) => {
   if (!model || !chart.containPixel("grid", [e.offsetX, e.offsetY])) return;
   const [ms, bytes] = chart.convertFromPixel("grid", [e.offsetX, e.offsetY]);
-  const i = nearestIndex(data.times, ms);
-  const band = model.bands[layerAt(model.bands.map((b) => b.values), i, bytes)];
+  const band = model.bands[layerAt(model.bands.map((b) => b.values), data.times, ms, bytes)];
   if (band?.drillable) writeState({ in: band.key });
 });
 chart.on("datazoom", () => {
