@@ -93,9 +93,12 @@ async function load(treeId) {
   if (!entry) throw new Error(`no tree ${treeId} in data/trees.json`);
   if (data?.tree.id === treeId && data.times.at(-1) === entry.last_sample) return null;
   const fresh = await fetchJson(entry.file);
-  const last = fresh.times.length - 1;
-  if (data?.tree.id !== treeId || range === null) return { data: fresh, range: [0, last] };
-  return { data: fresh, range: [range[0], last] }; // keep the start, follow new data
+  if (data?.tree.id !== treeId || range === null || range[0] === 0) {
+    return { data: fresh, range: [0, fresh.times.length - 1] };
+  }
+  // Keep a zoomed start's date, not its index: as history grows, older
+  // points merge into coarser buckets. The end follows new data.
+  return { data: fresh, range: indexRange(fresh.times, Date.parse(data.times[range[0]]), Infinity) };
 }
 
 let updates = 0; // updates started; only the latest may change data or the DOM

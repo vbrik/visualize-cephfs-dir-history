@@ -154,6 +154,40 @@ def check_slow_index(page: Page, base: str) -> None:
     assert page.inner_text("#crumbs") == "/fixture2", "tree 2 not shown"
 
 
+def check_refresh_keeps_zoom(page: Page, base: str) -> None:
+    """A zoomed start keeps its date when a refresh drops older points."""
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    times = tree["times"]  # hourly points 00:00, 01:00, 02:00
+    later = "2026-10-01T03:00:00Z"
+    tree["times"] = [*times[1:], later]  # 00:00 merged away, 03:00 added
+    for series in [
+        *tree["rbytes"].values(),
+        *(u["own"] for u in tree["units"].values()),
+    ]:
+        series[:] = [*series[1:], series[-1]]
+    index = json.loads((FIXTURE / "trees.json").read_text())
+    index[0]["last_sample"] = later
+
+    page.clock.install()
+    page.goto(f"{base}#tree=1")
+    page.wait_for_timeout(SETTLE_MS)
+    page.evaluate(
+        """([from, to]) => echarts.getInstanceByDom(document.getElementById("chart"))
+            .dispatchAction({type: "dataZoom", startValue: from, endValue: to})""",
+        [times[1], times[-1]],
+    )
+    page.wait_for_timeout(SETTLE_MS)
+    page.route("**/data/trees.json", lambda r: r.fulfill(json=index))
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    page.clock.fast_forward("10:00")  # main.REFRESH_MS
+    page.wait_for_timeout(SETTLE_MS)
+    shown = page.inner_text("#table-range")
+    start, end = page.evaluate(
+        "(ts) => ts.map((t) => new Date(t).toLocaleString())", [times[1], later]
+    )
+    assert shown == f"{start} \u2013 {end}", f"zoom after refresh: {shown}"
+
+
 def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     """Generic checks of one tree of real data."""
 
@@ -210,7 +244,12 @@ def main() -> int:
         sync_playwright() as pw,
     ):
         browser = pw.chromium.launch(executable_path=args.chrome)
-        for check in (check_fixture, check_slow_tree, check_slow_index):
+        for check in (
+            check_fixture,
+            check_slow_tree,
+            check_slow_index,
+            check_refresh_keeps_zoom,
+        ):
             run_checks(
                 browser, "light", lambda pg, c=check: c(pg, url(fixture)), problems
             )
