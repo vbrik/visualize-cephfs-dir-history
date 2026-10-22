@@ -88,6 +88,23 @@ def test_choose_points_honors_max_points_and_min_bucket():
     assert len(choose_points(samples(48, timedelta(hours=1)), res)) == 2
 
 
+def test_choose_points_coarsens_past_weekly_buckets_to_fit():
+    s = samples(3, timedelta(weeks=1))
+    points = choose_points(s, Resolution(recent=timedelta(0), max_points=2))
+    assert len(points) == 2  # 2-week buckets
+    assert points[-1] == s[-1]
+
+
+def test_choose_points_stays_within_max_points_for_any_history():
+    s = samples(8 * 365, timedelta(days=1))  # 8 years: weekly buckets need 417
+    points = choose_points(s)
+    assert len(points) <= MAX_POINTS
+    assert points[-1] == s[-1]
+    older = [p for p in points if p.started <= s[-1].started - timedelta(days=7)]
+    gaps = {b.started - a.started for a, b in pairwise(older[:-1])}
+    assert gaps == {timedelta(weeks=2)}  # the smallest multiple of 1 w that fits
+
+
 def test_resolution_reports_points_needed_by_recent_window():
     assert Resolution(recent=timedelta(days=7)).recent_points() == 7 * 24 + 1
     assert Resolution(recent=timedelta(0)).recent_points() == 1

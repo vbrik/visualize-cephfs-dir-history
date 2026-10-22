@@ -64,8 +64,10 @@ A tree has at most `--max-points` time points (400), so files and charts
 stay small however long the history grows. History within `--recent` (7
 days) of the latest sample keeps the finest buckets (`--min-bucket`, 1 h),
 so recent changes stay visible when zoomed in. Older history gets the finest
-of 1 h, 6 h, 1 d, 2 d or 1 w that fits the remaining points. The generator
-refuses a `--recent` that alone needs `--max-points`.
+of 1 h, 6 h, 1 d, 2 d or 1 w that fits the remaining points, or, once even
+1 w does not (after about 4.5 years at the defaults), the smallest multiple
+of 1 w that does. The generator refuses a `--recent` that alone needs
+`--max-points`.
 
 ### Page
 

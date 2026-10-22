@@ -88,8 +88,8 @@ class Resolution:
 
     History within RECENT of the latest sample gets MIN_BUCKET buckets.
     Older history gets the finest width among MIN_BUCKET and the coarser
-    BUCKET_WIDTHS that keeps all points within MAX_POINTS (else the
-    coarsest).
+    BUCKET_WIDTHS that keeps all points within MAX_POINTS, else the
+    smallest whole multiple of the coarsest of those that does.
     """
 
     recent: timedelta = RECENT
@@ -110,7 +110,9 @@ def choose_points(
     """Return the last sample of each time bucket, oldest first.
 
     SAMPLES are ordered by (started, id). Buckets are UTC-aligned, as
-    RESOLUTION says. The latest sample is always the last point.
+    RESOLUTION says. The latest sample is always the last point. There are
+    at most RESOLUTION.max_points points if the recent window fits in them
+    (Resolution.recent_points() < max_points, as the CLI enforces).
     """
     if not samples:
         return []
@@ -119,13 +121,18 @@ def choose_points(
     recent = _last_per_bucket(
         [s for s in samples if s.started > cutoff], resolution.min_bucket
     )
+    budget = max(resolution.max_points - len(recent), 1)
     widths = [resolution.min_bucket]
     widths += [w for w in BUCKET_WIDTHS if w > resolution.min_bucket]
     for width in widths:
         kept = _last_per_bucket(older, width)
-        if len(kept) + len(recent) <= resolution.max_points:
-            break
-    return kept + recent
+        if len(kept) <= budget:
+            return kept + recent
+    # A span S meets at most S // width + 1 aligned buckets; whole multiples
+    # of the coarsest width keep bucket edges stable as history grows.
+    span = older[-1].started - older[0].started
+    width = (span // (budget * widths[-1]) + 1) * widths[-1]
+    return _last_per_bucket(older, width) + recent
 
 
 def _last_per_bucket(samples: Sequence[Sample], width: timedelta) -> list[Sample]:
