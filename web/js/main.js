@@ -87,31 +87,44 @@ async function fetchJson(file) {
   return r.json();
 }
 
+/** Tree TREEID's file and zoom range, or null if DATA is its latest. */
 async function load(treeId) {
   const entry = index.find((t) => t.id === treeId);
   if (!entry) throw new Error(`no tree ${treeId} in data/trees.json`);
-  if (data?.tree.id !== treeId || data.times.at(-1) !== entry.last_sample) {
-    const fresh = await fetchJson(entry.file);
-    if (data?.tree.id !== treeId || range === null) {
-      range = [0, fresh.times.length - 1];
-    } else {
-      range = [range[0], fresh.times.length - 1]; // keep the start, follow new data
-    }
-    data = fresh;
-  }
+  if (data?.tree.id === treeId && data.times.at(-1) === entry.last_sample) return null;
+  const fresh = await fetchJson(entry.file);
+  const last = fresh.times.length - 1;
+  if (data?.tree.id !== treeId || range === null) return { data: fresh, range: [0, last] };
+  return { data: fresh, range: [range[0], last] }; // keep the start, follow new data
 }
 
+let updates = 0; // updates started; only the latest may change data or the DOM
+let indexing = null; // the trees.json fetch in flight, if any
+
 /** Load what the URL asks for (and the tree index first, if REINDEX) and
- * render it; show an error instead if loading fails, clear it if not. */
+ * render it; show an error instead if loading fails, clear it if not. An
+ * update overtaken by a later one, e.g. on a quick tree switch, drops its
+ * results, whatever order the fetches finish in; so every update waits for
+ * an index fetch in flight rather than use the index it would replace. */
 async function update(reindex) {
+  const id = ++updates;
+  if (reindex) indexing = fetchJson("trees.json");
+  const pending = indexing;
   try {
-    if (reindex) index = await fetchJson("trees.json");
+    if (pending) {
+      const trees = await pending;
+      if (indexing === pending) [index, indexing] = [trees, null];
+    }
+    if (id !== updates) return;
     const s = readState();
-    if (s.tree !== null) await load(s.tree);
+    const loaded = s.tree === null ? null : await load(s.tree);
+    if (id !== updates) return;
+    if (loaded) ({ data, range } = loaded);
     $("error").hidden = true;
     render();
   } catch (e) {
-    showError(e);
+    if (indexing === pending) indexing = null; // a failed fetch must not block later updates
+    if (id === updates) showError(e);
   }
 }
 

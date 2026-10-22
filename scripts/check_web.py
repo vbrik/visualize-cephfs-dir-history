@@ -121,6 +121,39 @@ def check_fixture(page: Page, base: str) -> None:
     assert not any(r.startswith("x") for r in legend(page)), "hide lost on reload"
 
 
+def slow_fetch(page: Page, file: str, ms: int = SETTLE_MS) -> None:
+    """Make the page's fetches of data/FILE take MS longer."""
+    page.add_init_script(f"""{{
+        const fetch = window.fetch;
+        window.fetch = async (url, opts) => {{
+            const r = await fetch(url, opts);
+            if (String(url).endsWith("/{file}")) {{
+                await new Promise((ok) => setTimeout(ok, {ms}));
+            }}
+            return r;
+        }};
+    }}""")
+
+
+def check_slow_tree(page: Page, base: str) -> None:
+    """A tree file that arrives after a later tree's must not replace it."""
+    slow_fetch(page, "tree-1.json")
+    page.goto(f"{base}#tree=1")
+    page.evaluate("location.hash = 'tree=2'")
+    page.wait_for_timeout(3 * SETTLE_MS)
+    assert page.inner_text("#crumbs") == "/fixture2", "a stale tree replaced tree 2"
+
+
+def check_slow_index(page: Page, base: str) -> None:
+    """A URL change while the tree index loads waits for it."""
+    slow_fetch(page, "trees.json")
+    page.goto(base)
+    page.evaluate("location.hash = 'tree=2'")
+    page.wait_for_timeout(3 * SETTLE_MS)
+    assert page.is_hidden("#error"), "a URL change before the index loaded failed"
+    assert page.inner_text("#crumbs") == "/fixture2", "tree 2 not shown"
+
+
 def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     """Generic checks of one tree of real data."""
 
@@ -177,9 +210,10 @@ def main() -> int:
         sync_playwright() as pw,
     ):
         browser = pw.chromium.launch(executable_path=args.chrome)
-        run_checks(
-            browser, "light", lambda pg: check_fixture(pg, url(fixture)), problems
-        )
+        for check in (check_fixture, check_slow_tree, check_slow_index):
+            run_checks(
+                browser, "light", lambda pg, c=check: c(pg, url(fixture)), problems
+            )
         for scheme in ("light", "dark"):
             for tree in trees:
                 shots = args.shots if scheme == "light" else None
