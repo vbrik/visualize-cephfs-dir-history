@@ -13,7 +13,8 @@
   <header>
     <h1>CephFS directory history</h1>
     <p class="muted">Which directories grow and shrink. Each band is a <em>unit</em>: a directory
-      whose own files changed significantly. Bands never overlap, so they add up.</p>
+      whose own size (rbytes minus its subdirectories') changed significantly.
+      Bands never overlap, so they add up.</p>
   </header>
 
   <form class="controls" onsubmit="return false">

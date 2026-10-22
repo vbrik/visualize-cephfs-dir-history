@@ -5,8 +5,11 @@ import { stackedAreaOption } from "./charts/stackedArea.js";
 import {
   MAX_BANDS,
   ROOT,
+  decodeValue,
+  encodeValue,
   formatBytes,
   formatDelta,
+  hideKey,
   indexRange,
   isUnder,
   layerAt,
@@ -30,7 +33,7 @@ const slots = new Map(); // view key -> Map(band key -> palette slot)
 // --- state <-> URL hash ---------------------------------------------------
 
 function readState() {
-  const p = new URLSearchParams(location.hash.slice(1));
+  const p = parseHash(location.hash.slice(1));
   return {
     tree: p.has("tree") ? Number(p.get("tree")) : (index[0]?.id ?? null),
     group: clampInt(p.get("group"), 0, 16, DEFAULTS.group),
@@ -44,15 +47,31 @@ function readState() {
 
 function writeState(changes) {
   const s = { ...readState(), ...changes };
-  const p = new URLSearchParams();
-  p.set("tree", s.tree);
-  if (s.group !== DEFAULTS.group) p.set("group", s.group);
-  if (s.in !== ROOT) p.set("in", s.in);
-  if (s.top !== DEFAULTS.top) p.set("top", s.top);
-  if (s.min) p.set("min", s.min);
-  for (const h of s.hide) p.append("hide", h);
-  if (s.rest) p.set("rest", "1");
-  location.hash = p.toString();
+  const p = [["tree", s.tree]];
+  if (s.group !== DEFAULTS.group) p.push(["group", s.group]);
+  if (s.in !== ROOT) p.push(["in", s.in]);
+  if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
+  if (s.min) p.push(["min", s.min]);
+  for (const h of s.hide) p.push(["hide", h]);
+  if (s.rest) p.push(["rest", "1"]);
+  location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
+}
+
+/** The hash's key=value pairs as a URLSearchParams-like reader; values may
+ * hold paths that are not UTF-8 (see model.encodeValue). */
+function parseHash(text) {
+  const pairs = text
+    .split("&")
+    .filter(Boolean)
+    .map((kv) => {
+      const at = kv.indexOf("=");
+      return at < 0 ? [kv, ""] : [kv.slice(0, at), decodeValue(kv.slice(at + 1))];
+    });
+  return {
+    has: (k) => pairs.some(([key]) => key === k),
+    get: (k) => pairs.find(([key]) => key === k)?.[1] ?? null,
+    getAll: (k) => pairs.filter(([key]) => key === k).map(([, v]) => v),
+  };
 }
 
 function clampInt(text, lo, hi, fallback) {
@@ -82,16 +101,21 @@ async function load(treeId) {
   }
 }
 
-async function refresh() {
+/** Load what the URL asks for (and the tree index first, if REINDEX) and
+ * render it; show an error instead if loading fails, clear it if not. */
+async function update(reindex) {
   try {
-    index = await fetchJson("trees.json");
+    if (reindex) index = await fetchJson("trees.json");
     const s = readState();
     if (s.tree !== null) await load(s.tree);
+    $("error").hidden = true;
     render();
   } catch (e) {
     showError(e);
   }
 }
+
+const refresh = () => update(true);
 
 // --- rendering --------------------------------------------------------------
 
@@ -197,7 +221,7 @@ function renderLegend(model, c, s) {
       ? button(band.label, () => writeState({ in: band.key }))
       : text(band.label);
     if (band.drillable) name.title = `Show the units in ${band.key}`;
-    li.append(swatch(c.bands.get(band.key)), name, value(band.values[b]), hideButton(band.key, s));
+    li.append(swatch(c.bands.get(band.key)), name, value(band.values[b]), hideButton(hideKey(band), s));
     return li;
   });
   const smaller = document.createElement("li");
@@ -301,7 +325,7 @@ function value(bytes) {
 function hideButton(path, s) {
   const b = button("hide", () => writeState({ hide: [...s.hide, path] }));
   b.className = "hide";
-  b.title = `Remove ${path} from the chart`;
+  b.title = path.endsWith("/") ? `Remove all units in ${path}` : `Remove ${path}`;
   return b;
 }
 
@@ -334,14 +358,7 @@ chart.on("datazoom", () => {
   }
 });
 
-window.addEventListener("hashchange", async () => {
-  try {
-    await load(readState().tree);
-    render();
-  } catch (e) {
-    showError(e);
-  }
-});
+window.addEventListener("hashchange", () => update(false));
 window.addEventListener("resize", () => chart.resize());
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
 setInterval(refresh, REFRESH_MS);
