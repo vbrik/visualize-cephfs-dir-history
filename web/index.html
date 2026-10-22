@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CephFS Directory History</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/echarts.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header>
+    <h1>CephFS directory history</h1>
+    <p class="muted">Which directories grow and shrink. Each band is a <em>unit</em>: a directory
+      whose own files changed significantly. Bands never overlap, so they add up.</p>
+  </header>
+
+  <form class="controls" onsubmit="return false">
+    <label>Tree <select id="tree"></select></label>
+    <label>Group by <select id="group"></select></label>
+    <label>Bands <input id="top" type="number" min="1" step="1" inputmode="numeric"></label>
+    <label>Min peak <input id="min" type="text" size="7" placeholder="e.g. 1TiB"
+      title="Bands whose peak in the shown range is smaller fold into “Smaller units”"></label>
+    <label class="check"><input id="rest" type="checkbox"> Rest of tree</label>
+    <button id="reset" type="button">Reset</button>
+  </form>
+
+  <p id="error" class="error" role="alert" hidden></p>
+
+  <main class="card">
+    <nav id="crumbs" class="crumbs" aria-label="Directory"></nav>
+    <p id="summary" class="muted"></p>
+    <div class="chart-row">
+      <div id="chart" class="chart" role="img"></div>
+      <ul id="legend" class="legend" aria-label="Legend"></ul>
+    </div>
+    <p id="hidden" class="chips" hidden>Hidden: <span id="hidden-list"></span></p>
+    <details>
+      <summary>Table <span id="table-range" class="muted"></span></summary>
+      <table>
+        <thead><tr><th>Band</th><th>Start</th><th>End</th><th>Change</th><th>Peak</th></tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </details>
+  </main>
+</body>
+</html>
