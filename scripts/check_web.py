@@ -72,6 +72,13 @@ def check_fixture(page: Page, base: str) -> None:
     page.wait_for_timeout(SETTLE_MS)
     assert page.is_hidden("#error"), "error still shown after a good load"
 
+    # A dir that is not in the tree, even one named like an Object property,
+    # falls back to ROOT.
+    page.evaluate("location.hash = 'tree=1&in=constructor'")
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.is_hidden("#error"), "in=constructor broke the page"
+    assert page.inner_text("#crumbs") == "/fixture", "in=constructor not ignored"
+
     # Hiding a unit's own files must not hide the units below it.
     page.locator("#legend li", has_text="A (own files)").locator("button.hide").click()
     page.wait_for_timeout(SETTLE_MS)

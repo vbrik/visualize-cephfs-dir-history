@@ -150,7 +150,7 @@ function render() {
   if (!data) return;
   const minBytes = parseSize(s.min || "0");
   $("min").setAttribute("aria-invalid", minBytes === null);
-  const inPath = s.in in data.rbytes ? s.in : ROOT;
+  const inPath = Object.hasOwn(data.rbytes, s.in) ? s.in : ROOT;
 
   model = stack(data, {
     inPath,
