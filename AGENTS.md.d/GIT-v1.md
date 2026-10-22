@@ -1,5 +1,4 @@
 # Git
-- Don't create commits, but display commit subject and description proposals.
 - Don't create git branches.
 
 ## Git commit messages
