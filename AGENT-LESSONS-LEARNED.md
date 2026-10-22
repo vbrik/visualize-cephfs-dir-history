@@ -16,3 +16,10 @@
   browser download.
 - A CSS `display` rule (e.g. `display: flex`) overrides the `hidden`
   attribute. Add `[hidden] { display: none !important; }`.
+- Playwright replaces lone surrogates (U+D800..U+DFFF) with U+FFFD when it
+  passes strings between Python and the page, both ways. To check the URL
+  codec with non-UTF-8 names, build the names inside `page.evaluate` and
+  return only escaped text (e.g. `JSON.stringify`).
+- `new TextDecoder("utf-8")` strips a leading U+FEFF by default, and when
+  decoding one sequence at a time every sequence counts as leading. Pass
+  `ignoreBOM: true` whenever the decoded text is data, such as file names.
