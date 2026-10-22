@@ -95,6 +95,18 @@ def check_fixture(page: Page, base: str) -> None:
     page.wait_for_timeout(SETTLE_MS)
     assert not any(r.startswith("A") for r in legend(page)), "group not hidden"
 
+    # The URL codec round-trips any name, including ones TextDecoder alters.
+    # Names stay in the page: Playwright turns lone surrogates into U+FFFD.
+    changed = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const names = ["caf\\uDCE9", "\\uFEFFbom", "a\\uFEFFb/\\uDCFF\\u00E9 +%"];
+            const bad = names.filter((s) => m.decodeValue(m.encodeValue(s)) !== s);
+            return JSON.stringify(bad);
+        }"""
+    )
+    assert changed == "[]", f"URL codec changed names: {changed}"
+
     # Names that are not UTF-8: drilling and hiding survive the URL hash.
     page.goto(f"{base}#tree=1&group=1")
     page.wait_for_timeout(SETTLE_MS)

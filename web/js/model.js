@@ -37,7 +37,8 @@ export function relative(path, base) {
 // Paths in data files are Python os.fsdecode output: a byte that is not
 // UTF-8 is a lone surrogate U+DC80..U+DCFF. URLSearchParams would turn those
 // into U+FFFD, so URL values use this codec, which keeps them as raw bytes.
-const strict = new TextDecoder("utf-8", { fatal: true });
+// ignoreBOM: else a U+FEFF in a name decodes to "".
+const strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const utf8 = new TextEncoder();
 
 /** S percent-encoded as its file-name bytes ("/" kept). */
@@ -79,7 +80,7 @@ export function decodeValue(text) {
       }
     }
     out += ch ?? String.fromCharCode(0xdc00 + b);
-    i += ch ? n : 1;
+    i += ch === null ? 1 : n;
   }
   return out;
 }
