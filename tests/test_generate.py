@@ -3,8 +3,10 @@ import os
 import stat
 from datetime import UTC, datetime
 
+import psycopg
 import pytest
 
+from dirhistory import generate
 from dirhistory.db import Tree
 from dirhistory.generate import (
     index_entry,
@@ -121,3 +123,37 @@ def test_max_units_must_be_positive(value, capsys):
     with pytest.raises(SystemExit):
         parser().parse_args(["--max-units", value])
     assert "--max-units" in capsys.readouterr().err
+
+
+def test_threshold_must_be_positive(capsys):
+    with pytest.raises(SystemExit):
+        parser().parse_args(["--threshold", "0"])
+    assert "--threshold" in capsys.readouterr().err
+
+
+class _Conn:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_unwritable_out_is_an_error_not_a_traceback(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(generate.db, "connect", lambda dsn: _Conn())
+    monkeypatch.setattr(generate.db, "check_schema", lambda conn: None)
+    monkeypatch.setattr(generate.db, "trees", lambda conn: [TREE])
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    assert generate.main(["--db", "x", "--out", str(blocker / "data")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: ")
+
+
+def test_database_errors_are_errors_not_tracebacks(monkeypatch, capsys):
+    def denied(conn):
+        raise psycopg.errors.InsufficientPrivilege("permission denied for schema")
+
+    monkeypatch.setattr(generate.db, "connect", lambda dsn: _Conn())
+    monkeypatch.setattr(generate.db, "check_schema", denied)
+    assert generate.main(["--db", "x"]) == 1
+    assert "ERROR: " in capsys.readouterr().err

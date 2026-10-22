@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
+import psycopg
+
 from dirhistory import __version__, db
 from dirhistory.db import Tree
 from dirhistory.history import TreeHistory, summarize
@@ -29,10 +31,11 @@ atomically. Run it periodically (e.g. hourly, from a systemd timer); the page
 in web/ reads the files.
 
 Charts stack the *own size* of *units*. A directory's own size is its rbytes
-minus its subdirectories' rbytes: the bytes of the files directly in it, or
-its whole rbytes if it has no subdirectories. A unit is a directory whose own
-size changed by at least --threshold over the tree's history. Own sizes never
-overlap, so stacked units plus "Other" add up to the tree's total.
+minus its subdirectories' rbytes: the bytes of the files directly in it. A
+directory without sampled subdirectories (none, or at the tree's max depth)
+owns its whole rbytes. A unit is a directory whose own size changed by at
+least --threshold over the tree's history. Own sizes never overlap, so units
+never count the same bytes twice.
 
 The database is only read. Prints each file written to stdout; notes go to
 stderr.
@@ -130,12 +133,14 @@ def display(path: bytes) -> str:
 def read_tree(
     conn, tree: Tree, threshold: int, limit: int
 ) -> tuple[TreeHistory, int] | None:
-    """Return a tree's history and its samples' error count, or None if it
-    has no samples. Reads in one transaction, i.e. one snapshot."""
+    """Return a tree's history and how many of its directories are in error
+    as of its latest sample, or None if it has no samples. Reads in one
+    transaction, i.e. one snapshot."""
     with conn.transaction():
-        samples, errors = db.samples(conn, tree.id)
+        samples = db.samples(conn, tree.id)
         if not samples:
             return None
+        errors = db.current_errors(conn, tree.id)
         changed = db.changed_paths(conn, [s.id for s in samples[1:]])
         history = summarize(
             samples,
@@ -211,9 +216,12 @@ def parser() -> argparse.ArgumentParser:
 
 def _size_arg(text: str) -> int:
     try:
-        return parse_size(text)
+        size = parse_size(text)
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
+    if size == 0:
+        raise argparse.ArgumentTypeError("must be more than 0")
+    return size
 
 
 def _positive_int(text: str) -> int:
@@ -227,13 +235,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
     try:
-        conn = db.connect(args.db)
-        db.check_schema(conn)
-        all_trees = db.trees(conn)
-        chosen = select_trees(all_trees, args.tree)
-    except (db.DbError, ValueError) as e:
-        return _error(str(e))
+        return run(args)
+    except (db.DbError, psycopg.Error, OSError, ValueError) as e:
+        return _error(str(e).strip())
 
+
+def run(args: argparse.Namespace) -> int:
+    """Write the data files ARGS ask for; return the exit status.
+
+    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree.
+    """
+    conn = db.connect(args.db)
+    db.check_schema(conn)
+    all_trees = db.trees(conn)
+    chosen = select_trees(all_trees, args.tree)
     args.out.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(UTC)
     entries = []
@@ -254,9 +269,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(path)
             if errors:
                 _note(
-                    f"WARNING: tree {tree.id} ({display(tree.fs_path)}): its samples"
-                    f" had {errors} directory errors. Below a directory that could not"
-                    " be listed, changes go unseen and sizes may be stale."
+                    f"WARNING: tree {tree.id} ({display(tree.fs_path)}): {errors}"
+                    " directories could not be read in its latest sample. Below them,"
+                    " changes go unseen and sizes may be stale."
                 )
             if args.verbose:
                 _note(

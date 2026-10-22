@@ -13,7 +13,7 @@ from dirhistory.history import Row, Sample
 
 SCHEMA_VERSION = 4  # the trackdir schema version this module reads
 
-# Rows per round trip when streaming a first sample (up to millions of rows)
+# Rows per round trip when streaming query results (up to millions of rows)
 STREAM_ROWS = 50_000
 
 
@@ -73,14 +73,24 @@ def trees(conn: psycopg.Connection) -> list[Tree]:
     return [Tree(*row) for row in rows]
 
 
-def samples(conn: psycopg.Connection, tree_id: int) -> tuple[list[Sample], int]:
-    """Return the tree's samples ordered by (started, id), and their total errors."""
+def samples(conn: psycopg.Connection, tree_id: int) -> list[Sample]:
+    """Return the tree's samples ordered by (started, id)."""
     rows = conn.execute(
-        "SELECT id, started, errors FROM trackdir.sample"
-        " WHERE tree_id = %s ORDER BY started, id",
+        "SELECT id, started FROM trackdir.sample WHERE tree_id = %s"
+        " ORDER BY started, id",
         (tree_id,),
-    ).fetchall()
-    return [Sample(i, started) for i, started, _ in rows], sum(e for *_, e in rows)
+    )
+    return [Sample(*row) for row in rows]
+
+
+def current_errors(conn: psycopg.Connection, tree_id: int) -> int:
+    """Return how many of the tree's directories are in error as of its
+    latest sample."""
+    return conn.execute(
+        "SELECT count(*) FROM trackdir.current_dir_state"
+        " WHERE tree_id = %s AND error_stage IS NOT NULL",
+        (tree_id,),
+    ).fetchone()[0]
 
 
 def changed_paths(conn: psycopg.Connection, later: list[int]) -> set[bytes]:
@@ -111,13 +121,20 @@ def sample_rows(
 
 def path_rows(
     conn: psycopg.Connection, tree_id: int, paths: Iterable[bytes]
-) -> list[Row]:
-    """Return every row of PATHS in the tree, ordered by sample (started, id)."""
-    rows = conn.execute(
-        "SELECT d.sample_id, d.path, d.rbytes, d.deleted"
-        " FROM trackdir.dir_state d JOIN trackdir.sample s ON s.id = d.sample_id"
-        " WHERE s.tree_id = %s AND d.path = ANY(%s)"
-        " ORDER BY s.started, s.id",
-        (tree_id, list(paths)),
-    )
-    return [(sid, bytes(path), rbytes, deleted) for sid, path, rbytes, deleted in rows]
+) -> Iterator[Row]:
+    """Stream every row of PATHS in the tree, ordered by sample (started, id).
+
+    Needs an open transaction: it uses a server-side cursor, so memory does
+    not grow with the length of the history.
+    """
+    with conn.cursor(name="path_rows") as cur:
+        cur.itersize = STREAM_ROWS
+        cur.execute(
+            "SELECT d.sample_id, d.path, d.rbytes, d.deleted"
+            " FROM trackdir.dir_state d JOIN trackdir.sample s ON s.id = d.sample_id"
+            " WHERE s.tree_id = %s AND d.path = ANY(%s)"
+            " ORDER BY s.started, s.id",
+            (tree_id, list(paths)),
+        )
+        for sample_id, path, rbytes, deleted in cur:
+            yield sample_id, bytes(path), rbytes, deleted

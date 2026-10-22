@@ -22,8 +22,8 @@ MAX_POINTS = 400
 
 # Candidate time-bucket widths, finest first. The finest is an hour, not
 # trackdir's typical 5-minute sampling interval: a parent's rbytes can lag its
-# children's within a sample, and keeping only the last sample of each hour
-# hides most such lag.
+# children's within a sample, and one sample per hour exposes far fewer
+# lagging samples than all of them (summarize smooths out the rest).
 BUCKET_WIDTHS = tuple(timedelta(hours=h) for h in (1, 6, 24, 48, 7 * 24))
 
 # A dir_state row: (sample id, path, rbytes, deleted)
@@ -103,15 +103,21 @@ def summarize(
     """Return the history of a tree with SAMPLES, ordered by (started, id).
 
     CHANGED holds the paths with a row in any sample after the first. FIRST
-    yields (path, rbytes) for the first sample's rows; it may be streamed.
-    FETCH(paths) returns every row of PATHS, ordered by sample.
+    yields (path, rbytes) for the first sample's rows. FETCH(paths) yields
+    every row of PATHS, ordered as SAMPLES are. Both are read once, so they
+    may stream.
 
     A path outside CHANGED has its single row in the first sample, so its
     value is constant, and only CHANGED paths and their parents can change
-    own size. A unit is such a directory whose own size, as a 3-point running
-    median over the chosen points, ranges by at least THRESHOLD bytes; the
-    median drops one-point dips from rbytes propagation lag. At most LIMIT
-    units are kept, widest range first, ties by path.
+    own size. A unit is such a directory whose own size ranges by at least
+    THRESHOLD bytes over the chosen points. At most LIMIT units are kept,
+    widest range first, ties by path.
+
+    A directory with changed children subtracts their rbytes, which CephFS
+    may not yet have propagated to the directory's own rbytes, so its own
+    size can dip for one point. Its range is taken over a 3-point running
+    median, which drops such dips. Other directories cannot dip that way, so
+    their raw range counts, including changes that last one point.
     """
     points = choose_points(samples)
     dirs = changed | {parent(p) for p in changed if p != ROOT}
@@ -124,7 +130,9 @@ def summarize(
         children[parent(path)].append(path)
     own = {d: _own(d, rbytes, constant[d], children[d], len(points)) for d in dirs}
 
-    ranges = {d: _range(_running_median(s)) for d, s in own.items()}
+    ranges = {
+        d: _range(_running_median(s) if children[d] else s) for d, s in own.items()
+    }
     picked = sorted(
         (d for d, r in ranges.items() if r >= threshold), key=lambda d: (-ranges[d], d)
     )[:limit]
@@ -166,24 +174,29 @@ def _replay(
 ) -> dict[bytes, Series]:
     """Return each row path's value at each of POINTS, carried forward.
 
-    A value holds until the path's next row. A NULL rbytes (an error) keeps
-    the previous value; a tombstone makes it None, as does no row yet.
+    ROWS must be ordered as SAMPLES are; they are read once, in one pass. A
+    value holds until the path's next row. A NULL rbytes (an error) keeps the
+    previous value; a tombstone makes it None, as does no row yet. Raises
+    ValueError if a row is out of order or of no sample in SAMPLES.
     """
     point_at = {p.id: i for i, p in enumerate(points)}
-    by_sample: defaultdict[int, list[Row]] = defaultdict(list)
-    for row in rows:
-        by_sample[row[0]].append(row)
+    rows = iter(rows)
+    row = next(rows, None)
     current: dict[bytes, int | None] = {}
     series: dict[bytes, Series] = {}
     for sample in samples:
-        for _, path, rbytes, deleted in by_sample.get(sample.id, ()):
+        while row is not None and row[0] == sample.id:
+            _, path, rbytes, deleted = row
             if deleted:
                 current[path] = None
             elif rbytes is not None:
                 current[path] = rbytes
+            row = next(rows, None)
         if (i := point_at.get(sample.id)) is not None:
             for path, value in current.items():
                 series.setdefault(path, [None] * len(points))[i] = value
+    if row is not None:
+        raise ValueError(f"a row of sample {row[0]} is out of sample order")
     return series
 
 

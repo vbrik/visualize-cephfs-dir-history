@@ -264,3 +264,43 @@ def test_times_are_the_chosen_samples():
     h = run(rows)
     assert h.times == [T0, T0 + timedelta(hours=1), T0 + timedelta(hours=2)]
     assert h.rbytes[ROOT] == [1, 1, 3]
+
+
+def test_one_point_spike_of_a_leaf_is_a_unit():
+    # Only dirs with changed children can show lag dips, so a leaf's own
+    # series is not smoothed: a dataset that lived one point still counts.
+    rows = [
+        (1, ROOT, 10, False),
+        (1, b"a", 10, False),
+        (1, b"a/x", 10, False),
+        (2, ROOT, 15, False),
+        (2, b"a", 15, False),
+        (2, b"a/x", 15, False),
+        (3, ROOT, 10, False),
+        (3, b"a", 10, False),
+        (3, b"a/x", 10, False),
+    ]
+    h = run(rows, threshold=5)
+    assert set(h.units) == {b"a/x"}
+
+
+def test_rows_are_read_in_one_pass():
+    rows = [
+        (1, ROOT, 100, False),
+        (1, b"a", 100, False),
+        (2, ROOT, 200, False),
+        (2, b"a", 200, False),
+    ]
+    first = [(p, b) for s, p, b, _ in rows if s == 1]
+
+    def fetch(paths):
+        return (r for r in rows if r[1] in paths)  # an iterator: one pass only
+
+    h = summarize(samples(2), {ROOT, b"a"}, first, fetch, 1, 10)
+    assert h.units[b"a"].own == [100, 200]
+
+
+def test_rows_out_of_sample_order_are_rejected():
+    rows = [(2, ROOT, 200, False), (1, ROOT, 100, False)]
+    with pytest.raises(ValueError, match="sample 1"):
+        summarize(samples(2), {ROOT}, [(ROOT, 100)], lambda paths: rows, 1, 10)
