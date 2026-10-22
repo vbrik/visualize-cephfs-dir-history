@@ -39,8 +39,11 @@ known risks.
     python -m http.server -d web 8000         # then open http://localhost:8000/
 
 Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
-The database is only read. See `dirhistory-generate --help` for the options
-(threshold, unit limit, trees, output directory).
+The database is only read. See `dirhistory-generate --help` for the options:
+threshold, unit limit, trees, output directory, and time resolution. By
+default the last 7 days keep hourly points (`--recent`, `--min-bucket`),
+and older history gets coarser points so a tree has at most 400
+(`--max-points`).
 
 The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 

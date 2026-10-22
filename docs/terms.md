@@ -11,7 +11,7 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | unit | A directory whose own size changed by at least the threshold over the tree's history. Units are what the charts stack. |
 | leaf unit | A unit without sampled subdirectories (none ever, or at `max_depth`), so its own size is its whole rbytes; labeled by its path. Other units are labeled `path (own files)`. |
 | threshold | The own-size change that makes a directory a unit (`dirhistory-generate --threshold`, default 10 GiB). |
-| time point | One chart x position: the last sample in a UTC time bucket (1 h or wider). |
+| time point | One chart x position: the last sample in a UTC time bucket. Recent history (`--recent`) has the finest buckets (`--min-bucket`, 1 h); older history coarser ones, to stay within `--max-points`. |
 | band | One stacked area: a unit, or a group of units. |
 | group | Units summed into their ancestor N levels below the shown directory ("Group by"). Clicking a group shows its units. |
 | Smaller units | The units not drawn as their own band, because of "Bands" or "Min peak". |

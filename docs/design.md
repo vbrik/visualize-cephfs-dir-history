@@ -49,13 +49,23 @@ child can have grown while its parent has not. The parent's own size then
 dips by the child's growth for one sample, which would make it a *ghost
 unit*: 8.6 GiB dips were seen on the real database. Two measures:
 
-- Time points are the last sample per UTC bucket of at least 1 hour, not
-  every 5-minute sample, so far fewer lagging samples are used.
+- Time points are the last sample per UTC bucket of at least 1 hour by
+  default (`--min-bucket`), not every 5-minute sample, so far fewer lagging
+  samples are used. A finer `--min-bucket` brings ghost units back.
 - For a directory with changed children, significance uses a 3-point
   running median of its own series, which drops a one-point dip. Only such
   directories can dip this way, so the others (leaves, and directories whose
   children are constant) use their raw series, and a real change lasting one
   point still makes a unit.
+
+### Time resolution
+
+A tree has at most `--max-points` time points (400), so files and charts
+stay small however long the history grows. History within `--recent` (7
+days) of the latest sample keeps the finest buckets (`--min-bucket`, 1 h),
+so recent changes stay visible when zoomed in. Older history gets the finest
+of 1 h, 6 h, 1 d, 2 d or 1 w that fits the remaining points. The generator
+refuses a `--recent` that alone needs `--max-points`.
 
 ### Page
 

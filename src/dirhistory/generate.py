@@ -7,7 +7,7 @@ import re
 import sys
 import tempfile
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 
@@ -15,7 +15,14 @@ import psycopg
 
 from dirhistory import __version__, db
 from dirhistory.db import Tree
-from dirhistory.history import TreeHistory, summarize
+from dirhistory.history import (
+    MAX_POINTS,
+    MIN_BUCKET,
+    RECENT,
+    Resolution,
+    TreeHistory,
+    summarize,
+)
 
 DEFAULT_THRESHOLD = "10GiB"
 DEFAULT_MAX_UNITS = 1000
@@ -23,6 +30,14 @@ INDEX = "trees.json"
 
 _SIZE = re.compile(r"(\d+(?:\.\d+)?)\s*([kmgtp]i)b", re.IGNORECASE)
 _POWERS = {"k": 1, "m": 2, "g": 3, "t": 4, "p": 5}
+_DURATION = re.compile(r"(\d+)([smhdw])")
+_DURATION_UNITS = {
+    "s": "seconds",
+    "m": "minutes",
+    "h": "hours",
+    "d": "days",
+    "w": "weeks",
+}
 
 DESCRIPTION = """\
 Write the data files of the CephFS directory history website from a trackdir
@@ -50,6 +65,30 @@ def parse_size(text: str) -> int:
     if m := _SIZE.fullmatch(text.strip()):
         return int(float(m[1]) * 1024 ** _POWERS[m[2][0].lower()])
     raise ValueError(f"invalid size {text!r}: use bytes or a unit, e.g. 10GiB")
+
+
+def parse_duration(text: str) -> timedelta:
+    """Return the duration in TEXT: "0", or an integer with a unit s, m, h, d
+    or w (e.g. 7d). Raises ValueError otherwise."""
+    if text == "0":
+        return timedelta(0)
+    if m := _DURATION.fullmatch(text):
+        return timedelta(**{_DURATION_UNITS[m[2]]: int(m[1])})
+    raise ValueError(f"invalid duration {text!r}: use e.g. 30m, 12h, 7d or 2w")
+
+
+def format_duration(d: timedelta) -> str:
+    """Return D as parse_duration reads it, in its largest exact unit up to days."""
+    seconds = int(d.total_seconds())
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds and seconds % size == 0:
+            return f"{seconds // size}{unit}"
+    return f"{seconds}s" if seconds else "0"
+
+
+def resolution(args: argparse.Namespace) -> Resolution:
+    """Return the time resolution ARGS ask for."""
+    return Resolution(args.recent, args.max_points, args.min_bucket)
 
 
 def select_trees(all_trees: Sequence[Tree], ids: Sequence[int]) -> list[Tree]:
@@ -131,7 +170,7 @@ def display(path: bytes) -> str:
 
 
 def read_tree(
-    conn, tree: Tree, threshold: int, limit: int
+    conn, tree: Tree, threshold: int, limit: int, res: Resolution
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
     as of its latest sample, or None if it has no samples. Reads in one
@@ -149,6 +188,7 @@ def read_tree(
             lambda paths: db.path_rows(conn, tree.id, paths),
             threshold,
             limit,
+            res,
         )
     return history, errors
 
@@ -202,6 +242,30 @@ def parser() -> argparse.ArgumentParser:
         " (default: %(default)s)",
     )
     p.add_argument(
+        "--recent",
+        type=_duration_arg,
+        default=format_duration(RECENT),
+        metavar="DURATION",
+        help="keep this much recent history at --min-bucket resolution"
+        " (default: %(default)s)",
+    )
+    p.add_argument(
+        "--max-points",
+        type=_positive_int,
+        default=MAX_POINTS,
+        metavar="N",
+        help="at most this many time points per tree; older history gets"
+        " coarser buckets to fit (default: %(default)s)",
+    )
+    p.add_argument(
+        "--min-bucket",
+        type=_positive_duration_arg,
+        default=format_duration(MIN_BUCKET),
+        metavar="DURATION",
+        help="finest time bucket; below 1h, rbytes propagation lag can make"
+        " ghost units (default: %(default)s)",
+    )
+    p.add_argument(
         "--tree",
         type=int,
         action="append",
@@ -224,6 +288,19 @@ def _size_arg(text: str) -> int:
     return size
 
 
+def _duration_arg(text: str) -> timedelta:
+    try:
+        return parse_duration(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
+def _positive_duration_arg(text: str) -> timedelta:
+    if (d := _duration_arg(text)) > timedelta(0):
+        return d
+    raise argparse.ArgumentTypeError("must be more than 0")
+
+
 def _positive_int(text: str) -> int:
     if text.isdigit() and int(text) > 0:
         return int(text)
@@ -231,7 +308,16 @@ def _positive_int(text: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    p = parser()
+    args = p.parse_args(argv)
+    res = resolution(args)
+    if res.recent_points() >= res.max_points:
+        p.error(
+            f"--recent {format_duration(res.recent)} at --min-bucket"
+            f" {format_duration(res.min_bucket)} needs up to {res.recent_points()}"
+            f" points, but --max-points is {res.max_points}: leave room for older"
+            " history by raising --max-points or --min-bucket, or shortening --recent"
+        )
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
     try:
@@ -256,7 +342,9 @@ def run(args: argparse.Namespace) -> int:
         for tree in chosen:
             start = perf_counter()
             if (
-                result := read_tree(conn, tree, args.threshold, args.max_units)
+                result := read_tree(
+                    conn, tree, args.threshold, args.max_units, resolution(args)
+                )
             ) is None:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}) has no samples; skipped"
