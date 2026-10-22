@@ -11,11 +11,12 @@ records in PostgreSQL from CephFS recursive statistics (`ceph.dir.rbytes`).
   drill-down, hiding, filters, a zoomable time range and a table view.
   Any static web server can serve it.
 
-Charts stack the **own size** of **units**. A directory's own size is the
-bytes of the files directly in it: its rbytes minus its subdirectories'
-rbytes. A unit is a directory whose own size changed by at least a threshold
-(default 10 GiB). Own sizes never overlap, so the bands add up and no growth
-is counted twice. See [docs/terms.md](docs/terms.md) for the terms and
+Charts stack the **own size** of **units**. A directory's own size is its
+rbytes minus its subdirectories' rbytes: the bytes of the files directly in
+it, or its whole rbytes if trackdir sampled no subdirectories of it (none, or
+it is at the tree's max depth). A unit is a directory whose own size changed
+by at least a threshold (default 10 GiB). Own sizes never overlap, so the
+bands add up and no growth is counted twice. See [docs/terms.md](docs/terms.md) for the terms and
 [docs/design.md](docs/design.md) for the design, the data format and the
 known risks.
 
@@ -63,16 +64,17 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Bands | How many bands to name (up to 8); the rest are *Smaller units*. |
 | Min peak | Bands whose peak in the shown range is smaller join *Smaller units* (e.g. `1TiB`). |
 | Rest of tree | Also draw the bytes in no unit. Usually far larger than the units. |
-| hide | Remove a band's bytes from the chart; click the chip to bring it back. |
+| hide | Remove a band's bytes from the chart: a unit, or every unit of a group (shown as `dir/`). Click the chip to bring it back. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. |
 
-The URL keeps the view, so it can be bookmarked or shared.
+The URL keeps the view, except the zoomed time range, so it can be bookmarked
+or shared.
 
 ## Development
 
     pytest                          # tests; no database needed
     ruff format && ruff check
-    python scripts/check_web.py     # headless Chrome smoke test of web/ (needs data)
+    python scripts/check_web.py     # headless Chrome checks of web/: fixture + web/data
 
 Conventions are in [docs/conventions.md](docs/conventions.md). To add a
 view, add a chart module under `web/js/charts/` that builds an ECharts

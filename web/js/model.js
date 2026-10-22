@@ -7,6 +7,12 @@ export const ROOT = ".";
 // Distinct bands a chart may color: the categorical palette's slot count.
 export const MAX_BANDS = 8;
 
+/** The hidden-list entry that hides BAND: its unit, or, for a group, every
+ * unit below the group's dir (paths never end in "/", so "dir/" is unique). */
+export function hideKey(band) {
+  return band.drillable ? `${band.key}/` : band.key;
+}
+
 /** Number of path components; ROOT is 0. */
 export function depth(path) {
   return path === ROOT ? 0 : path.split("/").length;
@@ -26,6 +32,56 @@ export function ancestorAt(path, d) {
 export function relative(path, base) {
   if (path === base) return ".";
   return base === ROOT ? path : path.slice(base.length + 1);
+}
+
+// Paths in data files are Python os.fsdecode output: a byte that is not
+// UTF-8 is a lone surrogate U+DC80..U+DCFF. URLSearchParams would turn those
+// into U+FFFD, so URL values use this codec, which keeps them as raw bytes.
+const strict = new TextDecoder("utf-8", { fatal: true });
+const utf8 = new TextEncoder();
+
+/** S percent-encoded as its file-name bytes ("/" kept). */
+export function encodeValue(s) {
+  let out = "";
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    const bytes = cp >= 0xdc80 && cp <= 0xdcff ? [cp - 0xdc00] : utf8.encode(ch);
+    for (const b of bytes) {
+      const c = String.fromCharCode(b);
+      out += /[A-Za-z0-9\-._~/]/.test(c) ? c : `%${b.toString(16).toUpperCase().padStart(2, "0")}`;
+    }
+  }
+  return out;
+}
+
+/** The inverse of encodeValue: bytes that are not UTF-8 become U+DCxx. */
+export function decodeValue(text) {
+  const bytes = [];
+  for (let i = 0; i < text.length; i++) {
+    const hex = text[i] === "%" ? text.slice(i + 1, i + 3) : "";
+    if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+      bytes.push(Number.parseInt(hex, 16));
+      i += 2;
+    } else {
+      bytes.push(...utf8.encode(text[i] === "+" ? " " : text[i]));
+    }
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; ) {
+    const b = bytes[i];
+    const n = b < 0x80 ? 1 : b < 0xc2 ? 0 : b < 0xe0 ? 2 : b < 0xf0 ? 3 : b < 0xf5 ? 4 : 0;
+    let ch = null;
+    if (n && i + n <= bytes.length) {
+      try {
+        ch = strict.decode(new Uint8Array(bytes.slice(i, i + n)));
+      } catch {
+        ch = null;
+      }
+    }
+    out += ch ?? String.fromCharCode(0xdc00 + b);
+    i += ch ? n : 1;
+  }
+  return out;
 }
 
 /** Bytes as a short IEC string, e.g. "1.2 TiB". */
@@ -59,8 +115,9 @@ export function parseSize(text) {
  *
  * opts: inPath (drilled-into dir), group (levels below inPath to sum units
  * into; 0 = each unit is a band), top (max named bands), min (bytes: a band
- * whose peak over the range is lower folds into "smaller"), hidden (paths
- * whose units are dropped entirely), range ([first, last] point indexes).
+ * whose peak over the range is lower folds into "smaller"), hidden (units
+ * dropped entirely: a unit path, or "dir/" for every unit in dir's
+ * subtree; see hideKey), range ([first, last] point indexes).
  *
  * Bands are ranked by peak over the range, ties by key, so dirs that shrank
  * or vanished stay visible. Returns {bands, smaller, rest}: bands are
@@ -73,7 +130,8 @@ export function stack(data, opts) {
   const n = data.times.length;
   const [a, b] = range;
   const all = Object.keys(data.units).filter((u) => isUnder(u, inPath));
-  const isHidden = (u) => hidden.some((h) => isUnder(u, h));
+  const isHidden = (u) =>
+    hidden.some((h) => (h.endsWith("/") ? isUnder(u, h.slice(0, -1)) : u === h));
 
   const groups = new Map();
   for (const u of all) {

@@ -39,7 +39,8 @@ A path with no row after the first sample is constant, and only changed
 paths and their parents can change own size. The generator streams the
 first sample once (up to ~2 M rows), summing unchanged children per
 candidate parent, and fetches full history only for changed paths and their
-ancestors. On that database, all 4 trees take 11 s and 94 MB.
+ancestors. Both are streamed, so memory depends on the number of changed
+paths and time points, not on the length of the history.
 
 ### Propagation lag
 
@@ -49,9 +50,12 @@ dips by the child's growth for one sample, which would make it a *ghost
 unit*: 8.6 GiB dips were seen on the real database. Two measures:
 
 - Time points are the last sample per UTC bucket of at least 1 hour, not
-  every 5-minute sample. This hides lag within a bucket.
-- Significance uses a 3-point running median of the own series, which drops
-  a one-point dip when the lag straddles a bucket boundary.
+  every 5-minute sample, so far fewer lagging samples are used.
+- For a directory with changed children, significance uses a 3-point
+  running median of its own series, which drops a one-point dip. Only such
+  directories can dip this way, so the others (leaves, and directories whose
+  children are constant) use their raw series, and a real change lasting one
+  point still makes a unit.
 
 ### Page
 
@@ -64,6 +68,10 @@ unit*: 8.6 GiB dips were seen on the real database. Two measures:
   shrank or was deleted stays visible. At most 8 bands are named, the size
   of the validated palette; the rest are Smaller units.
 - View state is in the URL hash, so a view can be bookmarked or shared.
+  Hash values carry paths as their file-name bytes, percent-encoded, so
+  names that are not UTF-8 survive (`model.encodeValue`).
+- Hiding takes a unit (`hide=dir`) or a group, i.e. every unit in a subtree
+  (`hide=dir/`); hiding a unit's own files leaves the units below it.
 
 ## Data files
 
@@ -87,15 +95,16 @@ unit*: 8.6 GiB dips were seen on the real database. Two measures:
   leaves its children unprobed. They then look constant, and the directory's
   NULL rbytes are carried forward, so changes below it go unseen. The
   generator warns when a tree's samples have errors.
-- **Lag at the newest point.** The running median cannot correct the last
-  point, so a lag dip there can make a ghost unit until the next run.
+- **Lag at the first and newest points.** The running median cannot correct
+  the end points. A lag dip at the newest point can make a ghost unit until
+  the next run; one at the first point lasts until the bucket width changes.
+  Only directories with changed children are affected, and dips seen so far
+  (≤ 8.6 GiB) are below the default threshold.
 - **Magnitude hides change.** A stacked area shows size. A unit of 59 TiB
   that grew by 0.5 TiB looks flat beside small units. The tooltip and table
   show the change; a net-change view (design 2c) will show it directly.
 - **Threshold is global.** One threshold for all trees. A tree with many
   medium changes (`/sim`: 76 units) gets many units, and one with few gets
   few. Tune `--threshold` if a tree looks empty or crowded.
-- **Hash and odd names.** A hidden path that is not valid UTF-8 cannot
-  round-trip through the URL hash, so its hiding is lost on reload.
 - **Lost trees.** Data files of trees removed from the database stay in
   `web/data/` (no longer listed in `trees.json`) until deleted by hand.
