@@ -17,13 +17,19 @@ from statistics import median
 
 ROOT = b"."
 
+# Defaults of Resolution.
 # At most this many time points per tree, so a chart stays readable.
 MAX_POINTS = 400
+# History this recent keeps the finest buckets, so recent changes stay
+# visible however long the history grows.
+RECENT = timedelta(days=7)
+# The finest bucket: an hour, not trackdir's typical 5-minute sampling
+# interval. A parent's rbytes can lag its children's within a sample, and one
+# sample per hour exposes far fewer lagging samples (summarize smooths out
+# the rest).
+MIN_BUCKET = timedelta(hours=1)
 
-# Candidate time-bucket widths, finest first. The finest is an hour, not
-# trackdir's typical 5-minute sampling interval: a parent's rbytes can lag its
-# children's within a sample, and one sample per hour exposes far fewer
-# lagging samples than all of them (summarize smooths out the rest).
+# Coarser bucket widths for older history, finest first.
 BUCKET_WIDTHS = tuple(timedelta(hours=h) for h in (1, 6, 24, 48, 7 * 24))
 
 # A dir_state row: (sample id, path, rbytes, deleted)
@@ -45,7 +51,8 @@ class Unit:
     """A directory whose own size changed significantly.
 
     own: bytes of its own files per time point, clamped at 0; 0 while absent.
-    leaf: whether it never had subdirectories, so own is its rbytes.
+    leaf: whether it has no sampled subdirectories (none ever, or it is at
+    the tree's max depth), so own is its whole rbytes.
     """
 
     own: list[int]
@@ -75,20 +82,58 @@ def ancestors(path: bytes) -> Iterator[bytes]:
         yield path
 
 
-def choose_points(samples: Sequence[Sample]) -> list[Sample]:
+@dataclass(frozen=True, slots=True)
+class Resolution:
+    """How finely time points sample a tree's history.
+
+    History within RECENT of the latest sample gets MIN_BUCKET buckets.
+    Older history gets the finest width among MIN_BUCKET and the coarser
+    BUCKET_WIDTHS that keeps all points within MAX_POINTS (else the
+    coarsest).
+    """
+
+    recent: timedelta = RECENT
+    max_points: int = MAX_POINTS
+    min_bucket: timedelta = MIN_BUCKET
+
+    def recent_points(self) -> int:
+        """Return the most points the recent window can take."""
+        return self.recent // self.min_bucket + 1
+
+
+DEFAULT_RESOLUTION = Resolution()
+
+
+def choose_points(
+    samples: Sequence[Sample], resolution: Resolution = DEFAULT_RESOLUTION
+) -> list[Sample]:
     """Return the last sample of each time bucket, oldest first.
 
-    SAMPLES are ordered by (started, id). Buckets are UTC-aligned and of the
-    finest BUCKET_WIDTHS width that yields at most MAX_POINTS points (else
-    the coarsest). The latest sample is always the last point.
+    SAMPLES are ordered by (started, id). Buckets are UTC-aligned, as
+    RESOLUTION says. The latest sample is always the last point.
     """
-    for width in BUCKET_WIDTHS:
-        seconds = width.total_seconds()
-        last: dict[int, Sample] = {}
-        for sample in samples:
-            last[int(sample.started.timestamp() // seconds)] = sample
-        if len(last) <= MAX_POINTS:
+    if not samples:
+        return []
+    cutoff = samples[-1].started - resolution.recent
+    older = [s for s in samples if s.started <= cutoff]
+    recent = _last_per_bucket(
+        [s for s in samples if s.started > cutoff], resolution.min_bucket
+    )
+    widths = [resolution.min_bucket]
+    widths += [w for w in BUCKET_WIDTHS if w > resolution.min_bucket]
+    for width in widths:
+        kept = _last_per_bucket(older, width)
+        if len(kept) + len(recent) <= resolution.max_points:
             break
+    return kept + recent
+
+
+def _last_per_bucket(samples: Sequence[Sample], width: timedelta) -> list[Sample]:
+    """Return the last of SAMPLES in each UTC-aligned bucket of WIDTH."""
+    seconds = width.total_seconds()
+    last: dict[int, Sample] = {}
+    for sample in samples:
+        last[int(sample.started.timestamp() // seconds)] = sample
     return list(last.values())
 
 
@@ -99,13 +144,14 @@ def summarize(
     fetch: Callable[[set[bytes]], Iterable[Row]],
     threshold: int,
     limit: int,
+    resolution: Resolution = DEFAULT_RESOLUTION,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
 
     CHANGED holds the paths with a row in any sample after the first. FIRST
     yields (path, rbytes) for the first sample's rows. FETCH(paths) yields
     every row of PATHS, ordered as SAMPLES are. Both are read once, so they
-    may stream.
+    may stream. RESOLUTION picks the time points.
 
     A path outside CHANGED has its single row in the first sample, so its
     value is constant, and only CHANGED paths and their parents can change
@@ -119,7 +165,7 @@ def summarize(
     median, which drops such dips. Other directories cannot dip that way, so
     their raw range counts, including changes that last one point.
     """
-    points = choose_points(samples)
+    points = choose_points(samples, resolution)
     dirs = changed | {parent(p) for p in changed if p != ROOT}
     constant, has_children = _children(first, changed, dirs)
     wanted = {ROOT} | changed | {a for p in changed for a in ancestors(p)}

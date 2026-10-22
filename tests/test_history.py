@@ -6,6 +6,7 @@ import pytest
 from dirhistory.history import (
     MAX_POINTS,
     ROOT,
+    Resolution,
     Sample,
     ancestors,
     choose_points,
@@ -63,9 +64,33 @@ def test_choose_points_collapses_samples_within_an_hour():
 
 def test_choose_points_widens_buckets_for_long_histories():
     s = samples(24 * 60, timedelta(hours=1))  # 60 days of hourly samples
-    points = choose_points(s)
+    points = choose_points(s, Resolution(recent=timedelta(0)))
     assert len(points) == 60 * 4  # 6-hour buckets: hourly would exceed MAX_POINTS
     assert points[-1] == s[-1]
+
+
+def test_choose_points_keeps_recent_history_at_the_finest_buckets():
+    s = samples(24 * 60, timedelta(hours=1))  # 60 days of hourly samples
+    points = choose_points(s, Resolution(recent=timedelta(days=7)))
+    assert len(points) <= MAX_POINTS
+    assert points[-1] == s[-1]
+    recent = [p for p in points if p.started > s[-1].started - timedelta(days=7)]
+    assert len(recent) == 7 * 24
+    older = points[: -len(recent)]
+    gaps = {b.started - a.started for a, b in pairwise(older)}
+    assert gaps == {timedelta(hours=6)}  # 53 days at 6 h + 168 recent = 380 points
+
+
+def test_choose_points_honors_max_points_and_min_bucket():
+    s = samples(48, timedelta(minutes=5))  # 4 hours
+    assert len(choose_points(s, Resolution(min_bucket=timedelta(minutes=15)))) == 16
+    res = Resolution(recent=timedelta(0), max_points=2)
+    assert len(choose_points(samples(48, timedelta(hours=1)), res)) == 2
+
+
+def test_resolution_reports_points_needed_by_recent_window():
+    assert Resolution(recent=timedelta(days=7)).recent_points() == 7 * 24 + 1
+    assert Resolution(recent=timedelta(0)).recent_points() == 1
 
 
 def test_single_sample_tree_has_root_series_and_no_units():

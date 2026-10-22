@@ -1,7 +1,7 @@
 import json
 import os
 import stat
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 import pytest
@@ -9,15 +9,17 @@ import pytest
 from dirhistory import generate
 from dirhistory.db import Tree
 from dirhistory.generate import (
+    format_duration,
     index_entry,
     merged_index,
+    parse_duration,
     parse_size,
     parser,
     select_trees,
     tree_document,
     write_json,
 )
-from dirhistory.history import ROOT, TreeHistory, Unit
+from dirhistory.history import ROOT, Resolution, TreeHistory, Unit
 
 TREE = Tree(2, "ad1bf53c-a6ca-11ec-b47e-b04f13b8e306", None, b"/npx/ana", 5)
 T1 = datetime(2026, 10, 21, 19, 19, 45, 208826, tzinfo=UTC)
@@ -157,3 +159,53 @@ def test_database_errors_are_errors_not_tracebacks(monkeypatch, capsys):
     monkeypatch.setattr(generate.db, "check_schema", denied)
     assert generate.main(["--db", "x"]) == 1
     assert "ERROR: " in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("7d", timedelta(days=7)),
+        ("12h", timedelta(hours=12)),
+        ("15m", timedelta(minutes=15)),
+        ("2w", timedelta(weeks=2)),
+        ("0", timedelta(0)),
+    ],
+)
+def test_parse_duration(text, expected):
+    assert parse_duration(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "7", "d", "1.5d", "-1d", "7days"])
+def test_parse_duration_rejects(text):
+    with pytest.raises(ValueError, match="duration"):
+        parse_duration(text)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--recent", "30d"],  # 721 hourly points > 400
+        ["--min-bucket", "0"],
+        ["--max-points", "1"],
+    ],
+)
+def test_resolution_options_are_checked(argv, capsys):
+    with pytest.raises(SystemExit):
+        generate.main(["--db", "x", *argv])
+    assert "error:" in capsys.readouterr().err
+
+
+def test_resolution_options_reach_summarize():
+    args = parser().parse_args(
+        ["--recent", "2d", "--max-points", "100", "--min-bucket", "6h"]
+    )
+    assert generate.resolution(args) == Resolution(
+        recent=timedelta(days=2), max_points=100, min_bucket=timedelta(hours=6)
+    )
+
+
+@pytest.mark.parametrize(
+    "d", [timedelta(0), timedelta(days=7), timedelta(hours=36), timedelta(seconds=90)]
+)
+def test_format_duration_round_trips(d):
+    assert parse_duration(format_duration(d)) == d
