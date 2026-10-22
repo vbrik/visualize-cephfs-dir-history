@@ -2,8 +2,10 @@
 
 Serves web/ on a free local port with two data sets:
 
-- tests/data/web, a synthetic tree with a non-leaf unit, a unit below it and
-  a name that is not UTF-8, for regression checks of the page's semantics;
+- tests/data/web, two synthetic trees (the first with a non-leaf unit, a
+  unit below it and a name that is not UTF-8), for regression checks of
+  the page's semantics, URL codec, update ordering, data refresh and click
+  hit-testing; some checks serve altered copies of them;
 - web/data (if present), the real data written by dirhistory-generate: for
   every tree, in light and dark mode, it groups by one level, drills into
   the first group, hides a band, reloads from the URL hash and unhides it.
