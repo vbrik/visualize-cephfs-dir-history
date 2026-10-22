@@ -29,7 +29,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "playwright"]  # playwright: scripts/check_web.py
 
 [project.scripts]
 dirhistory-generate = "dirhistory.generate:main"
