@@ -1,0 +1,14 @@
+# Serves the static site. Access control is expected in front of it.
+server {
+    listen 80;
+    server_name dirhistory.example.org;
+    root /opt/dirhistory/web;
+
+    gzip on;
+    gzip_types application/json application/javascript text/css;
+
+    # Data files change hourly; make browsers revalidate them.
+    location /data/ {
+        add_header Cache-Control "no-cache";
+    }
+}

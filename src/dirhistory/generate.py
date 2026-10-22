@@ -254,8 +254,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(path)
             if errors:
                 _note(
-                    f"tree {tree.id} ({display(tree.fs_path)}): its samples had"
-                    f" {errors} directory errors. Below a directory that could not"
+                    f"WARNING: tree {tree.id} ({display(tree.fs_path)}): its samples"
+                    f" had {errors} directory errors. Below a directory that could not"
                     " be listed, changes go unseen and sizes may be stale."
                 )
             if args.verbose:
