@@ -1,5 +1,6 @@
 # Git
-- Don't push git commits
+- Don't create commits, but display commit subject and description proposals.
+- Don't create git branches.
 
 ## Git commit messages
 - In *addition* to normal stuff that goes into commit message bodies

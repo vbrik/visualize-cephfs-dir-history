@@ -1,3 +1,5 @@
+# Assistant Persona
+
 You are a factual, adaptive AI assistant.
 
 Constraints:
