@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<!--
+  Readable source of a design mock for the directory growth views: the
+  template from an exported design-tool bundle, without the bundle's
+  runtime (dc-runtime, React 18.3.1) and fonts, so it does not render on
+  its own. Directory names and sizes are invented.
+-->
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="8e124072-895b-4a5a-9620-f566655eff51"></script>
+
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>/* Organic — design-system tokens and component classes. This file is the source of truth for the system's look; retune it here and see readme.md. */
+/* latin-ext */
+@font-face {
+  font-family: 'Caprasimo';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("18c2c9cc-ac57-4087-aae9-6a5e23cbd8cc") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Caprasimo';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("6d6051d6-9ff1-480f-bd79-bc1919e06c2c") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("67bf95e0-9e18-4fa0-8869-9003d54f389b") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("9f6523d6-5339-4578-aaf8-c50c5ec9691b") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("67bf95e0-9e18-4fa0-8869-9003d54f389b") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("9f6523d6-5339-4578-aaf8-c50c5ec9691b") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("67bf95e0-9e18-4fa0-8869-9003d54f389b") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("9f6523d6-5339-4578-aaf8-c50c5ec9691b") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+
+:root {
+  --color-bg: #f5ead8;
+  --color-surface: #ebddc5;
+  --color-text: #201e1d;
+  --color-accent: #c67139;
+  --color-accent-2: #7a8a5e;
+  --color-divider: color-mix(in srgb, #201e1d 16%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
+     same step of any role matches the others in visual value. */
+  --color-neutral-100: #f9f4ed;
+  --color-neutral-200: #eee7db;
+  --color-neutral-300: #dcd3c4;
+  --color-neutral-400: #c0b6a5;
+  --color-neutral-500: #a19786;
+  --color-neutral-600: #82796a;
+  --color-neutral-700: #645c50;
+  --color-neutral-800: #474238;
+  --color-neutral-900: #2e2b25;
+
+  --color-accent-100: #fff2eb;
+  --color-accent-200: #ffe1d0;
+  --color-accent-300: #ffc6a5;
+  --color-accent-400: #f6a06b;
+  --color-accent-500: #d67f48;
+  --color-accent-600: #b2622d;
+  --color-accent-700: #8c491a;
+  --color-accent-800: #643312;
+  --color-accent-900: #402310;
+
+  --color-accent-2-100: #f0fae1;
+  --color-accent-2-200: #e1eecc;
+  --color-accent-2-300: #ccdbb2;
+  --color-accent-2-400: #aebf92;
+  --color-accent-2-500: #8fa073;
+  --color-accent-2-600: #728157;
+  --color-accent-2-700: #56633f;
+  --color-accent-2-800: #3d472b;
+  --color-accent-2-900: #272e1b;
+
+  --font-heading: "Caprasimo", system-ui, sans-serif;
+  --font-heading-weight: 400;
+  --font-body: "Figtree", system-ui, sans-serif;
+
+  --space-1: 4.4px;
+  --space-2: 8.8px;
+  --space-3: 13.2px;
+  --space-4: 17.6px;
+  --space-6: 26.4px;
+  --space-8: 35.2px;
+
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
+
+  /* Elevation — derived from the ground: soft ink-tinted shadows on a
+     light theme, a hairline edge + ambient darkness on a dark one. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2e2b25 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, #2e2b25 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2e2b25 22%, transparent);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); }
+
+.washed{filter:saturate(0.6) contrast(0.85) brightness(1.1) opacity(0.94)}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Components — built with the tokens above. Plain CSS
+   on plain HTML: no JavaScript, no build step. Each class is documented in
+   readme.md and demonstrated in foundations/ and components/.
+   ══════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-size: 15px; line-height: 1.55; font-weight: 400; }
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h1 { font-size: 42px; }
+h2 { font-size: 32px; }
+h3 { font-size: 25px; }
+h4 { font-size: 20px; }
+h5 { font-size: 16px; }
+h6 { font-size: 13px; }
+h6 { letter-spacing: 0.08em; text-transform: uppercase; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+img { display: block; max-width: 100%; }
+figure { margin: 0; }
+figcaption {
+  font-size: 11px; margin-top: var(--space-1);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+/* — rules — */
+.hr {
+  height: 1px; border: 0; margin: var(--space-4) 0;
+  background: var(--color-divider);
+}
+
+/* — buttons — */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text); /* matches the .input's 14px —
+     the pair sits side by side in sign-up rows */
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn svg { display: block; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--color-accent); color: var(--color-bg); }
+.btn-primary:hover { background: var(--color-accent-600); }
+.btn-primary:active { background: var(--color-accent-700); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-ghost:active { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.btn-icon { width: 36px; height: 36px; padding: 0; }
+.btn-block { width: 100%; margin-top: var(--space-2); }
+
+/* — forms — */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+textarea.input { min-height: 90px; resize: vertical; }
+.radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.radio input, .seg-opt input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.radio .dot {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--color-divider);
+}
+.radio:hover .dot { border-color: var(--color-accent); }
+.radio input:checked + .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 4px var(--color-bg);
+}
+.radio input:focus-visible + .dot { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.seg {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.seg-opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+.seg-opt:has(input:checked) { background: var(--color-accent); color: var(--color-bg); }
+.seg-opt:not(:has(input:checked)):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.seg-opt:has(input:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+
+/* — cards — */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface);
+}
+.card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+.card-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 17px; line-height: 1.2;
+}
+.card-body { margin: 0; font-size: 13px; opacity: 0.8; flex: 1; }
+.card-meta {
+  display: flex; align-items: center; gap: 6px; font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.elev-sm { box-shadow: var(--shadow-sm); }
+.elev-md { box-shadow: var(--shadow-md); }
+.elev-lg { box-shadow: var(--shadow-lg); }
+
+/* — tags — */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
+.tag-accent-2 { background: var(--color-accent-2-100); color: var(--color-accent-2-800); }
+.tag-neutral { background: var(--color-neutral-100); color: var(--color-neutral-800); }
+.tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
+
+/* — navigation — */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: none;
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; margin-right: auto;
+}
+.nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.nav a:hover, .nav a[aria-current='page'] { color: var(--color-accent); }
+
+/* — tables — */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th {
+  text-align: left; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-2); border-bottom: 1px solid var(--color-divider);
+}
+.table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+.table tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+
+/* — dialog — */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 20px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* — rounded frame: everything softens, small controls go pill — */
+.card, .dialog { border-radius: calc(var(--radius-lg) * 1.15); }
+.btn, .tag, .seg, .input { border-radius: 999px; }
+.input { padding-inline: 14px; }
+
+</style>
+<script src="11ee9ae6-9e87-4674-b128-dd360ea9a123"></script>
+<style>body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)}a{color:var(--color-accent-700)}a:hover{color:var(--color-accent-900)}</style>
+</helmet>
+<section style="padding:48px;display:flex;flex-direction:column;gap:32px">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:760px">
+    <h1 style="font-family:var(--font-heading);font-weight:400;font-size:40px;margin:0">Growth and shrinkage over time</h1>
+    <p style="margin:0;font-size:17px;line-height:1.5;text-wrap:pretty">Monthly size per work group over 24 months (mock data). Growth in terracotta, shrinkage in sage throughout.</p>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+
+    <div id="2a" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">2a</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Stacked area</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">Total footprint and each group's share over time — the capacity-planning view. Readable for ~8 groups; the rest fold into "Other". Middle layers are hard to read precisely.</p>
+      <div style="position:relative;width:564px">
+        <svg width="564" height="280" sc-camel-view-box="0 0 564 280" style="display:block;overflow:visible">
+          <sc-for list="{{ saAreas }}" as="a" hint-placeholder-count="0"><path d="{{ a.d }}" fill="{{ a.color }}" stroke="var(--color-surface)" stroke-width="1.5"><title>{{ a.name }}</title></path></sc-for>
+          <sc-for list="{{ saTicks }}" as="t" hint-placeholder-count="0"><line x1="0" x2="564" y1="{{ t.y }}" y2="{{ t.y }}" stroke="var(--color-surface)" stroke-dasharray="2 4"></line><text x="6" y="{{ t.ty }}" font-size="11" fill="var(--color-text)" font-weight="700" paint-order="stroke" stroke="var(--color-bg)" stroke-width="3">{{ t.label }}</text></sc-for>
+        </svg>
+        <div style="position:relative;height:20px;font-size:12px;color:var(--color-neutral-800)">
+          <sc-for list="{{ saMonths }}" as="m" hint-placeholder-count="0"><span style="position:absolute;top:4px;left:{{ m.left }};transform:translateX(-50%);white-space:nowrap">{{ m.label }}</span></sc-for>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px 14px">
+        <sc-for list="{{ saLegend }}" as="l" hint-placeholder-count="9"><span style="display:flex;gap:6px;align-items:center;font-size:13px"><span style="width:12px;height:12px;border-radius:999px;background:{{ l.color }}"></span>{{ l.name }} <span style="color:var(--color-neutral-700)">{{ l.now }}</span></span></sc-for>
+      </div>
+    </div>
+
+    <div id="2b" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">2b</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Small multiples</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">One sparkline per group, sorted by biggest 12-month change. Shows the shape — steady climb, cleanup cliff, slow decline. Each chart has its own y-scale, so compare shapes, not heights.</p>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+        <sc-for list="{{ multiples }}" as="m" hint-placeholder-count="8">
+          <div style="background:var(--color-bg);border-radius:var(--radius-md);padding:12px 14px;display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;gap:8px;align-items:baseline"><span style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">{{ m.name }}</span><span style="font-size:13px;color:var(--color-neutral-700);white-space:nowrap">{{ m.now }}</span><span class="{{ m.tagClass }}" style="margin-left:auto;white-space:nowrap">{{ m.chg }}</span></div>
+            <svg width="100%" height="56" sc-camel-view-box="0 0 240 56" sc-camel-preserve-aspect-ratio="none" style="display:block"><path d="{{ m.area }}" fill="{{ m.fill }}"></path><path d="{{ m.line }}" fill="none" stroke="{{ m.stroke }}" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path></svg>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div id="2c" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">2c</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Net change, diverging</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">Growers right, shrinkers left, over a chosen window. The most direct answer to "who grew, who freed space". Hides what happened in between.</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <sc-for list="{{ periods }}" as="p" hint-placeholder-count="3"><button class="{{ p.cls }}" sc-camel-on-click="{{ p.pick }}" style="padding:6px 16px;font-size:14px;white-space:nowrap;flex:none">{{ p.label }}</button></sc-for>
+        <span style="margin-left:auto;font-size:14px;color:var(--color-neutral-800);white-space:nowrap">{{ dvRange }}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <sc-for list="{{ dvRows }}" as="r" hint-placeholder-count="12">
+          <div style="display:grid;grid-template-columns:130px minmax(0,1fr) minmax(0,1fr) 76px;align-items:center;gap:0 10px;font-size:14px">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.name }}</span>
+            <span style="display:flex;justify-content:flex-end;height:14px;border-right:2px solid var(--color-neutral-400)"><span style="width:{{ r.negW }};background:var(--color-accent-2-500);border-radius:999px 0 0 999px"></span></span>
+            <span style="display:flex;height:14px;margin-left:-10px"><span style="width:{{ r.posW }};background:var(--color-accent-500);border-radius:0 999px 999px 0"></span></span>
+            <span style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:{{ r.ink }}">{{ r.label }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div id="2d" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">2d</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Monthly change heatmap</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">Rows = groups (or projects), columns = months, color = net change that month. Scales to hundreds of rows and makes bursts and cleanups jump out. Hover a cell for the value.</p>
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <div style="display:grid;grid-template-columns:110px repeat(24,minmax(0,1fr));gap:3px;font-size:11px;color:var(--color-neutral-800);height:16px">
+          <span></span>
+          <sc-for list="{{ hmMonths }}" as="m" hint-placeholder-count="0"><span style="white-space:nowrap;overflow:visible">{{ m.label }}</span></sc-for>
+        </div>
+        <sc-for list="{{ hmRows }}" as="r" hint-placeholder-count="12">
+          <div style="display:grid;grid-template-columns:110px repeat(24,minmax(0,1fr));gap:3px;align-items:center">
+            <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.name }}</span>
+            <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="0"><span title="{{ c.title }}" style="height:22px;border-radius:6px;background:{{ c.bg }}" style-hover="outline:2px solid var(--color-text)"></span></sc-for>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center;font-size:12px;color:var(--color-neutral-800)">
+        <span style="margin-right:6px;white-space:nowrap">TB / month</span>
+        <sc-for list="{{ hmKey }}" as="k" hint-placeholder-count="7"><span style="display:flex;flex-direction:column;align-items:center;gap:2px"><span style="width:40px;height:12px;border-radius:999px;background:{{ k.bg }}"></span>{{ k.label }}</span></sc-for>
+      </div>
+    </div>
+
+  </div>
+</section>
+<section style="padding:48px;display:flex;flex-direction:column;gap:32px">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:760px">
+    <h1 style="font-family:var(--font-heading);font-weight:400;font-size:40px;margin:0">Who grew by 100 TB+ this year</h1>
+    <p style="margin:0;font-size:17px;line-height:1.5;text-wrap:pretty">Three ways to show the same list of leaf directories, rolled up by work group (first level under <code>work/</code>) and project. Mock data, {{ totalLabel }} across {{ leafCount }} leaves.</p>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+
+    <div id="1a" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">1a</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Ranked, expandable bars</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">Answers "who" fastest. Groups ranked by total; click to open projects, then leaves. All bars share one scale so sizes stay comparable at every level. Scales to hundreds of leaves.</p>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <sc-for list="{{ rows }}" as="r" hint-placeholder-count="12">
+          <button sc-camel-on-click="{{ r.toggle }}" style="display:grid;grid-template-columns:minmax(0,220px) minmax(0,1fr) 72px;gap:12px;align-items:center;border:none;background:{{ r.bg }};border-radius:999px;padding:6px 14px;font:inherit;color:inherit;text-align:left;cursor:{{ r.cursor }}" style-hover="background:var(--color-accent-100)">
+            <span style="padding-left:{{ r.indent }};display:flex;gap:6px;align-items:center;min-width:0;font-size:{{ r.size }};font-weight:{{ r.weight }}"><span style="width:12px;flex:none;color:var(--color-accent-700)">{{ r.caret }}</span><span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.path }}">{{ r.label }}</span></span>
+            <span style="height:{{ r.barH }};background:var(--color-bg);border-radius:999px;overflow:hidden"><span style="display:block;height:100%;width:{{ r.pct }};background:{{ r.color }};border-radius:999px"></span></span>
+            <span style="text-align:right;font-variant-numeric:tabular-nums;font-size:14px;font-weight:{{ r.weight }}">{{ r.tb }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <div id="1b" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">1b</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Treemap</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">Shows share of the whole at a glance — one picture for a status page. Weaker for precise comparison; small entries lose their labels (hover for detail).</p>
+      <div style="position:relative;width:564px;height:440px">
+        <sc-for list="{{ tmGroups }}" as="g" hint-placeholder-count="0">
+          <div style="position:absolute;left:{{ g.x }};top:{{ g.y }};width:{{ g.w }};height:{{ g.h }};padding:4px 8px;box-sizing:border-box;font-size:12px;font-weight:700;color:{{ g.ink }};overflow:hidden;white-space:nowrap;text-overflow:ellipsis">{{ g.label }}</div>
+        </sc-for>
+        <sc-for list="{{ tmLeaves }}" as="t" hint-placeholder-count="0">
+          <div title="{{ t.title }}" style="position:absolute;left:{{ t.x }};top:{{ t.y }};width:{{ t.w }};height:{{ t.h }};background:{{ t.color }};color:{{ t.ink }};border-radius:10px;box-sizing:border-box;padding:6px 8px;overflow:hidden;font-size:12px;line-height:1.25;display:flex;flex-direction:column;gap:2px" style-hover="outline:3px solid var(--color-text);z-index:2">
+            <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.label }}</span>
+            <span style="opacity:.85;font-variant-numeric:tabular-nums">{{ t.tb }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div id="1c" style="width:620px;background:var(--color-surface);border-radius:var(--radius-lg);padding:28px;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:12px;align-items:center"><span class="tag tag-accent">1c</span><h2 style="font-family:var(--font-heading);font-weight:400;font-size:24px;margin:0">Icicle, drill-down</h2></div>
+      <p style="margin:0;font-size:15px;line-height:1.5;color:var(--color-neutral-800)">Follows the real directory depth, however uneven. Click any block to zoom into it; breadcrumbs walk back up. Best for exploring where inside a group the growth sits.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <sc-for list="{{ crumbs }}" as="c" hint-placeholder-count="1">
+          <button class="btn btn-ghost" sc-camel-on-click="{{ c.go }}" style="padding:4px 12px;font-size:14px">{{ c.label }}</button>
+        </sc-for>
+        <span style="margin-left:auto;font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap">{{ focusTb }}</span>
+      </div>
+      <div style="position:relative;width:564px;height:{{ icH }}">
+        <sc-for list="{{ icNodes }}" as="n" hint-placeholder-count="0">
+          <button sc-camel-on-click="{{ n.zoom }}" title="{{ n.title }}" style="position:absolute;left:{{ n.x }};width:{{ n.w }};top:{{ n.y }};height:60px;padding:6px 8px;box-sizing:border-box;border:2px solid var(--color-surface);border-radius:12px;background:{{ n.color }};color:{{ n.ink }};font:inherit;font-size:12px;text-align:left;overflow:hidden;cursor:{{ n.cursor }};display:flex;flex-direction:column;justify-content:center;gap:2px" style-hover="outline:3px solid var(--color-text);z-index:2">
+            <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n.label }}</span>
+            <span style="white-space:nowrap;opacity:.85">{{ n.tb }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script="">
+const LEAVES = [
+ ['work/Atlas/2025',520],['work/Atlas/2024',410],['work/Atlas/2026',180],
+ ['work/Birch/survey/pass2/sim_a',310],['work/Birch/survey/pass2/sim_b',140],['work/Birch/fits',120],
+ ['work/Cobalt/train_set',260],['work/Cobalt/labeled',190],['work/Cobalt/future',115],
+ ['work/Delta/models',230],['work/Delta/2024',150],['work/Delta/next',105],
+ ['work/Ember/joint/systematics',210],['work/Ember/fitter',170],['work/Ember/sample_x',110],
+ ['work/Fjord/station5',160],['work/Fjord/event_lists',140],
+ ['work/Granite/run3/high/analysis',155],
+ ['work/Harbor/heavy/sim',145],['work/Harbor/run3_search',102],
+ ['work/Iris/buffers',135],['work/Juniper/cascades',130],['work/Juniper/followup',105],
+ ['work/Kestrel/run-2022',125],['work/Kestrel/run-2021',110],['work/Lumen/sim',120],
+ ['work/Maple/level4',108],['work/Nimbus/catalog_v3',101]
+];
+const PAL = [
+ ['var(--color-accent-500)','#fff'],['var(--color-accent-2-500)','#fff'],['var(--color-accent-700)','#fff'],
+ ['var(--color-accent-2-700)','#fff'],['var(--color-accent-300)','var(--color-text)'],['var(--color-accent-2-300)','var(--color-text)'],
+ ['var(--color-neutral-600)','#fff'],['var(--color-accent-900)','#fff'],['var(--color-accent-2-900)','#fff'],['var(--color-neutral-300)','var(--color-text)']
+];
+const fmt = tb => tb >= 1000 ? (tb/1000).toFixed(2)+' PB' : Math.round(tb)+' TB';
+function build(){
+  const root = {name:'work', path:'work', kids:{}, tb:0};
+  LEAVES.forEach(([p,tb]) => { let n = root; n.tb += tb;
+    p.split('/').slice(1).forEach((s,i,a) => { n.kids[s] = n.kids[s] || {name:s, path:n.path+'/'+s, kids:{}, tb:0}; n = n.kids[s]; n.tb += tb; }); });
+  const fin = n => { n.children = Object.values(n.kids).sort((a,b)=>b.tb-a.tb); n.children.forEach(fin); };
+  fin(root);
+  root.children.forEach((g,i) => { const c = PAL[i % PAL.length]; const paint = n => { n.color=c[0]; n.ink=c[1]; n.children.forEach(paint); }; paint(g); });
+  return root;
+}
+function leavesOf(n, base){ return n.children.length ? n.children.flatMap(c => leavesOf(c, base)) : [{n, label:n.path.slice(base.length+1)}]; }
+function squarify(items, x, y, w, h){
+  const total = items.reduce((s,i)=>s+i.v,0), k = w*h/total, out = [];
+  const a = items.map(i => ({...i, a:i.v*k}));
+  const worst = (row, s) => { const sum=row.reduce((t,r)=>t+r.a,0), mx=Math.max(...row.map(r=>r.a)), mn=Math.min(...row.map(r=>r.a)); return Math.max(s*s*mx/(sum*sum), sum*sum/(s*s*mn)); };
+  const lay = row => { const sum=row.reduce((t,r)=>t+r.a,0);
+    if (w >= h) { const cw=sum/h; let yy=y; row.forEach(r=>{ const rh=r.a/cw; out.push({...r,x,y:yy,w:cw,h:rh}); yy+=rh; }); x+=cw; w-=cw; }
+    else { const rh=sum/w; let xx=x; row.forEach(r=>{ const rw=r.a/rh; out.push({...r,x:xx,y,w:rw,h:rh}); xx+=rw; }); y+=rh; h-=rh; } };
+  let row = [], i = 0;
+  while (i < a.length) { const s=Math.min(w,h); if (!row.length || worst([...row,a[i]],s) <= worst(row,s)) { row.push(a[i]); i++; } else { lay(row); row=[]; } }
+  if (row.length) lay(row);
+  return out;
+}
+const MONTHS = Array.from({length:25},(_,i)=>{const d=new Date(2024,9+i,1);return d.toLocaleString('en',{month:'short'})+' ’'+String(d.getFullYear()).slice(2);});
+let _s = 11; const rnd = () => (_s = (_s*16807) % 2147483647) / 2147483647;
+const SPEC = [['Atlas',2400,85,{}],['Birch',1500,40,{14:-300}],['Ember',1100,35,{}],['Delta',900,30,{9:-420}],['Kestrel',900,10,{11:-350}],['Granite',800,-10,{6:-150}],['Fjord',700,25,{}],['Harbor',650,20,{}],['Cobalt',600,45,{20:-260}],['Maple',600,-5,{}],['Juniper',500,18,{}],['Iris',400,12,{16:-120}]];
+const SERIES = SPEC.map(([name,start,g,cut],i)=>{let v=start;const vals=[v];for(let m=1;m<25;m++){v=Math.max(v+g+(rnd()-.5)*30+(cut[m]||0),0);vals.push(v);}return {name,vals,color:PAL[i%PAL.length][0]};});
+const sgn = d => (d>=0?'+':'−')+fmt(Math.abs(d));
+class Component extends DCLogic {
+  state = { open: {}, focus: [], period: 12 };
+  stacked(){
+    const W=564,H=280, layers=[...SERIES.slice(0,8),{name:'Other',color:'var(--color-neutral-300)',vals:MONTHS.map((_,m)=>SERIES.slice(8).reduce((s,x)=>s+x.vals[m],0))}];
+    const max=Math.max(...MONTHS.map((_,m)=>layers.reduce((s,l)=>s+l.vals[m],0)))*1.08, X=m=>(m/24*W).toFixed(1), Y=v=>(H-v/max*H).toFixed(1);
+    let base=MONTHS.map(()=>0);
+    const areas=layers.map(l=>{const lo=base,hi=base.map((b,m)=>b+l.vals[m]);base=hi;
+      return {d:'M'+hi.map((v,m)=>X(m)+','+Y(v)).join('L')+'L'+lo.map((v,m)=>X(m)+','+Y(v)).reverse().join('L')+'Z',color:l.color,name:l.name,now:fmt(l.vals[24])};});
+    const ticks=[];for(let v=5000;v<max;v+=5000)ticks.push({y:Y(v),ty:Y(v)-5,label:fmt(v)});
+    return {saAreas:areas, saLegend:[...areas].reverse(), saTicks:ticks, saMonths:[0,6,12,18,24].map(m=>({label:MONTHS[m],left:(m/24*100)+'%'}))};
+  }
+  multiples(){
+    return SERIES.map(s=>{const max=Math.max(...s.vals),lo=Math.min(...s.vals)*0.92,W=240,H=56,X=m=>(m/24*W).toFixed(1),Y=v=>(H-(v-lo)/(max-lo)*H).toFixed(1);
+      const pts=s.vals.map((v,m)=>X(m)+','+Y(v)).join('L'), ch=s.vals[24]-s.vals[12], up=ch>=0;
+      return {name:s.name,now:fmt(s.vals[24]),line:'M'+pts,area:'M0,'+H+'L'+pts+'L'+W+','+H+'Z',ch,chg:sgn(ch),
+        stroke:up?'var(--color-accent-700)':'var(--color-accent-2-700)',fill:up?'var(--color-accent-200)':'var(--color-accent-2-200)',tagClass:up?'tag tag-accent':'tag tag-accent-2'};
+    }).sort((a,b)=>Math.abs(b.ch)-Math.abs(a.ch));
+  }
+  diverging(){
+    const p=this.state.period, rows=SERIES.map(s=>({name:s.name,ch:s.vals[24]-s.vals[24-p]})).sort((a,b)=>b.ch-a.ch), max=Math.max(...rows.map(r=>Math.abs(r.ch)));
+    return {dvRows:rows.map(r=>({name:r.name,label:sgn(r.ch),posW:r.ch>0?(r.ch/max*100)+'%':'0%',negW:r.ch<0?(-r.ch/max*100)+'%':'0%',ink:r.ch<0?'var(--color-accent-2-700)':'var(--color-accent-700)'})),
+      periods:[3,12,24].map(n=>({label:n+' mo',cls:n===p?'btn btn-primary':'btn btn-secondary',pick:()=>this.setState({period:n})})), dvRange:MONTHS[24-p]+' → '+MONTHS[24]};
+  }
+  heat(){
+    const bin=d=>d>150?'var(--color-accent-700)':d>60?'var(--color-accent-500)':d>25?'var(--color-accent-300)':d>-25?'var(--color-neutral-200)':d>-100?'var(--color-accent-2-300)':d>-250?'var(--color-accent-2-500)':'var(--color-accent-2-700)';
+    return {hmRows:SERIES.map(s=>({name:s.name,cells:s.vals.slice(1).map((v,i)=>({bg:bin(v-s.vals[i]),title:s.name+' · '+MONTHS[i+1]+': '+sgn(v-s.vals[i])}))})),
+      hmMonths:MONTHS.slice(1).map((m,i)=>({label:i%3===0?m:''})),
+      hmKey:[['−250+','var(--color-accent-2-700)'],['−100','var(--color-accent-2-500)'],['−25','var(--color-accent-2-300)'],['±25','var(--color-neutral-200)'],['+25','var(--color-accent-300)'],['+60','var(--color-accent-500)'],['+150','var(--color-accent-700)']].map(([label,bg])=>({label,bg}))};
+  }
+  root = build();
+  rowsVals(){
+    const max = this.root.children[0].tb, rows = [], open = this.state.open;
+    const toggle = p => () => this.setState(s => ({open:{...s.open,[p]:!s.open[p]}}));
+    const push = (n, depth, label) => { const exp = n.children.length > 0;
+      rows.push({ label, path:n.path, tb:fmt(n.tb), pct:(n.tb/max*100)+'%', color:n.color, indent:(depth*22)+'px',
+        caret: exp ? (open[n.path]?'▾':'▸') : '', size: depth? '14px':'15px', weight: depth? 400:700,
+        barH: depth? '8px':'14px', bg: depth? 'transparent':'var(--color-bg)', cursor: exp?'pointer':'default', toggle: exp?toggle(n.path):undefined });
+      if (exp && open[n.path]) {
+        if (depth === 0) n.children.forEach(c => push(c, 1, c.name));
+        else leavesOf(n, n.path).forEach(l => push(l.n, 2, l.label));
+      } };
+    this.root.children.forEach(g => push(g, 0, g.name));
+    return rows;
+  }
+  treemap(){
+    const W=564, H=440, groups = squarify(this.root.children.map(g=>({v:g.tb,g})), 0,0,W,H), tg=[], tl=[];
+    groups.forEach(r => { const head = r.h > 60 && r.w > 60 ? 20 : 0;
+      tg.push({x:r.x+'px',y:r.y+'px',w:r.w+'px',h:head+'px',label:head?(r.w<120?r.g.name:r.g.name+' · '+fmt(r.g.tb)):'',ink:'var(--color-text)'});
+      const ls = leavesOf(r.g, r.g.path);
+      squarify(ls.map(l=>({v:l.n.tb,l})), r.x+2, r.y+head+2, Math.max(r.w-4,1), Math.max(r.h-head-4,1)).forEach(c => {
+        const big = c.w > 54 && c.h > 34;
+        tl.push({x:(c.x+1)+'px',y:(c.y+1)+'px',w:Math.max(c.w-2,1)+'px',h:Math.max(c.h-2,1)+'px',color:c.l.n.color,ink:c.l.n.ink,
+          label:big?(head?c.l.label:r.g.name+'/'+c.l.label):'',tb:big?fmt(c.l.n.tb):'',title:c.l.n.path+' — '+fmt(c.l.n.tb)});
+      }); });
+    return {tmGroups:tg, tmLeaves:tl};
+  }
+  icicle(){
+    let f = this.root; const chain=[f];
+    this.state.focus.forEach(name => { f = f.children.find(c=>c.name===name); chain.push(f); });
+    const nodes=[]; let maxD=0;
+    const walk = (n, x0, d, path) => { let x=x0; n.children.forEach(c => { const w=c.tb/f.tb*564;
+      const p=[...path,c.name], show=w>46; maxD=Math.max(maxD,d);
+      nodes.push({x:x+'px',w:w+'px',y:(d*64)+'px',color:c.color||'var(--color-neutral-400)',ink:c.ink||'#fff',label:show?c.name:'',tb:show?fmt(c.tb):'',
+        title:c.path+' — '+fmt(c.tb),cursor:c.children.length?'zoom-in':'default',
+        zoom:c.children.length?()=>this.setState({focus:p}):undefined});
+      walk(c, x, d+1, p); x+=w; }); };
+    walk(f, 0, 0, this.state.focus);
+    const crumbs = chain.map((n,i)=>({label:n.name, go:()=>this.setState({focus:this.state.focus.slice(0,i)})}));
+    return {icNodes:nodes, crumbs, icH:((maxD+1)*64)+'px', focusTb:fmt(f.tb)};
+  }
+  renderVals(){
+    return { ...this.stacked(), multiples:this.multiples(), ...this.diverging(), ...this.heat(), rows:this.rowsVals(), ...this.treemap(), ...this.icicle(), totalLabel:fmt(this.root.tb), leafCount:LEAVES.length };
+  }
+}
+</script>
+
+
+</body></html>
