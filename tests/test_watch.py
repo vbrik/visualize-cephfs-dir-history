@@ -46,6 +46,13 @@ def test_matcher_matches_names_that_are_not_utf8():
     assert m.matches() == [[b"caf\xe9"]]
 
 
+def test_matcher_wants_paths_only_if_a_pattern_applies():
+    # summarize skips offering millions of paths to a matcher that wants none
+    assert not Matcher([]).wants
+    assert not Matcher([None, None]).wants
+    assert Matcher([None, (b"a",)]).wants
+
+
 def test_matcher_ignores_repeated_adds():
     m = Matcher([(b"*",)])
     m.add(b"a")

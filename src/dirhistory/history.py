@@ -186,9 +186,11 @@ def summarize(
     points = choose_points(samples, resolution)
     dirs = changed | {parent(p) for p in changed if p != ROOT}
     matcher = Matcher(watch)
-    constant, has_children = _children(first, changed, dirs, matcher.add)
-    for path in changed:
-        matcher.add(path)
+    visit = matcher.add if matcher.wants else None
+    constant, has_children = _children(first, changed, dirs, visit)
+    if visit:
+        for path in changed:
+            visit(path)
     watched = select(matcher.matches(), watch_limit)
     shown = set(watched.paths) | {a for w in watched.paths for a in ancestors(w)}
     wanted = {ROOT} | changed | {a for p in changed for a in ancestors(p)} | shown
@@ -222,18 +224,19 @@ def _children(
     first: Iterable[tuple[bytes, int | None]],
     changed: set[bytes],
     dirs: set[bytes],
-    visit: Callable[[bytes], None],
+    visit: Callable[[bytes], None] | None = None,
 ) -> tuple[Counter[bytes], set[bytes]]:
     """Return, for DIRS, the summed rbytes of children outside CHANGED, and
-    the DIRS that have any child. Calls VISIT with every path of FIRST, so
-    callers need not read it again.
+    the DIRS that have any child. Calls VISIT, if any, with every path of
+    FIRST, so callers need not read it again.
 
     FIRST yields the first sample's (path, rbytes); NULL rbytes count as 0.
     """
     constant: Counter[bytes] = Counter()
     has_children = {parent(p) for p in changed if p != ROOT}
     for path, rbytes in first:
-        visit(path)
+        if visit:
+            visit(path)
         if path == ROOT:
             continue
         up = parent(path)

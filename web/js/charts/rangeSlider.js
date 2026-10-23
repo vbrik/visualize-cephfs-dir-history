@@ -1,5 +1,7 @@
 // The Watched view's time-range slider: an ECharts dataZoom on its own,
-// with ROOT's rbytes as its data shadow.
+// with ROOT's rbytes as its data shadow. It applies a drag on release
+// (realtime: false): re-rendering up to 100 cards of 400 points per mouse
+// move takes seconds.
 
 /** Return the ECharts option of a bare zoom slider over DATA's times.
  * colors: {grid}. */
@@ -9,7 +11,18 @@ export function rangeSliderOption(data, { colors }) {
     grid: { left: 24, right: 24, top: 0, height: 1 },
     xAxis: { type: "time", show: false },
     yAxis: { type: "value", show: false },
-    dataZoom: [{ type: "slider", left: 24, right: 24, bottom: 12, height: 24, labelFormatter: "", borderColor: colors.grid }],
+    dataZoom: [
+      {
+        type: "slider",
+        realtime: false,
+        left: 24,
+        right: 24,
+        bottom: 12,
+        height: 24,
+        labelFormatter: "",
+        borderColor: colors.grid,
+      },
+    ],
     series: [
       {
         id: "\0shadow",

@@ -1,6 +1,6 @@
 // Pure data shaping for the charts; no DOM. See docs/terms.md for "unit"
 // and "own size". A tree file holds, per time point, each unit's own size
-// and the rbytes of ROOT, the units and their ancestors.
+// and the rbytes of ROOT, the units, the watched dirs and their ancestors.
 
 export const ROOT = ".";
 

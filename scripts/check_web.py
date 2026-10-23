@@ -216,6 +216,26 @@ def check_watched(page: Page, base: str) -> None:
     assert "+200 GiB" in a.inner_text(), f"change of A: {a.inner_text()}"
     # The scale's span shows even when its ends round alike (e.g. 108 TiB).
     assert "span 200 GiB" in a.inner_text(), f"scale of A: {a.inner_text()}"
+    # The absolute path is the name's tooltip, not the card's, which would
+    # cover the sparkline's own tooltip.
+    assert a.get_attribute("title") is None, "card-wide title over the sparkline"
+    assert a.locator(".name").get_attribute("title") == "/fixture/A", "name title"
+
+    # A slider drag renders once, on release: per-move renders of 100 cards
+    # over 400 points take seconds.
+    before = page.inner_text("#watch-range")
+    box = page.locator("#watch-slider").bounding_box()
+    y = box["y"] + box["height"] - 24
+    page.mouse.move(box["x"] + 25, y)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] * 0.7, y, steps=5)
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.inner_text("#watch-range") == before, "rendered during the drag"
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.inner_text("#watch-range") != before, "no render on release"
+    page.goto(f"{base}#tree=1&view=watched")
+    page.wait_for_timeout(SETTLE_MS)
 
     # Zooming here is the Units view's range too.
     times = json.loads((FIXTURE / "tree-1.json").read_text())["times"]
@@ -263,6 +283,37 @@ def check_watched(page: Page, base: str) -> None:
     )
     shown = page.inner_text("#table-range")
     assert shown == f"{start} \u2013 {end}", f"range after switching: {shown}"
+
+
+def check_watched_resize(page: Page, base: str) -> None:
+    """Sparklines take their card's size after resizes while hidden."""
+    page.goto(f"{base}#tree=1&view=watched")
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#view button[data-view=units]")
+    page.wait_for_timeout(SETTLE_MS)
+    page.set_viewport_size({"width": 900, "height": 700})
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#view button[data-view=watched]")
+    page.wait_for_timeout(SETTLE_MS)
+    widths = page.eval_on_selector_all(
+        "#cards .spark",
+        "els => els.map(e => [e.clientWidth, e.querySelector('svg')?.clientWidth])",
+    )
+    assert widths and all(box == svg for box, svg in widths), f"sparks: {widths}"
+
+
+def check_absent_in_range(page: Page, base: str) -> None:
+    """A dir absent over the shown range says so, not that it never existed."""
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    tree["rbytes"]["Z/y"] = [2**30, None, None]
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    times = tree["times"]
+    page.goto(f"{base}#tree=1&view=watched")
+    page.wait_for_timeout(SETTLE_MS)
+    zoom(page, "watch-slider", times[1], times[2])
+    page.wait_for_timeout(SETTLE_MS)
+    text = card(page, "Z/y").inner_text()
+    assert "absent in this range" in text, f"absent card: {text}"
 
 
 def check_no_watched(page: Page, base: str) -> None:
@@ -495,6 +546,8 @@ def main() -> int:
             check_model,
             check_fixture,
             check_watched,
+            check_watched_resize,
+            check_absent_in_range,
             check_no_watched,
             check_slow_tree,
             check_slow_index,

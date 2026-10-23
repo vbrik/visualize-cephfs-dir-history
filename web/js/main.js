@@ -45,6 +45,11 @@ const slots = new Map(); // view key -> Map(band key -> palette slot)
 // chart from its element, which is 0×0 while hidden.
 let slider = null;
 const cardEls = new Map(); // watched path -> its card element
+// Sparklines follow their card's size, which changes while the view is
+// hidden (0×0) and when the page's scrollbar comes or goes.
+const sparkSizes = new ResizeObserver((entries) => {
+  for (const e of entries) echarts.getInstanceByDom(e.target)?.resize();
+});
 
 // --- state <-> URL hash ---------------------------------------------------
 
@@ -354,25 +359,32 @@ function renderWatched() {
   const shown = new Set(cards.map((card) => card.path));
   for (const [path, el] of cardEls) {
     if (!shown.has(path)) {
-      echarts.getInstanceByDom(el.querySelector(".spark"))?.dispose();
+      const spark = el.querySelector(".spark");
+      sparkSizes.unobserve(spark);
+      echarts.getInstanceByDom(spark)?.dispose();
       cardEls.delete(path);
     }
   }
   $("cards").replaceChildren(...cards.map((card) => cardEls.get(card.path) ?? newCard(card.path)));
   for (const card of cards) {
     const el = cardEls.get(card.path);
-    el.title = absolute(card.path);
-    el.querySelector(".name").textContent = card.path === ROOT ? data.tree.fs_path : card.path;
+    const name = el.querySelector(".name");
+    name.textContent = card.path === ROOT ? data.tree.fs_path : card.path;
+    name.title = absolute(card.path);
     el.querySelector(".size").textContent = card.values[b] === null ? "absent" : formatBytes(card.end);
     const tag = el.querySelector(".tag");
     tag.textContent = formatDelta(card.change);
     tag.className = `tag ${card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat"}`;
     el.querySelector(".scale").textContent =
       card.lo === null
-        ? "absent throughout"
+        ? "absent in this range"
         : `scale ${formatBytes(card.lo)} – ${formatBytes(card.hi)}, span ${formatBytes(card.hi - card.lo)}`;
     const spark = el.querySelector(".spark");
-    const sparkChart = echarts.getInstanceByDom(spark) ?? echarts.init(spark, null, { renderer: "svg" });
+    let sparkChart = echarts.getInstanceByDom(spark);
+    if (!sparkChart) {
+      sparkChart = echarts.init(spark, null, { renderer: "svg" });
+      sparkSizes.observe(spark);
+    }
     sparkChart.dispatchAction({ type: "hideTip" }); // an open tooltip would throw
     sparkChart.setOption(trendCardOption(data, card, { colors: c, range }), { notMerge: true });
   }
@@ -497,7 +509,6 @@ window.addEventListener("hashchange", () => update(false));
 window.addEventListener("resize", () => {
   chart.resize();
   slider?.resize();
-  for (const el of cardEls.values()) echarts.getInstanceByDom(el.querySelector(".spark"))?.resize();
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
 setInterval(refresh, REFRESH_MS);

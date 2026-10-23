@@ -96,11 +96,17 @@ class Matcher:
         self._lengths = {len(p) for p in patterns if p is not None}
         self._found: list[set[bytes]] = [set() for _ in patterns]
 
+    @property
+    def wants(self) -> bool:
+        """Whether any pattern applies, i.e. whether add can match."""
+        return bool(self._lengths)
+
     def add(self, path: bytes) -> None:
         """Record PATH under every pattern it matches."""
-        parts = _components(path)
-        if len(parts) not in self._lengths:  # cheap: most paths stop here
+        # Cheap: it sees every path of a tree's first sample, and most stop here.
+        if (0 if path == b"." else path.count(b"/") + 1) not in self._lengths:
             return
+        parts = _components(path)
         for pattern, found in zip(self._patterns, self._found, strict=True):
             if (
                 pattern is not None
