@@ -103,6 +103,8 @@ watch = [
   several patterns appears once, at its first pattern.
 - Cap: `--max-watched N` (default 100) per tree, applied after ordering. When
   it cuts dirs, a `WARNING:` names the tree and how many were dropped.
+  *(Superseded 2026-10-23: see docs/design.md, Watched directories. The default is
+  5000, and more watched dirs is an `ERROR:`; nothing is cut.)*
 - `WARNING:` for a pattern that applies to at least one tree selected by
   `--tree` (all trees by default) but matches no dir in any of them, and for a
   pattern that applies to no selected tree only when `--tree` was not given

@@ -69,7 +69,7 @@ class TreeHistory:
     times: list[datetime]
     rbytes: dict[bytes, Series]
     units: dict[bytes, Unit]
-    watched: Watched = field(default_factory=lambda: Watched([], [], 0))
+    watched: Watched = field(default_factory=lambda: Watched([], []))
 
 
 def parent(path: bytes) -> bytes:
@@ -178,8 +178,9 @@ def summarize(
     their raw range counts, including changes that last one point.
 
     The watched dirs are the paths that any of the first sample's paths or
-    CHANGED match in WATCH (watch.Matcher patterns, in config order), at
-    most WATCH_LIMIT (watch.select). Their series and their ancestors' are
+    CHANGED match in WATCH (watch.Matcher patterns, in config order); more
+    than WATCH_LIMIT raises watch.TooManyWatched before any series is
+    fetched. Their series and their ancestors' are
     kept, so the page can drill into a watched dir and up its path, even
     when they never changed and are not units.
     """

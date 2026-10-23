@@ -12,7 +12,7 @@ from dirhistory.history import (
     choose_points,
     summarize,
 )
-from dirhistory.watch import Watched
+from dirhistory.watch import TooManyWatched, Watched
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 GiB = 2**30
@@ -395,12 +395,26 @@ def test_dir_created_later_can_be_watched():
     assert h.rbytes[b"new"] == [None, 50]
 
 
-def test_watched_order_found_and_cap():
+def test_watched_order_and_found():
     rows = [(1, ROOT, 9, False)] + [(1, p, 1, False) for p in (b"a", b"b", b"c")]
-    h = run(rows, n=1, watch=[(b"c",), (b"*",), None], cap=2)
-    assert h.watched.paths == [b"c", b"a"]
+    h = run(rows, n=1, watch=[(b"c",), (b"*",), None], cap=3)
+    assert h.watched.paths == [b"c", b"a", b"b"]
     assert h.watched.found == [1, 3, 0]
-    assert h.watched.dropped == 1
+
+
+def test_watched_over_cap_raises_before_fetching():
+    first = [(ROOT, 9), (b"a", 1), (b"b", 1), (b"c", 1)]
+    with pytest.raises(TooManyWatched):
+        summarize(
+            samples(1, timedelta(hours=1)),
+            set(),
+            first,
+            lambda paths: pytest.fail("fetched"),
+            1,
+            100,
+            watch=[(b"*",)],
+            watch_limit=2,
+        )
 
 
 def test_watching_root():
@@ -421,4 +435,4 @@ def test_no_watch_keeps_only_units_and_their_ancestors():
     ]
     h = run(rows, threshold=5)
     assert set(h.rbytes) == {ROOT, b"a", b"a/b"}
-    assert h.watched == Watched([], [], 0)
+    assert h.watched == Watched([], [])

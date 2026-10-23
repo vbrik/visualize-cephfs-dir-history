@@ -2,7 +2,14 @@ import re
 
 import pytest
 
-from dirhistory.watch import Matcher, Watched, load, parse_pattern, select
+from dirhistory.watch import (
+    Matcher,
+    TooManyWatched,
+    Watched,
+    load,
+    parse_pattern,
+    select,
+)
 
 
 def test_parse_pattern_splits_components():
@@ -62,11 +69,17 @@ def test_matcher_ignores_repeated_adds():
 
 def test_select_keeps_config_order_and_first_occurrence():
     w = select([[b"b", b"c"], [b"a", b"b"]], limit=10)
-    assert w == Watched([b"b", b"c", b"a"], [2, 2], 0)
+    assert w == Watched([b"b", b"c", b"a"], [2, 2])
 
 
-def test_select_caps_and_counts_dropped():
-    assert select([[b"a", b"b", b"c"]], limit=2) == Watched([b"a", b"b"], [3], 1)
+def test_select_allows_exactly_the_limit():
+    assert select([[b"a", b"b"], [b"b"]], limit=2) == Watched([b"a", b"b"], [2, 1])
+
+
+def test_select_raises_over_the_limit():
+    with pytest.raises(TooManyWatched) as e:
+        select([[b"a", b"b", b"c"]], limit=2)
+    assert (e.value.found, e.value.limit) == (3, 2)
 
 
 def test_load_reads_patterns(tmp_path):

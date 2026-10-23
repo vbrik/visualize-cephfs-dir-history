@@ -23,7 +23,7 @@ from dirhistory.history import (
     TreeHistory,
     summarize,
 )
-from dirhistory.watch import MAX_WATCHED, Parts, WatchPattern
+from dirhistory.watch import MAX_WATCHED, Parts, TooManyWatched, WatchPattern
 
 DEFAULT_THRESHOLD = "10GiB"
 DEFAULT_MAX_UNITS = 1000
@@ -313,8 +313,8 @@ def parser() -> argparse.ArgumentParser:
         type=_positive_int,
         metavar="N",
         default=MAX_WATCHED,
-        help="keep at most this many watched dirs per tree, in --watch order"
-        " (default: %(default)s)",
+        help="fail if the --watch patterns match more than this many dirs of"
+        " a tree (default: %(default)s)",
     )
     p.add_argument(
         "--tree",
@@ -382,7 +382,8 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
     """Write the data files ARGS ask for, watching PATTERNS; return the exit
     status.
 
-    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree.
+    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree
+    or a tree with more watched dirs than --max-watched.
     """
     conn = db.connect(args.db)
     db.check_schema(conn)
@@ -397,8 +398,8 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
         for tree in chosen:
             start = perf_counter()
             parts = [p.for_tree(tree.fs_path) for p in patterns]
-            if (
-                result := read_tree(
+            try:
+                result = read_tree(
                     conn,
                     tree,
                     args.threshold,
@@ -407,7 +408,13 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
                     parts,
                     args.max_watched,
                 )
-            ) is None:
+            except TooManyWatched as e:
+                raise ValueError(
+                    f"tree {tree.id} ({display(tree.fs_path)}): the --watch patterns"
+                    f" match {e.found} directories, more than --max-watched {e.limit}."
+                    " Narrow the patterns or raise --max-watched."
+                ) from None
+            if result is None:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}) has no samples; skipped"
                 )
@@ -425,12 +432,6 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
                     f"WARNING: tree {tree.id} ({display(tree.fs_path)}): {errors}"
                     " directories could not be read in its latest sample. Below them,"
                     " changes go unseen and sizes may be stale."
-                )
-            if dropped := history.watched.dropped:
-                _note(
-                    f"WARNING: tree {tree.id} ({display(tree.fs_path)}): --max-watched"
-                    f" {args.max_watched} dropped {dropped} watched directories."
-                    " Narrow the --watch patterns or raise --max-watched."
                 )
             if args.verbose:
                 _note(

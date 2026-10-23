@@ -220,7 +220,7 @@ def test_tree_document_and_index_entry_carry_watched():
         HISTORY.times,
         HISTORY.rbytes,
         HISTORY.units,
-        Watched([b"caf\xe9", ROOT], [2], 0),
+        Watched([b"caf\xe9", ROOT], [2]),
     )
     assert tree_document(TREE, h, 10, T2)["watched"] == ["caf\udce9", "."]
     assert index_entry(TREE, h, T2)["watched"] == 2
@@ -313,11 +313,17 @@ def test_run_writes_watched_and_warns_relative_to_selected_trees(
     assert "watch pattern '/nowhere' applies to no tree" in err
 
 
-def test_run_warns_when_the_cap_drops_watched_dirs(monkeypatch, tmp_path, capsys):
+def test_run_fails_when_watched_dirs_exceed_the_cap(monkeypatch, tmp_path, capsys):
     exp = Tree(1, "c", None, b"/exp", 2)
     _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)]})
     watch = tmp_path / "watch.toml"
     watch.write_text('watch = ["/exp/*"]\n')
-    argv = ["--db", "x", "--out", str(tmp_path / "d"), "--watch", str(watch)]
-    assert generate.main([*argv, "--max-watched", "1"]) == 0
-    assert "--max-watched 1 dropped 1 watched" in capsys.readouterr().err
+    out = tmp_path / "d"
+    argv = ["--db", "x", "--out", str(out), "--watch", str(watch)]
+    assert generate.main([*argv, "--max-watched", "1"]) == 1
+    assert capsys.readouterr().err == (
+        "ERROR: tree 1 (/exp): the --watch patterns match 2 directories, more"
+        " than --max-watched 1. Narrow the patterns or raise --max-watched.\n"
+    )
+    assert not (out / "tree-1.json").exists()
+    assert generate.main([*argv, "--max-watched", "2"]) == 0

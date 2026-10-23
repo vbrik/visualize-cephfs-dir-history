@@ -81,8 +81,9 @@ those, one trend card each.
 - Patterns are absolute paths with wildcards matched per component
   (`watch.py`), so `*` never crosses `/` and next year's directory joins
   without an edit. No `**`: a recursive pattern could watch thousands of
-  directories by accident. `--max-watched` (100) caps the cards per tree;
-  raise it for wildcards over many directories (see Page).
+  directories by accident. More than `--max-watched` (5000) watched
+  directories in a tree is an error, which catches a pattern that matches
+  far more than meant.
 - Cards show rbytes, the whole directory, not own size: a watched directory
   asks "how big is this", and watched directories may nest, since cards are
   never added up.
@@ -148,7 +149,7 @@ changed; `watched` counts the tree's watched directories.
 | `times` | Time points, oldest first. |
 | `rbytes` | `{path: [bytes or null per point]}` for ROOT (`.`), every unit, every watched directory, and every ancestor of these. null: absent. |
 | `units` | `{path: {own: [bytes per point, ≥ 0], leaf: bool}}`. |
-| `watched` | Watched directories' paths in `--watch` order, by path within a pattern: the order `--max-watched` cuts in. The page sorts the cards itself. `[]` without `--watch`. |
+| `watched` | Watched directories' paths in `--watch` order, by path within a pattern. The page sorts the cards itself. `[]` without `--watch`. |
 
 ## Risks and limitations
 

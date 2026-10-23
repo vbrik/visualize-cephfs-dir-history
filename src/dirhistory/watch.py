@@ -15,9 +15,10 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-# Default cap of watched dirs per tree: each is one card, i.e. one chart, on
-# the page.
-MAX_WATCHED = 100
+# Default most watched dirs per tree; more is an error. It guards against a
+# pattern that matches far more than meant: each watched dir is a series in
+# the data file and a card on the page.
+MAX_WATCHED = 5000
 
 # Path components, as bytes.
 type Parts = tuple[bytes, ...]
@@ -124,20 +125,27 @@ class Matcher:
 class Watched:
     """A tree's watched dirs.
 
-    paths: in display order, at most the cap. found: per pattern, how many
-    paths it matched. dropped: how many distinct matches the cap cut.
+    paths: in display order. found: per pattern, how many paths it matched.
     """
 
     paths: list[bytes]
     found: list[int]
-    dropped: int
+
+
+class TooManyWatched(ValueError):
+    """More distinct watched dirs (FOUND) than the cap (LIMIT)."""
+
+    def __init__(self, found: int, limit: int):
+        super().__init__(f"{found} watched directories, more than {limit}")
+        self.found = found
+        self.limit = limit
 
 
 def select(matches: list[list[bytes]], limit: int) -> Watched:
     """Return the watched dirs from MATCHES (per pattern, in config order):
-    a path matched by several patterns counts at its first, and only the
-    first LIMIT paths are kept."""
+    a path matched by several patterns counts at its first. Raises
+    TooManyWatched for more than LIMIT paths."""
     ordered = list(dict.fromkeys(p for found in matches for p in found))
-    return Watched(
-        ordered[:limit], [len(found) for found in matches], max(len(ordered) - limit, 0)
-    )
+    if len(ordered) > limit:
+        raise TooManyWatched(len(ordered), limit)
+    return Watched(ordered, [len(found) for found in matches])
