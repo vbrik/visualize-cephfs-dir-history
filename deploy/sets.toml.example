@@ -1,0 +1,44 @@
+# Sets of directories to chart, read by `dirhistory-generate --sets FILE`; an
+# empty file is valid. Both views draw from the sets: Stack splits the
+# chosen set's directories (and what is stored below them), Trends shows a
+# card for each.
+#
+# Sections are named by the tree's root path (its fs_path) and the set's
+# name. The page lists a tree's sets in its Set menu, in this order, after
+# the implicit set "Top level": every directory directly under the tree
+# root, depth 0. A set of that name here replaces it (still first), e.g. to
+# store the top-level directories 2 levels deep.
+#
+# Tree roots are assumed to be unique: two trees with the same root (on
+# different clusters or filesystems) cannot be told apart, and a section
+# naming them is an error. So is a section naming no tree. A tree whose root
+# is not valid UTF-8 cannot be named.
+#
+# `dirs` is a non-empty list of groups. A group's `match` lists paths
+# relative to the tree root. Their components may hold shell wildcards
+# (*, ?, [...]), matched one component at a time: * never crosses /. There
+# is no **. "." is the tree root itself. A pattern matches only directories
+# within the tree's max depth.
+#
+# `depth` (required) is how many levels below each matched directory are
+# stored as well: 0 is the directory only. A directory covered by several
+# groups, in one set or several, is stored to the largest depth, and the page
+# can drill that far in every set. All sets of a tree share one data file,
+# so a tree may store at most --max-dirs (default 20000) directories.
+
+[tree."/data/projects".set."Projects"]
+dirs = [
+  { match = ["*", "."], depth = 1 },       # every project (new ones too) and the
+                                           # tree root, 1 level down
+]
+
+[tree."/data/projects".set."Raw data"]
+dirs = [
+  { match = ["*/raw"], depth = 0 },        # raw/ of every project
+  { match = ["alpha/archive"], depth = 3 },  # one directory, 3 levels down
+]
+
+[tree."/data/scratch".set."Users a-m"]
+dirs = [
+  { match = ["[a-m]*"], depth = 0 },       # some of the tree's subdirectories
+]
