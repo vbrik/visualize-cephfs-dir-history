@@ -1,0 +1,12 @@
+# Directories to chart in the page's Watched view, one card each, in this
+# order. Read by `dirhistory-generate --watch FILE`; an empty list is valid.
+#
+# Each entry is an absolute path; its components may hold shell wildcards
+# (*, ?, [...]), matched one component at a time: * never crosses /. There
+# is no **. A pattern applies to the trees whose path it starts with, and
+# matches only directories within their max depth.
+watch = [
+  "/data/projects/alpha",         # one directory
+  "/data/projects/*/raw",         # raw/ of every project, new ones included
+  "/data/scratch/[a-m]*",         # some of scratch's subdirectories
+]

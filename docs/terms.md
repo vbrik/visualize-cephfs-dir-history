@@ -18,4 +18,8 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | Rest of tree | The shown directory's bytes that are in no unit: rbytes minus the own sizes of all its units. Off by default. |
 | hidden | A unit, or all units of a group, removed from the chart entirely: their bytes are in no band, so the total shrinks. Hiding a unit's own files does not hide the units below it. |
 | peak | A band's largest value in the shown time range; bands are ranked by it. |
+| watch pattern | An absolute path pattern in the `--watch` file, e.g. `/npx/ana/IceCube/*/filtered`; wildcards match within one path component. |
+| watched dir | A directory of a tree that a watch pattern matches. |
+| trend card | One watched dir's card in the Watched view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
+| Units view / Watched view | The page's two views (`view=` in the URL hash): stacked units, or trend cards of watched dirs. |
 | ghost unit | A directory that looks like a unit only because CephFS propagates rbytes upward with a delay, so its own size dips while a child has grown but it has not yet. See [design.md](design.md#propagation-lag). |

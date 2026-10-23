@@ -13,7 +13,7 @@ from time import perf_counter
 
 import psycopg
 
-from dirhistory import __version__, db
+from dirhistory import __version__, db, watch
 from dirhistory.db import Tree
 from dirhistory.history import (
     MAX_POINTS,
@@ -23,6 +23,7 @@ from dirhistory.history import (
     TreeHistory,
     summarize,
 )
+from dirhistory.watch import MAX_WATCHED, Parts, WatchPattern
 
 DEFAULT_THRESHOLD = "10GiB"
 DEFAULT_MAX_UNITS = 1000
@@ -51,6 +52,9 @@ directory without sampled subdirectories (none, or at the tree's max depth)
 owns its whole rbytes. A unit is a directory whose own size changed by at
 least --threshold over the tree's history. Own sizes never overlap, so units
 never count the same bytes twice.
+
+The page's Watched view charts the whole size (rbytes) of the directories
+that the --watch file names, one card each, in the file's order.
 
 The database is only read. Prints each file written to stdout; notes go to
 stderr.
@@ -132,6 +136,7 @@ def tree_document(
             os.fsdecode(p): {"own": u.own, "leaf": u.leaf}
             for p, u in history.units.items()
         },
+        "watched": [os.fsdecode(p) for p in history.watched.paths],
     }
 
 
@@ -146,6 +151,7 @@ def index_entry(tree: Tree, history: TreeHistory, generated: datetime) -> dict:
         "last_sample": iso(history.times[-1]),
         "generated": iso(generated),
         "units": len(history.units),
+        "watched": len(history.watched.paths),
     }
 
 
@@ -171,11 +177,17 @@ def display(path: bytes) -> str:
 
 
 def read_tree(
-    conn, tree: Tree, threshold: int, limit: int, res: Resolution
+    conn,
+    tree: Tree,
+    threshold: int,
+    limit: int,
+    res: Resolution,
+    watch: Sequence[Parts | None] = (),
+    watch_limit: int = MAX_WATCHED,
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
     as of its latest sample, or None if it has no samples. Reads in one
-    transaction, i.e. one snapshot."""
+    transaction, i.e. one snapshot. WATCH and WATCH_LIMIT go to summarize."""
     with conn.transaction():
         samples = db.samples(conn, tree.id)
         if not samples:
@@ -190,8 +202,29 @@ def read_tree(
             threshold,
             limit,
             res,
+            watch,
+            watch_limit,
         )
     return history, errors
+
+
+def watch_warnings(
+    patterns: Sequence[WatchPattern],
+    applied: Sequence[bool],
+    found: Sequence[int],
+    all_trees: bool,
+) -> list[str]:
+    """Return a warning per pattern that matched no directory of the trees
+    it APPLIED to (FOUND counts matches), and, when ALL_TREES were read, per
+    pattern that applied to no tree; with --tree, a pattern may well target
+    a tree not read."""
+    warnings = []
+    for p, used, n in zip(patterns, applied, found, strict=True):
+        if used and not n:
+            warnings.append(f"WARNING: watch pattern {p.text!r} matches no directory")
+        elif not used and all_trees:
+            warnings.append(f"WARNING: watch pattern {p.text!r} applies to no tree")
+    return warnings
 
 
 def merged_index(out: Path, entries: list[dict], all_trees: Sequence[Tree]) -> list:
@@ -267,6 +300,23 @@ def parser() -> argparse.ArgumentParser:
         " ghost units (default: %(default)s)",
     )
     p.add_argument(
+        "--watch",
+        type=Path,
+        metavar="FILE",
+        help="TOML file of directories to chart in the page's Watched view:"
+        ' watch = ["/fs/path/*/dir", ...], absolute paths whose components may'
+        " hold wildcards (*, ?, [...]); see deploy/watch.toml.example"
+        " (default: none)",
+    )
+    p.add_argument(
+        "--max-watched",
+        type=_positive_int,
+        metavar="N",
+        default=MAX_WATCHED,
+        help="keep at most this many watched dirs per tree, in --watch order"
+        " (default: %(default)s)",
+    )
+    p.add_argument(
         "--tree",
         type=int,
         action="append",
@@ -322,13 +372,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
     try:
-        return run(args)
+        patterns = watch.load(args.watch) if args.watch else []
+        return run(args, patterns)
     except (db.DbError, psycopg.Error, OSError, ValueError) as e:
         return _error(str(e).strip())
 
 
-def run(args: argparse.Namespace) -> int:
-    """Write the data files ARGS ask for; return the exit status.
+def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
+    """Write the data files ARGS ask for, watching PATTERNS; return the exit
+    status.
 
     Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree.
     """
@@ -339,12 +391,21 @@ def run(args: argparse.Namespace) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(UTC)
     entries = []
+    applied = [False] * len(patterns)
+    found = [0] * len(patterns)
     with conn:
         for tree in chosen:
             start = perf_counter()
+            parts = [p.for_tree(tree.fs_path) for p in patterns]
             if (
                 result := read_tree(
-                    conn, tree, args.threshold, args.max_units, resolution(args)
+                    conn,
+                    tree,
+                    args.threshold,
+                    args.max_units,
+                    resolution(args),
+                    parts,
+                    args.max_watched,
                 )
             ) is None:
                 _note(
@@ -352,6 +413,9 @@ def run(args: argparse.Namespace) -> int:
                 )
                 continue
             history, errors = result
+            for i, part in enumerate(parts):
+                applied[i] |= part is not None
+                found[i] += history.watched.found[i]
             path = args.out / f"tree-{tree.id}.json"
             write_json(path, tree_document(tree, history, args.threshold, generated))
             entries.append(index_entry(tree, history, generated))
@@ -362,12 +426,21 @@ def run(args: argparse.Namespace) -> int:
                     " directories could not be read in its latest sample. Below them,"
                     " changes go unseen and sizes may be stale."
                 )
+            if dropped := history.watched.dropped:
+                _note(
+                    f"WARNING: tree {tree.id} ({display(tree.fs_path)}): --max-watched"
+                    f" {args.max_watched} dropped {dropped} watched directories."
+                    " Narrow the --watch patterns or raise --max-watched."
+                )
             if args.verbose:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}):"
                     f" {len(history.times)} points, {len(history.units)} units,"
+                    f" {len(history.watched.paths)} watched,"
                     f" {perf_counter() - start:.1f} s"
                 )
+    for warning in watch_warnings(patterns, applied, found, not args.tree):
+        _note(warning)
     index = args.out / INDEX
     write_json(index, merged_index(args.out, entries, all_trees))
     print(index)

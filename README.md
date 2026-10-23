@@ -40,7 +40,10 @@ known risks.
 
 Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
 The database is only read. See `dirhistory-generate --help` for the options:
-threshold, unit limit, trees, output directory, and time resolution. By
+threshold, unit limit, watched directories, trees, output directory, and
+time resolution. `--watch FILE` names the directories of the page's Watched
+view in a TOML file; see [deploy/watch.toml.example](deploy/watch.toml.example).
+By
 default the last 7 days keep hourly points (`--recent`, `--min-bucket`),
 and older history gets coarser points so a tree has at most 400
 (`--max-points`).
@@ -61,6 +64,8 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
        install -d -m 755 /etc/dirhistory
        install -o dirhistory -g dirhistory -m 600 /dev/null /etc/dirhistory/pgpass
        # then add a line to it: db.example.org:5432:trackdir:trackdir:PASSWORD
+       install -m 644 deploy/watch.toml.example /etc/dirhistory/watch.toml
+       # then edit it; the service passes --watch, and fails if it is missing
 
 3. Copy [deploy/dirhistory.service](deploy/dirhistory.service) and
    [deploy/dirhistory.timer](deploy/dirhistory.timer) to

@@ -69,6 +69,29 @@ of 1 h, 6 h, 1 d, 2 d or 1 w that fits the remaining points, or, once even
 of 1 w that does. The generator refuses a `--recent` that alone needs
 `--max-points`.
 
+### Watched directories
+
+Units answer "what changed anywhere", at whatever depth the change is. People
+also track chosen directories, usually above unit depth and usually not units
+(`IceCube/2026/filtered`), and want each one's shape. The Watched view shows
+those, one trend card each.
+
+- The list is a TOML file read by the generator (`--watch`), not edited in
+  the page: the site is static, and the list is the operator's decision.
+- Patterns are absolute paths with wildcards matched per component
+  (`watch.py`), so `*` never crosses `/` and next year's directory joins
+  without an edit. No `**`: a recursive pattern could watch thousands of
+  directories by accident. `--max-watched` (100) caps the cards per tree.
+- Cards show rbytes, the whole directory, not own size: a watched directory
+  asks "how big is this", and watched directories may nest, since cards are
+  never added up.
+- Matching rides the generator's existing pass over the first sample, and
+  watched directories are fetched explicitly, since one that never changed
+  is otherwise never read. Their ancestors are kept too, so the page can
+  drill into a watched directory and back up its path.
+- Config mistakes are errors. A pattern that matches nothing, or applies to
+  no tree, is a warning; with `--tree`, only for the trees read.
+
 ### Page
 
 - ECharts (vendored, pinned): a stacked area with a zoom slider today;
@@ -88,8 +111,9 @@ of 1 w that does. The generator refuses a `--recent` that alone needs
 ## Data files
 
 `web/data/trees.json` lists the trees:
-`[{id, label, detail, file, last_sample, generated, units}]`; `generated`
-is the tree file's, so the page refetches a file only when it changed.
+`[{id, label, detail, file, last_sample, generated, units, watched}]`;
+`generated` is the tree file's, so the page refetches a file only when it
+changed; `watched` counts the tree's watched directories.
 
 `web/data/tree-<id>.json`:
 
@@ -99,8 +123,9 @@ is the tree file's, so the page refetches a file only when it changed.
 | `tree` | `{id, fs_path, fs_name, cluster, max_depth}`. |
 | `threshold` | Bytes of own-size change that made a unit. |
 | `times` | Time points, oldest first. |
-| `rbytes` | `{path: [bytes or null per point]}` for ROOT (`.`), every unit, and every ancestor of a unit. null: absent. |
+| `rbytes` | `{path: [bytes or null per point]}` for ROOT (`.`), every unit, every watched directory, and every ancestor of these. null: absent. |
 | `units` | `{path: {own: [bytes per point, ≥ 0], leaf: bool}}`. |
+| `watched` | Watched directories' paths, in display order (`--watch` order; by path within a pattern). `[]` without `--watch`. |
 
 ## Risks and limitations
 

@@ -17,9 +17,11 @@ from dirhistory.generate import (
     parser,
     select_trees,
     tree_document,
+    watch_warnings,
     write_json,
 )
-from dirhistory.history import ROOT, Resolution, TreeHistory, Unit
+from dirhistory.history import ROOT, Resolution, Sample, TreeHistory, Unit
+from dirhistory.watch import Watched, parse_pattern
 
 TREE = Tree(2, "ad1bf53c-a6ca-11ec-b47e-b04f13b8e306", None, b"/npx/ana", 5)
 T1 = datetime(2026, 10, 21, 19, 19, 45, 208826, tzinfo=UTC)
@@ -104,6 +106,7 @@ def test_index_entry():
         "last_sample": "2026-10-21T20:00:00Z",
         "generated": "2026-10-21T20:00:00Z",
         "units": 2,
+        "watched": 0,
     }
 
 
@@ -210,3 +213,111 @@ def test_resolution_options_reach_summarize():
 )
 def test_format_duration_round_trips(d):
     assert parse_duration(format_duration(d)) == d
+
+
+def test_tree_document_and_index_entry_carry_watched():
+    h = TreeHistory(
+        HISTORY.times,
+        HISTORY.rbytes,
+        HISTORY.units,
+        Watched([b"caf\xe9", ROOT], [2], 0),
+    )
+    assert tree_document(TREE, h, 10, T2)["watched"] == ["caf\udce9", "."]
+    assert index_entry(TREE, h, T2)["watched"] == 2
+
+
+def test_tree_document_without_watch_has_empty_list():
+    assert tree_document(TREE, HISTORY, 10, T2)["watched"] == []
+
+
+def test_watch_warnings():
+    ps = [parse_pattern(t) for t in ("/a/x", "/b/*", "/c")]
+    assert watch_warnings(ps, [True, True, False], [0, 3, 0], all_trees=True) == [
+        "WARNING: watch pattern '/a/x' matches no directory",
+        "WARNING: watch pattern '/c' applies to no tree",
+    ]
+    assert watch_warnings(ps, [True, True, False], [0, 3, 0], all_trees=False) == [
+        "WARNING: watch pattern '/a/x' matches no directory",
+    ]
+
+
+def test_bad_watch_file_is_an_error_before_the_database(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(generate.db, "connect", lambda dsn: pytest.fail("connected"))
+    f = tmp_path / "w.toml"
+    f.write_text('watched = ["/a"]\n')
+    assert generate.main(["--db", "x", "--watch", str(f)]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: ")
+
+
+def test_missing_watch_file_is_an_error(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(generate.db, "connect", lambda dsn: pytest.fail("connected"))
+    assert generate.main(["--db", "x", "--watch", str(tmp_path / "nope.toml")]) == 1
+    assert "nope.toml" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "x"])
+def test_max_watched_must_be_positive(value, capsys):
+    with pytest.raises(SystemExit):
+        parser().parse_args(["--max-watched", value])
+    assert "--max-watched" in capsys.readouterr().err
+
+
+class _TxConn(_Conn):
+    def transaction(self):
+        return _Conn()
+
+
+def _fake_db(monkeypatch, trees):
+    """Serve TREES ({Tree: [(path, rbytes)] of one sample}) as the database."""
+    rows = {t.id: r for t, r in trees.items()}
+    monkeypatch.setattr(generate.db, "connect", lambda dsn: _TxConn())
+    monkeypatch.setattr(generate.db, "check_schema", lambda conn: None)
+    monkeypatch.setattr(generate.db, "trees", lambda conn: list(trees))
+    monkeypatch.setattr(generate.db, "samples", lambda conn, tid: [Sample(tid, T1)])
+    monkeypatch.setattr(generate.db, "current_errors", lambda conn, tid: 0)
+    monkeypatch.setattr(generate.db, "changed_paths", lambda conn, later: set())
+    monkeypatch.setattr(generate.db, "sample_rows", lambda conn, sid: iter(rows[sid]))
+    monkeypatch.setattr(
+        generate.db,
+        "path_rows",
+        lambda conn, tid, paths: [
+            (tid, p, b, False) for p, b in rows[tid] if p in paths
+        ],
+    )
+
+
+def test_run_writes_watched_and_warns_relative_to_selected_trees(
+    monkeypatch, tmp_path, capsys
+):
+    exp = Tree(1, "c", None, b"/exp", 2)
+    sim = Tree(2, "c", None, b"/sim", 2)
+    _fake_db(
+        monkeypatch,
+        {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)], sim: [(ROOT, 9), (b"s", 9)]},
+    )
+    watch = tmp_path / "watch.toml"
+    watch.write_text('watch = ["/exp/*", "/sim/missing", "/nowhere"]\n')
+    out = tmp_path / "data"
+    argv = ["--db", "x", "--out", str(out), "--watch", str(watch)]
+
+    assert generate.main([*argv, "--tree", "1"]) == 0
+    doc = json.loads((out / "tree-1.json").read_text())
+    assert doc["watched"] == ["a", "b"]
+    assert doc["rbytes"]["a"] == [5]
+    assert json.loads((out / "trees.json").read_text())[0]["watched"] == 2
+    assert "WARNING" not in capsys.readouterr().err  # /sim and /nowhere not run
+
+    assert generate.main(argv) == 0
+    err = capsys.readouterr().err
+    assert "watch pattern '/sim/missing' matches no directory" in err
+    assert "watch pattern '/nowhere' applies to no tree" in err
+
+
+def test_run_warns_when_the_cap_drops_watched_dirs(monkeypatch, tmp_path, capsys):
+    exp = Tree(1, "c", None, b"/exp", 2)
+    _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)]})
+    watch = tmp_path / "watch.toml"
+    watch.write_text('watch = ["/exp/*"]\n')
+    argv = ["--db", "x", "--out", str(tmp_path / "d"), "--watch", str(watch)]
+    assert generate.main([*argv, "--max-watched", "1"]) == 0
+    assert "--max-watched 1 dropped 1 watched" in capsys.readouterr().err
