@@ -31,3 +31,7 @@
 - `page.wait_for_function` with a string predicate evals it, which the
   page's CSP (`default-src 'self'`, as check_web.py serves it) blocks; poll
   from Python instead.
+- `scripts/check_web.py` also checks every tree in `web/data`. After changing
+  a data file's format, regenerate `web/data` (`dirhistory-generate`, with
+  `TRACKDIR_DB`) before running it, or its real-tree checks fail on the old
+  files.
