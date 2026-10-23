@@ -11,9 +11,11 @@ a directory whose own size changed by at least a threshold; see summarize.
 
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from statistics import median
+
+from dirhistory.watch import MAX_WATCHED, Matcher, Parts, Watched, select
 
 ROOT = b"."
 
@@ -61,12 +63,13 @@ class Unit:
 
 @dataclass(frozen=True, slots=True)
 class TreeHistory:
-    """A tree's chosen time points, its units, and the rbytes series of ROOT,
-    the units and their ancestors."""
+    """A tree's chosen time points, its units, its watched dirs, and the
+    rbytes series of ROOT, the units, the watched dirs, and their ancestors."""
 
     times: list[datetime]
     rbytes: dict[bytes, Series]
     units: dict[bytes, Unit]
+    watched: Watched = field(default_factory=lambda: Watched([], [], 0))
 
 
 def parent(path: bytes) -> bytes:
@@ -152,6 +155,8 @@ def summarize(
     threshold: int,
     limit: int,
     resolution: Resolution = DEFAULT_RESOLUTION,
+    watch: Sequence[Parts | None] = (),
+    watch_limit: int = MAX_WATCHED,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
 
@@ -171,11 +176,22 @@ def summarize(
     size can dip for one point. Its range is taken over a 3-point running
     median, which drops such dips. Other directories cannot dip that way, so
     their raw range counts, including changes that last one point.
+
+    The watched dirs are the paths that any of the first sample's paths or
+    CHANGED match in WATCH (watch.Matcher patterns, in config order), at
+    most WATCH_LIMIT (watch.select). Their series and their ancestors' are
+    kept, so the page can drill into a watched dir and up its path, even
+    when they never changed and are not units.
     """
     points = choose_points(samples, resolution)
     dirs = changed | {parent(p) for p in changed if p != ROOT}
-    constant, has_children = _children(first, changed, dirs)
-    wanted = {ROOT} | changed | {a for p in changed for a in ancestors(p)}
+    matcher = Matcher(watch)
+    constant, has_children = _children(first, changed, dirs, matcher.add)
+    for path in changed:
+        matcher.add(path)
+    watched = select(matcher.matches(), watch_limit)
+    shown = set(watched.paths) | {a for w in watched.paths for a in ancestors(w)}
+    wanted = {ROOT} | changed | {a for p in changed for a in ancestors(p)} | shown
     rbytes = _replay(samples, points, fetch(wanted))
 
     children = defaultdict(list)
@@ -193,25 +209,31 @@ def summarize(
         d: Unit([max(v, 0) for v in own[d]], d not in has_children)
         for d in sorted(picked)
     }
-    kept = {ROOT} | set(units) | {a for u in units for a in ancestors(u)}
+    kept = {ROOT} | set(units) | {a for u in units for a in ancestors(u)} | shown
     return TreeHistory(
         [p.started for p in points],
         {p: rbytes.get(p, [None] * len(points)) for p in sorted(kept)},
         units,
+        watched,
     )
 
 
 def _children(
-    first: Iterable[tuple[bytes, int | None]], changed: set[bytes], dirs: set[bytes]
+    first: Iterable[tuple[bytes, int | None]],
+    changed: set[bytes],
+    dirs: set[bytes],
+    visit: Callable[[bytes], None],
 ) -> tuple[Counter[bytes], set[bytes]]:
     """Return, for DIRS, the summed rbytes of children outside CHANGED, and
-    the DIRS that have any child.
+    the DIRS that have any child. Calls VISIT with every path of FIRST, so
+    callers need not read it again.
 
     FIRST yields the first sample's (path, rbytes); NULL rbytes count as 0.
     """
     constant: Counter[bytes] = Counter()
     has_children = {parent(p) for p in changed if p != ROOT}
     for path, rbytes in first:
+        visit(path)
         if path == ROOT:
             continue
         up = parent(path)

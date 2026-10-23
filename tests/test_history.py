@@ -12,6 +12,7 @@ from dirhistory.history import (
     choose_points,
     summarize,
 )
+from dirhistory.watch import Watched
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 GiB = 2**30
@@ -21,8 +22,11 @@ def samples(n: int, step: timedelta = timedelta(hours=1)) -> list[Sample]:
     return [Sample(i + 1, T0 + i * step) for i in range(n)]
 
 
-def run(rows, n=None, threshold=1, limit=100, step=timedelta(hours=1)):
-    """Summarize a tree given as rows (sample_id, path, rbytes, deleted).
+def run(
+    rows, n=None, threshold=1, limit=100, step=timedelta(hours=1), watch=(), cap=100
+):
+    """Summarize a tree given as rows (sample_id, path, rbytes, deleted),
+    watching WATCH (patterns below ROOT) up to CAP dirs.
 
     Rows of sample 1 form the first sample; the rest are later changes.
     """
@@ -33,7 +37,16 @@ def run(rows, n=None, threshold=1, limit=100, step=timedelta(hours=1)):
     def fetch(paths):
         return [r for r in rows if r[1] in paths]
 
-    return summarize(samples(n, step), changed, first, fetch, threshold, limit)
+    return summarize(
+        samples(n, step),
+        changed,
+        first,
+        fetch,
+        threshold,
+        limit,
+        watch=watch,
+        watch_limit=cap,
+    )
 
 
 def test_ancestors_end_at_root():
@@ -346,3 +359,66 @@ def test_rows_out_of_sample_order_are_rejected():
     rows = [(2, ROOT, 200, False), (1, ROOT, 100, False)]
     with pytest.raises(ValueError, match="sample 1"):
         summarize(samples(2), {ROOT}, [(ROOT, 100)], lambda paths: rows, 1, 10)
+
+
+def test_never_changed_watched_dir_gets_a_constant_series():
+    rows = [
+        (1, ROOT, 100, False),
+        (1, b"p", 40, False),
+        (1, b"p/q", 30, False),
+        (1, b"z", 10, False),
+        (2, ROOT, 110, False),
+        (2, b"z", 20, False),
+    ]
+    h = run(rows, watch=[(b"p", b"*")])
+    assert h.watched.paths == [b"p/q"]
+    assert h.rbytes[b"p/q"] == [30, 30]
+    assert h.rbytes[b"p"] == [40, 40]  # ancestors kept, so Units crumbs work
+
+
+def test_deleted_watched_dir_turns_absent():
+    rows = [
+        (1, ROOT, 100, False),
+        (1, b"d", 50, False),
+        (2, ROOT, 50, False),
+        (2, b"d", None, True),
+    ]
+    h = run(rows, watch=[(b"d",)])
+    assert h.watched.paths == [b"d"]
+    assert h.rbytes[b"d"] == [50, None]
+
+
+def test_dir_created_later_can_be_watched():
+    rows = [(1, ROOT, 100, False), (2, ROOT, 150, False), (2, b"new", 50, False)]
+    h = run(rows, watch=[(b"*",)])
+    assert h.watched.paths == [b"new"]
+    assert h.rbytes[b"new"] == [None, 50]
+
+
+def test_watched_order_found_and_cap():
+    rows = [(1, ROOT, 9, False)] + [(1, p, 1, False) for p in (b"a", b"b", b"c")]
+    h = run(rows, n=1, watch=[(b"c",), (b"*",), None], cap=2)
+    assert h.watched.paths == [b"c", b"a"]
+    assert h.watched.found == [1, 3, 0]
+    assert h.watched.dropped == 1
+
+
+def test_watching_root():
+    h = run([(1, ROOT, 100, False)], watch=[()])
+    assert h.watched.paths == [ROOT]
+    assert h.rbytes[ROOT] == [100]
+
+
+def test_no_watch_keeps_only_units_and_their_ancestors():
+    rows = [
+        (1, ROOT, 100, False),
+        (1, b"a", 50, False),
+        (1, b"a/b", 20, False),
+        (1, b"z", 10, False),
+        (2, ROOT, 110, False),
+        (2, b"a", 60, False),
+        (2, b"a/b", 30, False),
+    ]
+    h = run(rows, threshold=5)
+    assert set(h.rbytes) == {ROOT, b"a", b"a/b"}
+    assert h.watched == Watched([], [], 0)
