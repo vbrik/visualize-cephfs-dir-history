@@ -214,6 +214,8 @@ def check_watched(page: Page, base: str) -> None:
         assert page.is_hidden(unit_only), f"{unit_only} shown in the Watched view"
     a = card(page, "A")
     assert "+200 GiB" in a.inner_text(), f"change of A: {a.inner_text()}"
+    # The scale's span shows even when its ends round alike (e.g. 108 TiB).
+    assert "span 200 GiB" in a.inner_text(), f"scale of A: {a.inner_text()}"
 
     # Zooming here is the Units view's range too.
     times = json.loads((FIXTURE / "tree-1.json").read_text())["times"]
@@ -422,6 +424,43 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         page.locator("#hidden-list button").first.click()
         page.wait_for_timeout(SETTLE_MS)
         assert "hide=" not in state(), f"tree {tree}: unhiding failed"
+
+    entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
+    watched = next(t.get("watched", 0) for t in entries if t["id"] == tree)
+    if not any(t.get("watched", 0) for t in entries):
+        return
+    page.goto(f"{base}#tree={tree}&view=watched")
+    page.wait_for_timeout(SETTLE_MS)
+    if shots:
+        page.screenshot(path=shots / f"tree-{tree}-watched.png", full_page=True)
+    if not watched:
+        assert page.is_visible("#watch-note"), f"tree {tree}: no note without cards"
+        return
+    n = page.locator("#cards .trend-card").count()
+    assert n == watched, f"tree {tree}: {n} cards, trees.json says {watched}"
+
+    # Drag the slider's left handle a third of the way; cards follow.
+    before = page.inner_text("#watch-range")
+    box = page.locator("#watch-slider").bounding_box()
+    y = box["y"] + box["height"] - 24
+    page.mouse.move(box["x"] + 25, y)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 3, y, steps=10)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.inner_text("#watch-range") != before, f"tree {tree}: drag did nothing"
+
+    other = next((t["id"] for t in entries if t["id"] != tree), None)
+    if other is not None:
+        page.select_option("#tree", str(other))
+        page.wait_for_timeout(SETTLE_MS)
+        assert "view=watched" in state(), f"tree {tree}: tree change left Watched"
+        page.goto(f"{base}#tree={tree}&view=watched")
+        page.wait_for_timeout(SETTLE_MS)
+    page.locator("#cards .trend-card").first.click()
+    page.wait_for_timeout(SETTLE_MS)
+    assert "view=" not in state(), f"tree {tree}: click-through stayed in Watched"
+    assert page.locator("#legend li").count(), f"tree {tree}: Units not shown"
 
 
 def run_checks(

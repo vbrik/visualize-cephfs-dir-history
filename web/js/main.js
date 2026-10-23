@@ -368,7 +368,9 @@ function renderWatched() {
     tag.textContent = formatDelta(card.change);
     tag.className = `tag ${card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat"}`;
     el.querySelector(".scale").textContent =
-      card.lo === null ? "absent throughout" : `scale ${formatBytes(card.lo)} – ${formatBytes(card.hi)}`;
+      card.lo === null
+        ? "absent throughout"
+        : `scale ${formatBytes(card.lo)} – ${formatBytes(card.hi)}, span ${formatBytes(card.hi - card.lo)}`;
     const spark = el.querySelector(".spark");
     const sparkChart = echarts.getInstanceByDom(spark) ?? echarts.init(spark, null, { renderer: "svg" });
     sparkChart.dispatchAction({ type: "hideTip" }); // an open tooltip would throw
