@@ -31,6 +31,9 @@
       title="Bands whose peak in the shown range is smaller fold into “Smaller units”"></label>
     <label class="check units-only"><input id="rest" type="checkbox"> Rest of tree</label>
     <button id="reset" class="units-only" type="button">Reset</button>
+    <label class="watched-only">Sort <select id="sort"></select></label>
+    <label class="check watched-only"
+      title="Also show directories whose size did not change in the shown range"><input id="flat" type="checkbox"> Show unchanged</label>
   </form>
 
   <p id="error" class="error" role="alert" hidden></p>
@@ -54,10 +57,12 @@
    </div>
    <div class="watched-only">
     <p id="watch-range" class="muted"></p>
+    <p id="watch-hidden" class="muted" hidden></p>
     <p id="watch-note" hidden>No watched directories in this tree. See <code>dirhistory-generate --watch</code>.</p>
     <div id="cards" class="cards"></div>
     <div id="watch-slider" class="watch-slider" aria-label="Time range"></div>
    </div>
   </main>
+  <div id="spark-tip" class="tt spark-tip" hidden><div class="tt-when"></div><b></b></div>
 </body>
 </html>

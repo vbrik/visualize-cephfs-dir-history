@@ -86,6 +86,8 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Min peak | Bands whose peak in the shown range is smaller join *Smaller units* (e.g. `1TiB`). |
 | Rest of tree | Also draw the bytes in no unit. Usually far larger than the units. |
 | hide | Remove a band's bytes from the chart: a unit, or every unit of a group (shown as `dir/`). Click the chip to bring it back. |
+| Sort | Watched view: card order, largest first, in the shown range: *Span* (max − min), *Peak* (max), *Current size* (at the range's end), or *Name*. |
+| Show unchanged | Watched view: also show cards whose size did not change in the shown range; hidden by default, and counted above the cards. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
 
 The URL keeps the view, except the zoomed time range, so it can be bookmarked
@@ -99,7 +101,8 @@ or shared.
 
 Conventions are in [docs/conventions.md](docs/conventions.md). To add a
 view, add a chart module under `web/js/charts/` that builds an ECharts
-option from `model.js` output, as `stackedArea.js` does, and a switch in
+option (or, for many small charts, SVG path data, as `trendCard.js` does)
+from `model.js` output, as `stackedArea.js` does, and a switch in
 `web/js/main.js`.
 
 ## License

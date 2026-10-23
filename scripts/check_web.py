@@ -159,6 +159,9 @@ def check_model(page: Page, base: str) -> None:
     assert (a["lo"], a["hi"]) == (10, 30), f"scale: {a}"
     assert (gone["end"], gone["change"]) == (0, -5), f"absent end: {gone}"
     assert flat["lo"] == flat["hi"] == 7, f"flat scale: {flat}"
+    assert (a["peak"], a["span"]) == (30, 20), f"peak and span: {a}"
+    assert (gone["peak"], gone["span"]) == (5, 5), f"span of a deleted dir: {gone}"
+    assert flat["span"] == 0, f"span of a constant dir: {flat}"
     zoomed = page.evaluate(
         """async () => (await import("./js/model.js")).trendCards(
             {times: ["t0", "t1", "t2"], watched: ["a"], rbytes: {a: [10, 30, 20]}},
@@ -175,19 +178,70 @@ def check_model(page: Page, base: str) -> None:
             {times: ["t0"], rbytes: {}}, [0, 0])"""
     )
     assert none == [], "a file without `watched` must give no cards"
-    scales = page.evaluate(
+
+    # Unchanged: constant or absent throughout the range; a dir that appears
+    # or disappears in it changed.
+    kept = page.evaluate(
         """async () => {
             const m = await import("./js/model.js");
-            const {trendCardOption} = await import("./js/charts/trendCard.js");
-            const data = {times: ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z"],
-              watched: ["flat", "gone"], rbytes: {flat: [7, 7], gone: [null, null]}};
-            return m.trendCards(data, [0, 1]).map((c) => {
-              const y = trendCardOption(data, c, {colors: {}, range: [0, 1]}).yAxis;
-              return [y.min, y.max];
-            });
+            const data = {times: ["t0", "t1", "t2"],
+              watched: ["const", "never", "new", "gone", "back", "up"],
+              rbytes: {const: [7, 7, 7], never: [null, null, null], new: [null, 5, 5],
+                gone: [5, null, null], back: [5, null, 5], up: [5, 5, 6]}};
+            return m.trendCards(data, [0, 2]).filter((c) => !m.unchanged(c))
+              .map((c) => c.path);
         }"""
     )
-    assert scales == [[6, 8], [0, 1]], f"flat or absent card scale: {scales}"
+    assert kept == ["new", "gone", "back", "up"], f"unchanged rule: {kept}"
+
+    orders = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const data = {times: ["t0", "t1"], watched: ["b", "a", "c", "B", "x"],
+              rbytes: {a: [10, 40], b: [50, 20], c: [90, 90], B: [10, 40],
+                x: [null, null]}};
+            const cards = m.trendCards(data, [0, 1]);
+            return Object.fromEntries(Object.keys(m.CARD_SORTS).map(
+              (k) => [k, m.sortCards(cards, k).map((c) => c.path)]));
+        }"""
+    )
+    assert orders == {
+        "span": ["B", "a", "b", "c", "x"],
+        "peak": ["c", "b", "B", "a", "x"],
+        "size": ["c", "B", "a", "b", "x"],
+        "name": ["B", "a", "b", "c", "x"],
+    }, f"card orders: {orders}"
+
+    sparks = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const t = await import("./js/charts/trendCard.js");
+            const data = {times: ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z",
+                "2026-10-01T03:00:00Z", "2026-10-01T04:00:00Z"],
+              watched: ["up", "flat", "gap", "never"],
+              rbytes: {up: [0, 10, 20, 30], flat: [7, 7, 7, 7], gap: [1, 2, null, 3],
+                never: [null, null, null, null]}};
+            const cards = m.trendCards(data, [0, 3]);
+            const xs = t.sparkXs(data.times, [0, 3]);
+            return {
+              paths: cards.map((c) => t.sparkPaths(xs, c, [0, 3])),
+              at: [0, 0.3, 0.6, 1].map((f) => t.sparkPointAt(xs, [0, 3], f)),
+              zoomed: t.sparkPaths(t.sparkXs(data.times, [1, 2]),
+                m.trendCards(data, [1, 2])[0], [1, 2]),
+              zoomedAt: t.sparkPointAt(t.sparkXs(data.times, [1, 2]), [1, 2], 1),
+            };
+        }"""
+    )
+    up, flat_, gap, never = sparks["paths"]
+    # x by time (the third point is 3 h of 4 in), y from the bottom up.
+    assert up["line"] == "M 0 53 L 250 36.3 L 750 19.7 L 1000 3", f"line: {up}"
+    assert up["fill"] == "M 0 53 L 0 53 L 250 36.3 L 750 19.7 L 1000 3 L 1000 53 Z"
+    assert flat_["line"] == "M 0 28 L 250 28 L 750 28 L 1000 28", "flat mid-height"
+    assert gap["line"] == "M 0 53 L 250 28", f"gap or lone point: {gap}"
+    assert never == {"line": "", "fill": ""}, f"absent throughout: {never}"
+    assert sparks["zoomed"]["line"] == "M 0 53 L 1000 3", "scale not by range"
+    assert [i for i, _ in sparks["at"]] == [0, 1, 2, 3], f"nearest: {sparks['at']}"
+    assert sparks["zoomedAt"] == [2, 1000], f"nearest when zoomed: {sparks['zoomedAt']}"
 
 
 def cards(page: Page) -> list[str]:
@@ -224,8 +278,9 @@ def check_watched(page: Page, base: str) -> None:
     page.wait_for_timeout(SETTLE_MS)
     assert "view=watched" in state(), "switching did not change the URL"
     names = cards(page)
-    assert names[:2] == ["Z/y", "A"] and len(names) == 3, f"card order: {names}"
-    assert names[2].startswith("caf"), "non-UTF-8 watched dir not shown"
+    # Largest span first: A 200 GiB, café 100 GiB, Z/y 50 GiB.
+    assert names[0] == "A" and names[2] == "Z/y", f"card order: {names}"
+    assert names[1].startswith("caf"), "non-UTF-8 watched dir not shown"
     for unit_only in ("#group", "#top", "#min", "#rest", "#reset", "#legend"):
         assert page.is_hidden(unit_only), f"{unit_only} shown in the Watched view"
     a = card(page, "A")
@@ -236,6 +291,14 @@ def check_watched(page: Page, base: str) -> None:
     # cover the sparkline's own tooltip.
     assert a.get_attribute("title") is None, "card-wide title over the sparkline"
     assert a.locator(".name").get_attribute("title") == "/fixture/A", "name title"
+
+    # The sparkline's tooltip: time and size at the pointer.
+    spark = a.locator(".spark").bounding_box()
+    page.mouse.move(spark["x"] + spark["width"] - 2, spark["y"] + spark["height"] / 2)
+    tip = page.inner_text("#spark-tip")
+    assert page.is_visible("#spark-tip") and "700 GiB" in tip, f"tooltip: {tip}"
+    page.mouse.move(0, 0)
+    assert page.is_hidden("#spark-tip"), "tooltip left after the pointer"
 
     # A slider drag renders once, on release: per-move renders of 100 cards
     # over 400 points take seconds.
@@ -299,10 +362,67 @@ def check_watched(page: Page, base: str) -> None:
     )
     shown = page.inner_text("#table-range")
     assert shown == f"{start} \u2013 {end}", f"range after switching: {shown}"
+    for watched_only in ("#sort", "#flat", "#cards"):
+        assert page.is_hidden(watched_only), f"{watched_only} shown in the Units view"
+
+
+def check_sort_and_unchanged(page: Page, base: str) -> None:
+    """Sorting cards, and hiding unchanged ones unless asked."""
+
+    def state() -> str:
+        return page.evaluate("location.hash")
+
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    tree["rbytes"]["Z/y"] = [2**30] * 3
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    page.goto(f"{base}#tree=1&view=watched")
+    page.wait_for_timeout(SETTLE_MS)
+    assert len(cards(page)) == 2, f"unchanged card shown: {cards(page)}"
+    hidden = page.inner_text("#watch-hidden")
+    assert hidden == "1 directory unchanged in this range is hidden.", hidden
+
+    page.check("#flat")
+    page.wait_for_timeout(SETTLE_MS)
+    assert "flat=1" in state() and "Z/y" in cards(page), "Show unchanged did nothing"
+    assert page.is_hidden("#watch-hidden"), "hidden count shown with none hidden"
+
+    page.select_option("#sort", "name")
+    page.wait_for_timeout(SETTLE_MS)
+    names = cards(page)
+    assert names[:2] == ["A", "Z/y"] and len(names) == 3, f"by name: {names}"
+    page.select_option("#sort", "size")
+    page.wait_for_timeout(SETTLE_MS)
+    assert "sort=size" in state(), f"sort not in the URL: {state()}"
+    page.reload()
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.input_value("#sort") == "size" and page.is_checked("#flat"), (
+        "lost on reload"
+    )
+    assert cards(page)[0] == "A" and cards(page)[2] == "Z/y", f"by size: {cards(page)}"
+
+    # With every card unchanged, the count says where they went.
+    tree["rbytes"]["A"] = [2**40] * 3
+    tree["rbytes"][next(p for p in tree["watched"] if p.startswith("caf"))] = [
+        2**30
+    ] * 3
+    page.goto(f"{base}#tree=1&view=watched")
+    page.reload()  # a hash change alone keeps the loaded file
+    page.wait_for_timeout(SETTLE_MS)
+    text = page.inner_text("#watch-hidden")
+    assert cards(page) == [] and "Show unchanged" in text, f"all hidden: {text}"
+    page.goto(f"{base}#tree=1&view=watched&sort=size&flat=1")
+    page.wait_for_timeout(SETTLE_MS)
+
+    # Reset is the Units view's: it keeps the Watched view's state.
+    page.click("#view button[data-view=units]")
+    page.wait_for_timeout(SETTLE_MS)
+    page.click("#reset")
+    page.wait_for_timeout(SETTLE_MS)
+    assert "sort=size" in state() and "flat=1" in state(), f"reset: {state()}"
 
 
 def check_watched_resize(page: Page, base: str) -> None:
-    """Sparklines take their card's size after resizes while hidden."""
+    """Sparklines take their card's width after resizes while hidden."""
     page.goto(f"{base}#tree=1&view=watched")
     page.wait_for_timeout(SETTLE_MS)
     page.click("#view button[data-view=units]")
@@ -313,18 +433,20 @@ def check_watched_resize(page: Page, base: str) -> None:
     page.wait_for_timeout(SETTLE_MS)
     widths = page.eval_on_selector_all(
         "#cards .spark",
-        "els => els.map(e => [e.clientWidth, e.querySelector('svg')?.clientWidth])",
+        """els => els.map((e) => [e.previousElementSibling, e].map(
+            (x) => Math.round(x.getBoundingClientRect().width)))""",
     )
-    assert widths and all(box == svg for box, svg in widths), f"sparks: {widths}"
+    assert widths and all(head == svg for head, svg in widths), f"sparks: {widths}"
 
 
 def check_absent_in_range(page: Page, base: str) -> None:
-    """A dir absent over the shown range says so, not that it never existed."""
+    """A dir absent over the shown range (an unchanged one, so shown only on
+    request) says so, not that it never existed."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["rbytes"]["Z/y"] = [2**30, None, None]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     times = tree["times"]
-    page.goto(f"{base}#tree=1&view=watched")
+    page.goto(f"{base}#tree=1&view=watched&flat=1")
     page.wait_for_timeout(SETTLE_MS)
     zoom(page, "watch-slider", times[1], times[2])
     page.wait_for_timeout(SETTLE_MS)
@@ -503,8 +625,16 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     if not watched:
         assert page.is_visible("#watch-note"), f"tree {tree}: no note without cards"
         return
+    # Unchanged cards are hidden, and counted, unless asked for.
+    shown = page.locator("#cards .trend-card").count()
+    hidden = page.eval_on_selector(
+        "#watch-hidden", "e => e.hidden ? 0 : parseInt(e.textContent)"
+    )
+    page.goto(f"{base}#tree={tree}&view=watched&flat=1")
+    page.wait_for_timeout(SETTLE_MS)
     n = page.locator("#cards .trend-card").count()
     assert n == watched, f"tree {tree}: {n} cards, trees.json says {watched}"
+    assert shown + hidden == n, f"tree {tree}: {shown} shown + {hidden} hidden != {n}"
 
     # Drag the slider's left handle a third of the way; cards follow.
     before = page.inner_text("#watch-range")
@@ -562,6 +692,7 @@ def main() -> int:
             check_model,
             check_fixture,
             check_watched,
+            check_sort_and_unchanged,
             check_watched_resize,
             check_absent_in_range,
             check_no_watched,

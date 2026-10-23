@@ -4,8 +4,9 @@
 
 import { rangeSliderOption } from "./charts/rangeSlider.js";
 import { stackedAreaOption } from "./charts/stackedArea.js";
-import { trendCardOption } from "./charts/trendCard.js";
+import { HEIGHT, WIDTH, sparkPaths, sparkPointAt, sparkXs } from "./charts/trendCard.js";
 import {
+  CARD_SORTS,
   MAX_BANDS,
   ROOT,
   decodeValue,
@@ -17,8 +18,10 @@ import {
   isUnder,
   layerAt,
   parseSize,
+  sortCards,
   stack,
   trendCards,
+  unchanged,
 } from "./model.js";
 
 // How often to look for regenerated data files, in ms.
@@ -32,7 +35,12 @@ const DEFAULTS = {
   min: "",
   hide: [],
   rest: false,
+  sort: "span",
+  flat: false,
 };
+// The Units view's state keys, which its Reset restores.
+const UNITS_KEYS = ["in", "group", "top", "min", "hide", "rest"];
+const SVG = "http://www.w3.org/2000/svg";
 
 const $ = (id) => document.getElementById(id);
 const chart = echarts.init($("chart"), null, { renderer: "canvas" });
@@ -41,15 +49,12 @@ let data = null; // the current tree file
 let range = null; // [a, b] point indexes shown by the zoom slider
 let model = null; // the bands drawn, from model.stack
 const slots = new Map(); // view key -> Map(band key -> palette slot)
-// The Watched view's charts, made when it is first shown: ECharts sizes a
+// The Watched view's slider, made when it is first shown: ECharts sizes a
 // chart from its element, which is 0×0 while hidden.
 let slider = null;
 const cardEls = new Map(); // watched path -> its card element
-// Sparklines follow their card's size, which changes while the view is
-// hidden (0×0) and when the page's scrollbar comes or goes.
-const sparkSizes = new ResizeObserver((entries) => {
-  for (const e of entries) echarts.getInstanceByDom(e.target)?.resize();
-});
+const cardOf = new WeakMap(); // shown card element -> its card (model.trendCards)
+let sparkX = []; // the sparklines' point x's, from sparkXs
 
 // --- state <-> URL hash ---------------------------------------------------
 
@@ -64,6 +69,8 @@ function readState() {
     min: p.get("min") ?? DEFAULTS.min,
     hide: p.getAll("hide"),
     rest: p.get("rest") === "1",
+    sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
+    flat: p.get("flat") === "1",
   };
 }
 
@@ -77,6 +84,8 @@ function writeState(changes) {
   if (s.min) p.push(["min", s.min]);
   for (const h of s.hide) p.push(["hide", h]);
   if (s.rest) p.push(["rest", "1"]);
+  if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
+  if (s.flat) p.push(["flat", "1"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
 }
 
@@ -169,12 +178,6 @@ function colors() {
     ink: v("--ink"),
     muted: v("--muted"),
     grid: v("--grid"),
-    grow: v("--grow"),
-    growFill: v("--grow-fill"),
-    shrink: v("--shrink"),
-    shrinkFill: v("--shrink-fill"),
-    flat: v("--flat"),
-    flatFill: v("--flat-fill"),
   };
 }
 
@@ -198,7 +201,7 @@ function render() {
   document.body.dataset.view = view;
   renderControls(s, view);
   if (!data) return;
-  if (view === "watched") renderWatched();
+  if (view === "watched") renderWatched(s);
   else renderUnits(s);
 }
 
@@ -257,6 +260,12 @@ function renderControls(s, view) {
   $("top").max = MAX_BANDS;
   if (document.activeElement !== $("min")) $("min").value = s.min;
   $("rest").checked = s.rest;
+  const sort = $("sort");
+  if (!sort.options.length) {
+    sort.append(...Object.entries(CARD_SORTS).map(([key, [label]]) => new Option(label, key)));
+  }
+  sort.value = s.sort;
+  $("flat").checked = s.flat;
 }
 
 function renderCrumbs(inPath) {
@@ -347,46 +356,44 @@ function renderSummary(inPath) {
   );
 }
 
-function renderWatched() {
+/** The Watched view: S's cards, minus unchanged ones unless S.flat. */
+function renderWatched(s) {
   const [a, b] = range;
-  const cards = trendCards(data, range);
-  const c = colors();
-  $("watch-note").hidden = cards.length > 0;
-  $("watch-range").textContent = cards.length
+  const all = trendCards(data, range);
+  const cards = sortCards(s.flat ? all : all.filter((card) => !unchanged(card)), s.sort);
+  const hidden = all.length - cards.length;
+  hideSparkTip();
+  $("watch-note").hidden = all.length > 0;
+  $("watch-range").textContent = all.length
     ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
     : "";
+  $("watch-hidden").hidden = hidden === 0;
+  $("watch-hidden").textContent = cards.length === 0
+    ? `All ${hidden} watched directories are unchanged in this range; check Show unchanged to see them.`
+    : hidden === 1
+      ? "1 directory unchanged in this range is hidden."
+      : `${hidden} directories unchanged in this range are hidden.`;
 
-  const shown = new Set(cards.map((card) => card.path));
-  for (const [path, el] of cardEls) {
-    if (!shown.has(path)) {
-      const spark = el.querySelector(".spark");
-      sparkSizes.unobserve(spark);
-      echarts.getInstanceByDom(spark)?.dispose();
-      cardEls.delete(path);
-    }
-  }
+  sparkX = sparkXs(data.times, range);
+  const watched = new Set(all.map((card) => card.path));
+  for (const path of cardEls.keys()) if (!watched.has(path)) cardEls.delete(path);
   $("cards").replaceChildren(...cards.map((card) => cardEls.get(card.path) ?? newCard(card.path)));
   for (const card of cards) {
     const el = cardEls.get(card.path);
+    cardOf.set(el, card);
+    el.className = `trend-card ${card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat"}`;
     const name = el.querySelector(".name");
     name.textContent = card.path === ROOT ? data.tree.fs_path : card.path;
     name.title = absolute(card.path);
     el.querySelector(".size").textContent = card.values[b] === null ? "absent" : formatBytes(card.end);
-    const tag = el.querySelector(".tag");
-    tag.textContent = formatDelta(card.change);
-    tag.className = `tag ${card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat"}`;
+    el.querySelector(".tag").textContent = formatDelta(card.change);
     el.querySelector(".scale").textContent =
       card.lo === null
         ? "absent in this range"
         : `scale ${formatBytes(card.lo)} – ${formatBytes(card.hi)}, span ${formatBytes(card.hi - card.lo)}`;
-    const spark = el.querySelector(".spark");
-    let sparkChart = echarts.getInstanceByDom(spark);
-    if (!sparkChart) {
-      sparkChart = echarts.init(spark, null, { renderer: "svg" });
-      sparkSizes.observe(spark);
-    }
-    sparkChart.dispatchAction({ type: "hideTip" }); // an open tooltip would throw
-    sparkChart.setOption(trendCardOption(data, card, { colors: c, range }), { notMerge: true });
+    const { line, fill } = sparkPaths(sparkX, card, range);
+    el.querySelector(".line").setAttribute("d", line);
+    el.querySelector(".fill").setAttribute("d", fill);
   }
 
   if (!slider) {
@@ -394,27 +401,64 @@ function renderWatched() {
     slider.on("datazoom", () => followZoom(slider));
   }
   slider.resize();
-  slider.setOption(rangeSliderOption(data, { colors: c }), { replaceMerge: ["series"] });
+  slider.setOption(rangeSliderOption(data, { colors: colors() }), { replaceMerge: ["series"] });
   zoomTo(slider);
 }
 
 /** A trend card element for PATH; its content is filled by renderWatched. */
 function newCard(path) {
   const el = document.createElement("div");
-  el.className = "trend-card";
   el.tabIndex = 0;
   el.setAttribute("role", "link");
   const head = document.createElement("div");
   head.className = "trend-head";
   for (const cls of ["name", "size", "tag"]) head.append(Object.assign(text(""), { className: cls }));
-  const spark = document.createElement("div");
-  spark.className = "spark";
+  const spark = svg("svg", "spark");
+  spark.setAttribute("viewBox", `0 0 ${WIDTH} ${HEIGHT}`);
+  spark.setAttribute("preserveAspectRatio", "none");
+  spark.setAttribute("aria-hidden", "true");
+  const cursor = svg("line", "cursor");
+  cursor.setAttribute("y2", HEIGHT);
+  spark.append(svg("path", "fill"), svg("path", "line"), cursor);
   el.append(head, spark, Object.assign(text(""), { className: "scale" }));
   const open = () => writeState({ view: "units", in: path });
   el.addEventListener("click", open);
   el.addEventListener("keydown", (e) => e.key === "Enter" && open());
   cardEls.set(path, el);
   return el;
+}
+
+// One tooltip for all sparklines, which have no chart library behind them:
+// the point nearest the pointer in time, marked by its card's cursor line.
+let tipCursor = null; // the cursor line shown, if any
+
+function showSparkTip(e) {
+  const spark = e.target.closest?.(".spark");
+  const card = spark && cardOf.get(spark.parentElement);
+  if (!card) return hideSparkTip();
+  const box = spark.getBoundingClientRect();
+  const [i, x] = sparkPointAt(sparkX, range, (e.clientX - box.left) / box.width);
+  const cursor = spark.querySelector(".cursor");
+  if (tipCursor !== cursor) hideSparkTip();
+  tipCursor = cursor;
+  cursor.setAttribute("x1", x);
+  cursor.setAttribute("x2", x);
+  cursor.style.visibility = "visible";
+
+  const tip = $("spark-tip");
+  tip.querySelector(".tt-when").textContent = new Date(data.times[i]).toLocaleString();
+  tip.querySelector("b").textContent = card.values[i] === null ? "absent" : formatBytes(card.values[i]);
+  tip.hidden = false;
+  const left = box.left + (x / WIDTH) * box.width - tip.offsetWidth / 2;
+  tip.style.left = `${Math.max(4, Math.min(innerWidth - tip.offsetWidth - 4, left))}px`;
+  const above = box.top - tip.offsetHeight - 6;
+  tip.style.top = `${above >= 0 ? above : box.bottom + 6}px`;
+}
+
+function hideSparkTip() {
+  $("spark-tip").hidden = true;
+  if (tipCursor) tipCursor.style.visibility = "";
+  tipCursor = null;
 }
 
 /** Set TARGET chart's zoom slider to the shown range. */
@@ -461,6 +505,13 @@ function button(label, onClick, current = false) {
   return b;
 }
 
+/** An SVG element NAME of class CLS. */
+function svg(name, cls) {
+  const e = document.createElementNS(SVG, name);
+  e.classList.add(cls);
+  return e;
+}
+
 function swatch(color) {
   const s = document.createElement("span");
   s.className = "swatch";
@@ -492,7 +543,14 @@ $("group").addEventListener("change", (e) => writeState({ group: Number(e.target
 $("top").addEventListener("change", (e) => writeState({ top: clampInt(e.target.value, 1, MAX_BANDS, MAX_BANDS) }));
 $("min").addEventListener("change", (e) => writeState({ min: e.target.value.trim() }));
 $("rest").addEventListener("change", (e) => writeState({ rest: e.target.checked }));
-$("reset").addEventListener("click", () => writeState({ ...DEFAULTS, tree: readState().tree }));
+$("reset").addEventListener("click", () =>
+  writeState(Object.fromEntries(UNITS_KEYS.map((k) => [k, DEFAULTS[k]]))),
+);
+$("sort").addEventListener("change", (e) => writeState({ sort: e.target.value }));
+$("flat").addEventListener("change", (e) => writeState({ flat: e.target.checked }));
+$("cards").addEventListener("pointermove", showSparkTip);
+$("cards").addEventListener("pointerleave", hideSparkTip);
+addEventListener("scroll", hideSparkTip, { passive: true });
 
 // Clicking a group's area drills into it. ECharts reports clicks on a line
 // series' line only, so find the band under the pointer from the stack.

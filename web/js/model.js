@@ -192,29 +192,56 @@ function bandLabel(g, data, inPath) {
  * Shape DATA's watched dirs into trend cards for RANGE ([first, last] point
  * indexes), in DATA.watched order.
  *
- * Returns [{path, values, start, end, change, lo, hi}]: values is the dir's
- * whole rbytes series (null: absent); start and end its bytes at the range's
- * ends, absent counting as 0 (as for units), and change = end - start; lo
- * and hi bound its values within the range, both null if it is absent
+ * Returns [{path, values, start, end, change, peak, span, lo, hi}]: values
+ * is the dir's whole rbytes series (null: absent). Within the range, absent
+ * counting as 0 (as for units): start and end are its bytes at the ends,
+ * change = end - start, peak the largest and span the largest minus the
+ * smallest, so a dir that appears or disappears has a span. lo and hi bound
+ * its present values (the sparkline's scale), both null if it is absent
  * throughout. A file without watched dirs gives [].
  */
 export function trendCards(data, range) {
   const [a, b] = range;
   return (data.watched ?? []).map((path) => {
     const values = data.rbytes[path];
-    const shown = values.slice(a, b + 1).filter((v) => v !== null);
+    const inRange = values.slice(a, b + 1);
+    const present = inRange.filter((v) => v !== null);
+    const zeroed = inRange.map((v) => v ?? 0);
     const start = values[a] ?? 0;
     const end = values[b] ?? 0;
+    const peak = Math.max(...zeroed);
     return {
       path,
       values,
       start,
       end,
       change: end - start,
-      lo: shown.length ? Math.min(...shown) : null,
-      hi: shown.length ? Math.max(...shown) : null,
+      peak,
+      span: peak - Math.min(...zeroed),
+      lo: present.length ? Math.min(...present) : null,
+      hi: present.length ? Math.max(...present) : null,
     };
   });
+}
+
+/** Whether CARD's dir is unchanged in its range: constant, or absent throughout. */
+export const unchanged = (card) => card.span === 0;
+
+// Card orders for the Watched view: sort key -> [label, card's value].
+// Values sort largest first; "name" sorts by path.
+export const CARD_SORTS = {
+  span: ["Span (max − min)", (card) => card.span],
+  peak: ["Peak", (card) => card.peak],
+  size: ["Current size", (card) => card.end],
+  name: ["Name", null],
+};
+
+/** CARDS ordered by sort key BY (see CARD_SORTS); ties by path. Paths
+ * compare by UTF-16 code unit, i.e. by byte for ASCII names. */
+export function sortCards(cards, by) {
+  const byPath = (x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0);
+  const key = CARD_SORTS[by][1];
+  return cards.toSorted(key ? (x, y) => key(y) - key(x) || byPath(x, y) : byPath);
 }
 
 /**

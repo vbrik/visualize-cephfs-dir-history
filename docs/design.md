@@ -81,7 +81,8 @@ those, one trend card each.
 - Patterns are absolute paths with wildcards matched per component
   (`watch.py`), so `*` never crosses `/` and next year's directory joins
   without an edit. No `**`: a recursive pattern could watch thousands of
-  directories by accident. `--max-watched` (100) caps the cards per tree.
+  directories by accident. `--max-watched` (100) caps the cards per tree;
+  raise it for wildcards over many directories (see Page).
 - Cards show rbytes, the whole directory, not own size: a watched directory
   asks "how big is this", and watched directories may nest, since cards are
   never added up.
@@ -114,6 +115,21 @@ those, one trend card each.
   scale follow the range, so zooming reveals a shape. Cards color by
   direction (growth warm, shrinkage cool), so their number is not tied to
   the 8-slot palette. Clicking a card opens the Units view in its dir.
+- A wildcard can watch thousands of directories (`/npx/user/*`), most of
+  which never change. Cards unchanged in the shown range (constant, or
+  absent throughout) are hidden unless *Show unchanged* (`flat=1`) is on,
+  and the rest sort by span (max − min) by default, so the movers come
+  first; also by peak, current size or name (`sort=`). Sort keys and the
+  unchanged test count absent as 0, like a card's change, so a directory
+  created or deleted in the range has changed. Called span, not change,
+  because a card's change is end − start.
+- Sparklines are plain SVG paths, not ECharts: one ECharts instance per
+  card took 20 s for 3000 cards of 28 points and 8.5 s per range change;
+  SVG takes 0.6 s and 0.2 s with 400 points (`--max-points`). The slider
+  still applies a drag on release, since cards reorder and come and go
+  with the range.
+- Reset restores the Units view's controls only; it is hidden in the
+  Watched view.
 
 ## Data files
 
@@ -132,7 +148,7 @@ changed; `watched` counts the tree's watched directories.
 | `times` | Time points, oldest first. |
 | `rbytes` | `{path: [bytes or null per point]}` for ROOT (`.`), every unit, every watched directory, and every ancestor of these. null: absent. |
 | `units` | `{path: {own: [bytes per point, ≥ 0], leaf: bool}}`. |
-| `watched` | Watched directories' paths, in display order (`--watch` order; by path within a pattern). `[]` without `--watch`. |
+| `watched` | Watched directories' paths in `--watch` order, by path within a pattern: the order `--max-watched` cuts in. The page sorts the cards itself. `[]` without `--watch`. |
 
 ## Risks and limitations
 

@@ -23,3 +23,11 @@
 - `new TextDecoder("utf-8")` strips a leading U+FEFF by default, and when
   decoding one sequence at a time every sequence counts as leading. Pass
   `ignoreBOM: true` whenever the decoded text is data, such as file names.
+- An ECharts instance per small multiple costs about 7 ms and 0.1 MB each:
+  3000 sparklines took 20 s and 294 MB. Measure at the real count before
+  choosing per-item charts; plain SVG paths in a fixed viewBox
+  (`preserveAspectRatio="none"`, `vector-effect: non-scaling-stroke`) drew
+  them in 0.6 s even at 400 points each.
+- `page.wait_for_function` with a string predicate evals it, which the
+  page's CSP (`default-src 'self'`, as check_web.py serves it) blocks; poll
+  from Python instead.

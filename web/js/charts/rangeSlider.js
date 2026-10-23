@@ -1,7 +1,7 @@
 // The Watched view's time-range slider: an ECharts dataZoom on its own,
 // with ROOT's rbytes as its data shadow. It applies a drag on release
-// (realtime: false): re-rendering up to 100 cards of 400 points per mouse
-// move takes seconds.
+// (realtime: false): cards are sorted and filtered by the range, so they
+// would reorder and come and go under the pointer while it moves.
 
 /** Return the ECharts option of a bare zoom slider over DATA's times.
  * colors: {grid}. */

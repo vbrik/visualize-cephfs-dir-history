@@ -22,8 +22,9 @@
   `web/vendor/` at a pinned version. Directory names are untrusted: insert
   them with `textContent`, or `escapeHtml` in ECharts tooltip HTML.
 - `web/js/model.js` holds the page's pure data shaping; chart modules in
-  `web/js/charts/` turn its output into ECharts options; `main.js` owns
-  state (the URL hash) and the DOM.
+  `web/js/charts/` turn its output into ECharts options, or SVG path data
+  for the trend cards' sparklines (too many for an ECharts instance each);
+  `main.js` owns state (the URL hash) and the DOM.
 - Colors come from CSS custom properties in `web/style.css`. Series use the
   validated 8-slot categorical palette in fixed order; never cycle it, and
   keep a band's color while filters change.

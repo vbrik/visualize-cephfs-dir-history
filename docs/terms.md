@@ -21,5 +21,7 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | watch pattern | An absolute path pattern in the `--watch` file, e.g. `/npx/ana/IceCube/*/filtered`; wildcards match within one path component. |
 | watched dir | A directory of a tree that a watch pattern matches. |
 | trend card | One watched dir's card in the Watched view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
+| span | A trend card's largest minus smallest size in the shown range, absent counting as 0; the Watched view's default sort. |
+| unchanged | A trend card whose span is 0: constant, or absent throughout the shown range. Hidden unless *Show unchanged* is on. |
 | Units view / Watched view | The page's two views (`view=` in the URL hash): stacked units, or trend cards of watched dirs. |
 | ghost unit | A directory that looks like a unit only because CephFS propagates rbytes upward with a delay, so its own size dips while a child has grown but it has not yet. See [design.md](design.md#propagation-lag). |

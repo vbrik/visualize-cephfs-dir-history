@@ -173,6 +173,7 @@ td { font-variant-numeric: tabular-nums; }
 
 /* Watched view: trend cards, after the 2b mock */
 #watch-range { margin: 0 0 12px; }
+#watch-hidden { margin: -8px 0 12px; }
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
@@ -186,6 +187,10 @@ td { font-variant-numeric: tabular-nums; }
   flex-direction: column;
   gap: 6px;
   cursor: pointer;
+  /* Off-screen cards skip layout and paint; with "Show unchanged" there
+     may be thousands. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 .trend-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .trend-head { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
@@ -199,10 +204,29 @@ td { font-variant-numeric: tabular-nums; }
   padding: 0 8px;
   border-radius: 999px;
 }
-.tag.grow { background: var(--grow-fill); }
-.tag.shrink { background: var(--shrink-fill); }
-.tag.flat { background: var(--flat-fill); }
-.spark { height: 56px; }
+/* Cards color by direction of change: the tag's background, the
+   sparkline's line and fill. */
+.trend-card.grow { --dir: var(--grow); --dir-fill: var(--grow-fill); }
+.trend-card.shrink { --dir: var(--shrink); --dir-fill: var(--shrink-fill); }
+.trend-card.flat { --dir: var(--flat); --dir-fill: var(--flat-fill); }
+.trend-card .tag { background: var(--dir-fill); }
+/* Height: trendCard.js's viewBox HEIGHT, so its padding is in pixels. */
+.spark { display: block; width: 100%; height: 56px; overflow: visible; }
+.spark path, .spark line { vector-effect: non-scaling-stroke; }
+.spark .line { fill: none; stroke: var(--dir); stroke-width: 2; stroke-linejoin: round; }
+.spark .fill { fill: var(--dir-fill); }
+.spark .cursor { stroke: var(--grid); stroke-width: 1; visibility: hidden; }
+.spark-tip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--grid);
+  border-radius: 4px;
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+}
 .trend-card .scale { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .watch-slider {
   position: sticky;
@@ -213,7 +237,7 @@ td { font-variant-numeric: tabular-nums; }
   border-radius: 0 0 16px 16px;
 }
 
-/* ECharts tooltip content */
+/* Tooltip content: ECharts charts and the sparklines' shared tooltip */
 .tt { font-size: 12px; }
 .tt-when { color: var(--muted); margin-bottom: 4px; }
 .tt-row { display: grid; grid-template-columns: 12px auto auto 1fr; gap: 8px; align-items: center; }

@@ -25,12 +25,14 @@ web page.
   directories' rbytes series into the tree files.
 - A second page view, switched at the top, showing a grid of trend cards in
   config order, with a time-range slider shared with the Units view.
+  *(Superseded 2026-10-23: see docs/design.md, Page. Cards sort by span by
+  default; unchanged ones are hidden.)*
 - Clicking a card opens the Units view drilled into that directory.
 
 ## Non-goals
 
 - Editing the watch list in the browser.
-- Sorting or filtering cards on the page.
+- Sorting or filtering cards on the page. *(Superseded 2026-10-23: see docs/design.md, Page.)*
 - Recursive patterns (`**`).
 - Views 2c and 2d.
 
@@ -151,7 +153,9 @@ every watched dir, and every ancestor of these".
   instead of an empty grid.
 - Changing the tree keeps the current view. Reset is a Units-view control
   and is hidden in the Watched view, which has nothing to reset (the shared
-  time range is not in the URL). *(Builder-check call.)*
+  time range is not in the URL). *(Builder-check call.)* *(Superseded 2026-10-23: see docs/design.md, Page. The
+  Watched view now has state (`sort`, `flat`); Reset still restores only the
+  Units view's.)*
 - In the Watched view, Group by, Bands, Min peak, Rest of tree, Reset, the legend,
   the hidden-chips row and the table are hidden. The Units view's state in the
   hash (group, in, hide, …) is kept, so switching back restores it.
@@ -208,7 +212,8 @@ module `web/js/charts/trendCard.js` building a card's ECharts option, and
 
 - Rendering: one ECharts instance per card (SVG renderer likely lighter at
   ~100 cards) or plain SVG sparklines with a custom hover. The cap (100) is
-  the bound to design for.
+  the bound to design for. *(Superseded 2026-10-23: see docs/design.md, Page. Plain SVG, sized for thousands of
+  cards.)*
 - How the Watched view's slider is built (e.g. a small ECharts instance with
   only a dataZoom, its data shadow from ROOT's rbytes) and kept in sync with
   the Units chart's slider without feedback loops.
