@@ -1,7 +1,10 @@
 // Page controller: loads data files, keeps view state in the URL hash, and
-// renders the controls, the chart, its legend and its table.
+// renders the controls and the shown view: Units (the stacked chart, its
+// legend and its table) or Watched (trend cards and their range slider).
 
+import { rangeSliderOption } from "./charts/rangeSlider.js";
 import { stackedAreaOption } from "./charts/stackedArea.js";
+import { trendCardOption } from "./charts/trendCard.js";
 import {
   MAX_BANDS,
   ROOT,
@@ -15,11 +18,21 @@ import {
   layerAt,
   parseSize,
   stack,
+  trendCards,
 } from "./model.js";
 
 // How often to look for regenerated data files, in ms.
 const REFRESH_MS = 10 * 60 * 1000;
-const DEFAULTS = { tree: null, group: 0, in: ROOT, top: MAX_BANDS, min: "", hide: [], rest: false };
+const DEFAULTS = {
+  tree: null,
+  view: "units",
+  group: 0,
+  in: ROOT,
+  top: MAX_BANDS,
+  min: "",
+  hide: [],
+  rest: false,
+};
 
 const $ = (id) => document.getElementById(id);
 const chart = echarts.init($("chart"), null, { renderer: "canvas" });
@@ -28,6 +41,10 @@ let data = null; // the current tree file
 let range = null; // [a, b] point indexes shown by the zoom slider
 let model = null; // the bands drawn, from model.stack
 const slots = new Map(); // view key -> Map(band key -> palette slot)
+// The Watched view's charts, made when it is first shown: ECharts sizes a
+// chart from its element, which is 0×0 while hidden.
+let slider = null;
+const cardEls = new Map(); // watched path -> its card element
 
 // --- state <-> URL hash ---------------------------------------------------
 
@@ -35,6 +52,7 @@ function readState() {
   const p = parseHash(location.hash.slice(1));
   return {
     tree: p.has("tree") ? Number(p.get("tree")) : (index[0]?.id ?? null),
+    view: p.get("view") === "watched" ? "watched" : "units",
     group: clampInt(p.get("group"), 0, 16, DEFAULTS.group),
     in: p.get("in") || DEFAULTS.in,
     top: clampInt(p.get("top"), 1, MAX_BANDS, DEFAULTS.top),
@@ -47,6 +65,7 @@ function readState() {
 function writeState(changes) {
   const s = { ...readState(), ...changes };
   const p = [["tree", s.tree]];
+  if (s.view !== DEFAULTS.view) p.push(["view", s.view]);
   if (s.group !== DEFAULTS.group) p.push(["group", s.group]);
   if (s.in !== ROOT) p.push(["in", s.in]);
   if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
@@ -145,8 +164,17 @@ function colors() {
     ink: v("--ink"),
     muted: v("--muted"),
     grid: v("--grid"),
+    grow: v("--grow"),
+    growFill: v("--grow-fill"),
+    shrink: v("--shrink"),
+    shrinkFill: v("--shrink-fill"),
+    flat: v("--flat"),
+    flatFill: v("--flat-fill"),
   };
 }
+
+/** Whether any tree has watched dirs, i.e. the Watched view exists. */
+const anyWatched = () => index.some((t) => t.watched > 0);
 
 /** Colors per band key: survivors keep their slot, newcomers take free ones. */
 function bandColors(viewKey, bands, palette) {
@@ -161,8 +189,16 @@ function bandColors(viewKey, bands, palette) {
 
 function render() {
   const s = readState();
-  renderControls(s);
+  const view = s.view === "watched" && anyWatched() ? "watched" : "units";
+  document.body.dataset.view = view;
+  renderControls(s, view);
   if (!data) return;
+  if (view === "watched") renderWatched();
+  else renderUnits(s);
+}
+
+function renderUnits(s) {
+  chart.resize(); // it may have been hidden, and so 0×0
   const minBytes = parseSize(s.min || "0");
   $("min").setAttribute("aria-invalid", minBytes === null);
   const inPath = Object.hasOwn(data.rbytes, s.in) ? s.in : ROOT;
@@ -183,11 +219,7 @@ function render() {
   chart.setOption(stackedAreaOption(data, model, { colors: c, showRest: s.rest, range }), {
     replaceMerge: ["series"],
   });
-  chart.dispatchAction({
-    type: "dataZoom",
-    startValue: Date.parse(data.times[range[0]]),
-    endValue: Date.parse(data.times[range[1]]),
-  });
+  zoomTo(chart);
 
   renderCrumbs(inPath);
   renderLegend(model, c, s);
@@ -196,7 +228,11 @@ function render() {
   renderSummary(inPath);
 }
 
-function renderControls(s) {
+function renderControls(s, view) {
+  $("view").hidden = !anyWatched();
+  for (const b of $("view").querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", b.dataset.view === view);
+  }
   const tree = $("tree");
   tree.replaceChildren(
     ...index.map((t) => {
@@ -287,18 +323,105 @@ function renderChips(hide) {
   $("hidden-list").replaceChildren(...chips);
 }
 
+/** PATH (relative to the tree's ROOT) as an absolute path. */
+function absolute(path) {
+  return path === ROOT ? data.tree.fs_path : `${data.tree.fs_path}/${path}`;
+}
+
 function renderSummary(inPath) {
   const b = range[1];
   const total = data.rbytes[inPath][b] ?? 0;
   const units = Object.keys(data.units).filter((u) => isUnder(u, inPath));
-  const where = inPath === ROOT ? data.tree.fs_path : `${data.tree.fs_path}/${inPath}`;
+  const where = absolute(inPath);
   $("summary").textContent =
-    `${where}: ${formatBytes(total)} in total, ${units.length} units`
+    `${where}: ${formatBytes(total)} in total, ${units.length ? `${units.length} units` : "no units here"}`
     + ` (own size changed by ≥ ${formatBytes(data.threshold)}). Data generated ${new Date(data.generated).toLocaleString()}.`;
   $("chart").setAttribute(
     "aria-label",
     `Stacked area of own sizes under ${where}; values are in the table below.`,
   );
+}
+
+function renderWatched() {
+  const [a, b] = range;
+  const cards = trendCards(data, range);
+  const c = colors();
+  $("watch-note").hidden = cards.length > 0;
+  $("watch-range").textContent = cards.length
+    ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
+    : "";
+
+  const shown = new Set(cards.map((card) => card.path));
+  for (const [path, el] of cardEls) {
+    if (!shown.has(path)) {
+      echarts.getInstanceByDom(el.querySelector(".spark"))?.dispose();
+      cardEls.delete(path);
+    }
+  }
+  $("cards").replaceChildren(...cards.map((card) => cardEls.get(card.path) ?? newCard(card.path)));
+  for (const card of cards) {
+    const el = cardEls.get(card.path);
+    el.title = absolute(card.path);
+    el.querySelector(".name").textContent = card.path === ROOT ? data.tree.fs_path : card.path;
+    el.querySelector(".size").textContent = card.values[b] === null ? "absent" : formatBytes(card.end);
+    const tag = el.querySelector(".tag");
+    tag.textContent = formatDelta(card.change);
+    tag.className = `tag ${card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat"}`;
+    el.querySelector(".scale").textContent =
+      card.lo === null ? "absent throughout" : `scale ${formatBytes(card.lo)} – ${formatBytes(card.hi)}`;
+    const spark = el.querySelector(".spark");
+    const sparkChart = echarts.getInstanceByDom(spark) ?? echarts.init(spark, null, { renderer: "svg" });
+    sparkChart.dispatchAction({ type: "hideTip" }); // an open tooltip would throw
+    sparkChart.setOption(trendCardOption(data, card, { colors: c, range }), { notMerge: true });
+  }
+
+  if (!slider) {
+    slider = echarts.init($("watch-slider"), null, { renderer: "canvas" });
+    slider.on("datazoom", () => followZoom(slider));
+  }
+  slider.resize();
+  slider.setOption(rangeSliderOption(data, { colors: c }), { replaceMerge: ["series"] });
+  zoomTo(slider);
+}
+
+/** A trend card element for PATH; its content is filled by renderWatched. */
+function newCard(path) {
+  const el = document.createElement("div");
+  el.className = "trend-card";
+  el.tabIndex = 0;
+  el.setAttribute("role", "link");
+  const head = document.createElement("div");
+  head.className = "trend-head";
+  for (const cls of ["name", "size", "tag"]) head.append(Object.assign(text(""), { className: cls }));
+  const spark = document.createElement("div");
+  spark.className = "spark";
+  el.append(head, spark, Object.assign(text(""), { className: "scale" }));
+  const open = () => writeState({ view: "units", in: path });
+  el.addEventListener("click", open);
+  el.addEventListener("keydown", (e) => e.key === "Enter" && open());
+  cardEls.set(path, el);
+  return el;
+}
+
+/** Set TARGET chart's zoom slider to the shown range. */
+function zoomTo(target) {
+  target.dispatchAction({
+    type: "dataZoom",
+    startValue: Date.parse(data.times[range[0]]),
+    endValue: Date.parse(data.times[range[1]]),
+  });
+}
+
+/** Take the range from SOURCE's zoom slider; re-render if it changed. Both
+ * views' sliders call this, and render sets the shown one back to the
+ * range, which changes nothing, so the two never loop. */
+function followZoom(source) {
+  const [z] = source.getOption().dataZoom;
+  const next = indexRange(data.times, z.startValue, z.endValue);
+  if (next[0] !== range[0] || next[1] !== range[1]) {
+    range = next;
+    render();
+  }
 }
 
 function showError(e) {
@@ -363,17 +486,17 @@ chart.getZr().on("click", (e) => {
   const band = model.bands[layerAt(model.bands.map((b) => b.values), data.times, ms, bytes)];
   if (band?.drillable) writeState({ in: band.key });
 });
-chart.on("datazoom", () => {
-  const [z] = chart.getOption().dataZoom;
-  const next = indexRange(data.times, z.startValue, z.endValue);
-  if (next[0] !== range[0] || next[1] !== range[1]) {
-    range = next;
-    render();
-  }
-});
+chart.on("datazoom", () => followZoom(chart));
+for (const b of $("view").querySelectorAll("button")) {
+  b.addEventListener("click", () => writeState({ view: b.dataset.view }));
+}
 
 window.addEventListener("hashchange", () => update(false));
-window.addEventListener("resize", () => chart.resize());
+window.addEventListener("resize", () => {
+  chart.resize();
+  slider?.resize();
+  for (const el of cardEls.values()) echarts.getInstanceByDom(el.querySelector(".spark"))?.resize();
+});
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
 setInterval(refresh, REFRESH_MS);
 refresh();

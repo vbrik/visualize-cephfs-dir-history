@@ -80,12 +80,13 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Control | Effect |
 |---|---|
 | Tree | Which sampled tree to show. |
+| View | *Units*: the stacked chart of units (the rows below). *Watched*: a trend card per watched dir (`--watch`), each on its own scale; click one to see its units. Shown when any tree has watched dirs. |
 | Group by | Sum units into their ancestor N levels down; click a group (in the legend or the chart) to show its units, and the path above the chart to go back. |
 | Bands | How many bands to name (up to 8); the rest are *Smaller units*. |
 | Min peak | Bands whose peak in the shown range is smaller join *Smaller units* (e.g. `1TiB`). |
 | Rest of tree | Also draw the bytes in no unit. Usually far larger than the units. |
 | hide | Remove a band's bytes from the chart: a unit, or every unit of a group (shown as `dir/`). Click the chip to bring it back. |
-| Slider under the chart | Zoom the time range; ranking, the table and changes follow it. |
+| Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
 
 The URL keeps the view, except the zoomed time range, so it can be bookmarked
 or shared.

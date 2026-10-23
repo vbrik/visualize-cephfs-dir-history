@@ -9,27 +9,34 @@
   <script src="vendor/echarts.min.js"></script>
   <script type="module" src="js/main.js"></script>
 </head>
-<body>
+<body data-view="units">
   <header>
     <h1>CephFS directory history</h1>
-    <p class="muted">Which directories grow and shrink. Each band is a <em>unit</em>: a directory
+    <p class="muted units-only">Which directories grow and shrink. Each band is a <em>unit</em>: a directory
       whose own size (rbytes minus its subdirectories') changed significantly.
       Bands never overlap, so they add up.</p>
+    <p class="muted watched-only">Each card is a watched directory's whole size (rbytes,
+      including its subdirectories) over the shown range. Each card has its own scale:
+      compare shapes, not heights.</p>
   </header>
 
   <form class="controls" onsubmit="return false">
     <label>Tree <select id="tree"></select></label>
-    <label>Group by <select id="group"></select></label>
-    <label>Bands <input id="top" type="number" min="1" step="1" inputmode="numeric"></label>
-    <label>Min peak <input id="min" type="text" size="7" placeholder="e.g. 1TiB"
+    <div id="view" class="seg" role="group" aria-label="View" hidden>
+      <button type="button" data-view="units">Units</button><button type="button" data-view="watched">Watched</button>
+    </div>
+    <label class="units-only">Group by <select id="group"></select></label>
+    <label class="units-only">Bands <input id="top" type="number" min="1" step="1" inputmode="numeric"></label>
+    <label class="units-only">Min peak <input id="min" type="text" size="7" placeholder="e.g. 1TiB"
       title="Bands whose peak in the shown range is smaller fold into “Smaller units”"></label>
-    <label class="check"><input id="rest" type="checkbox"> Rest of tree</label>
-    <button id="reset" type="button">Reset</button>
+    <label class="check units-only"><input id="rest" type="checkbox"> Rest of tree</label>
+    <button id="reset" class="units-only" type="button">Reset</button>
   </form>
 
   <p id="error" class="error" role="alert" hidden></p>
 
   <main class="card">
+   <div class="units-only">
     <nav id="crumbs" class="crumbs" aria-label="Directory"></nav>
     <p id="summary" class="muted"></p>
     <div class="chart-row">
@@ -44,6 +51,13 @@
         <tbody id="table-body"></tbody>
       </table>
     </details>
+   </div>
+   <div class="watched-only">
+    <p id="watch-range" class="muted"></p>
+    <p id="watch-note" hidden>No watched directories in this tree. See <code>dirhistory-generate --watch</code>.</p>
+    <div id="cards" class="cards"></div>
+    <div id="watch-slider" class="watch-slider" aria-label="Time range"></div>
+   </div>
   </main>
 </body>
 </html>

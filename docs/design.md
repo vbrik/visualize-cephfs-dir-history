@@ -107,6 +107,13 @@ those, one trend card each.
   names that are not UTF-8 survive (`model.encodeValue`).
 - Hiding takes a unit (`hide=dir`) or a group, i.e. every unit in a subtree
   (`hide=dir/`); hiding a unit's own files leaves the units below it.
+- The Watched view (`view=watched`) is a separate view, not a section under
+  the chart: the unit controls do not apply to it, so it hides them. It has
+  its own slider, pinned to the window's bottom while the cards scroll; the
+  zoomed range is shared, so switching views keeps it. A card's change and
+  scale follow the range, so zooming reveals a shape. Cards color by
+  direction (growth warm, shrinkage cool), so their number is not tied to
+  the 8-slot palette. Clicking a card opens the Units view in its dir.
 
 ## Data files
 
