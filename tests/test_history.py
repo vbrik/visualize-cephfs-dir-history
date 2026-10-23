@@ -397,7 +397,7 @@ def test_dir_created_later_can_be_watched():
 
 def test_watched_order_and_found():
     rows = [(1, ROOT, 9, False)] + [(1, p, 1, False) for p in (b"a", b"b", b"c")]
-    h = run(rows, n=1, watch=[(b"c",), (b"*",), None], cap=3)
+    h = run(rows, n=1, watch=[(b"c",), (b"*",), (b"z",)], cap=3)
     assert h.watched.paths == [b"c", b"a", b"b"]
     assert h.watched.found == [1, 3, 0]
 

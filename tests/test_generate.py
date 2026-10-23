@@ -17,6 +17,7 @@ from dirhistory.generate import (
     parser,
     select_trees,
     tree_document,
+    tree_patterns,
     watch_warnings,
     write_json,
 )
@@ -231,14 +232,47 @@ def test_tree_document_without_watch_has_empty_list():
 
 
 def test_watch_warnings():
-    ps = [parse_pattern(t) for t in ("/a/x", "/b/*", "/c")]
-    assert watch_warnings(ps, [True, True, False], [0, 3, 0], all_trees=True) == [
-        "WARNING: watch pattern '/a/x' matches no directory",
-        "WARNING: watch pattern '/c' applies to no tree",
+    ps = [parse_pattern(t) for t in ("x", "*", ".")]
+    assert watch_warnings(TREE, ps, [0, 3, 0]) == [
+        "WARNING: tree 2 (/npx/ana): watch pattern 'x' matches no directory",
+        "WARNING: tree 2 (/npx/ana): watch pattern '.' matches no directory",
     ]
-    assert watch_warnings(ps, [True, True, False], [0, 3, 0], all_trees=False) == [
-        "WARNING: watch pattern '/a/x' matches no directory",
-    ]
+
+
+def _config(**sections):
+    """Return a watch.load result: SECTIONS maps a tree path (`_` for `/`) to
+    pattern texts."""
+    return {
+        k.replace("_", "/").encode(): [parse_pattern(t) for t in v]
+        for k, v in sections.items()
+    }
+
+
+def test_tree_patterns_goes_by_tree_root():
+    a = Tree(1, "c", None, b"/npx/user", 2)
+    b = Tree(2, "c", None, b"/npx/user/vbrik", 2)
+    c = Tree(3, "c", None, b"/sim", 2)
+    config = _config(_npx_user=["*"], _sim=["x", "y"])
+    by_tree = tree_patterns(config, [a, b, c])
+    assert {i: [p.text for p in ps] for i, ps in by_tree.items()} == {
+        1: ["*"],
+        3: ["x", "y"],
+    }
+
+
+def test_tree_patterns_rejects_a_section_without_a_tree():
+    a = Tree(1, "c", None, b"/exp", 2)
+    with pytest.raises(ValueError, match="/exq"):
+        tree_patterns(_config(_exp=["*"], _exq=["*"]), [a])
+
+
+def test_tree_patterns_rejects_a_root_shared_by_trees():
+    a = Tree(1, "c", None, b"/exp", 2)
+    b = Tree(2, "d", None, b"/exp", 2)
+    with pytest.raises(ValueError, match=r"trees 1, 2.*/exp"):
+        tree_patterns(_config(_exp=["*"]), [a, b])
+    # without a section, sharing a root is harmless
+    assert tree_patterns({}, [a, b]) == {}
 
 
 def test_bad_watch_file_is_an_error_before_the_database(tmp_path, capsys, monkeypatch):
@@ -296,7 +330,7 @@ def test_run_writes_watched_and_warns_relative_to_selected_trees(
         {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)], sim: [(ROOT, 9), (b"s", 9)]},
     )
     watch = tmp_path / "watch.toml"
-    watch.write_text('watch = ["/exp/*", "/sim/missing", "/nowhere"]\n')
+    watch.write_text('[tree."/exp"]\nwatch = ["*"]\n[tree."/sim"]\nwatch = ["gone"]\n')
     out = tmp_path / "data"
     argv = ["--db", "x", "--out", str(out), "--watch", str(watch)]
 
@@ -305,19 +339,54 @@ def test_run_writes_watched_and_warns_relative_to_selected_trees(
     assert doc["watched"] == ["a", "b"]
     assert doc["rbytes"]["a"] == [5]
     assert json.loads((out / "trees.json").read_text())[0]["watched"] == 2
-    assert "WARNING" not in capsys.readouterr().err  # /sim and /nowhere not run
+    assert "WARNING" not in capsys.readouterr().err  # /sim not run
 
     assert generate.main(argv) == 0
-    err = capsys.readouterr().err
-    assert "watch pattern '/sim/missing' matches no directory" in err
-    assert "watch pattern '/nowhere' applies to no tree" in err
+    assert capsys.readouterr().err == (
+        "WARNING: tree 2 (/sim): watch pattern 'gone' matches no directory\n"
+    )
+
+
+def test_run_keeps_patterns_to_their_own_tree(monkeypatch, tmp_path):
+    # /npx/user/vbrik is a tree of its own, and /npx/user's "*" must not
+    # make its root a watched dir
+    users = Tree(1, "c", None, b"/npx/user", 2)
+    vbrik = Tree(2, "c", None, b"/npx/user/vbrik", 2)
+    _fake_db(
+        monkeypatch,
+        {
+            users: [(ROOT, 9), (b"vbrik", 5), (b"other", 4)],
+            vbrik: [(ROOT, 5), (b"data", 5)],
+        },
+    )
+    watch = tmp_path / "watch.toml"
+    watch.write_text('[tree."/npx/user"]\nwatch = ["*"]\n')
+    out = tmp_path / "data"
+    assert generate.main(["--db", "x", "--out", str(out), "--watch", str(watch)]) == 0
+    assert json.loads((out / "tree-1.json").read_text())["watched"] == [
+        "other",
+        "vbrik",
+    ]
+    assert json.loads((out / "tree-2.json").read_text())["watched"] == []
+
+
+def test_run_fails_for_a_section_without_a_tree(monkeypatch, tmp_path, capsys):
+    exp = Tree(1, "c", None, b"/exp", 2)
+    _fake_db(monkeypatch, {exp: [(ROOT, 9)]})
+    watch = tmp_path / "watch.toml"
+    watch.write_text('[tree."/exq"]\nwatch = ["*"]\n')
+    out = tmp_path / "d"
+    argv = ["--db", "x", "--out", str(out), "--watch", str(watch), "--tree", "1"]
+    assert generate.main(argv) == 1  # even though --tree 1 would not read it
+    assert "/exq" in capsys.readouterr().err
+    assert not (out / "tree-1.json").exists()
 
 
 def test_run_fails_when_watched_dirs_exceed_the_cap(monkeypatch, tmp_path, capsys):
     exp = Tree(1, "c", None, b"/exp", 2)
     _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)]})
     watch = tmp_path / "watch.toml"
-    watch.write_text('watch = ["/exp/*"]\n')
+    watch.write_text('[tree."/exp"]\nwatch = ["*"]\n')
     out = tmp_path / "d"
     argv = ["--db", "x", "--out", str(out), "--watch", str(watch)]
     assert generate.main([*argv, "--max-watched", "1"]) == 1

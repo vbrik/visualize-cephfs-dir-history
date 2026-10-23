@@ -1,6 +1,9 @@
 # Watched directories view (design 2b) — design
 
 Status: draft for approval, 2026-10-22.
+*(Superseded 2026-10-23: the config file is per tree, with patterns relative
+to the tree root; see docs/design.md, Watched directories. The "Config file"
+and "Matching and order" sections below describe the original global list.)*
 Source: view "2b Small multiples" in `docs/Cephfs_Directory_Growth_design_example.html`
 (a bundled page; its template and logic decode from the `__bundler/template`
 script tag). The view is renamed: "small multiples" names the chart form, not

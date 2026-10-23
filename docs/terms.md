@@ -18,8 +18,8 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | Rest of tree | The shown directory's bytes that are in no unit: rbytes minus the own sizes of all its units. Off by default. |
 | hidden | A unit, or all units of a group, removed from the chart entirely: their bytes are in no band, so the total shrinks. Hiding a unit's own files does not hide the units below it. |
 | peak | A band's largest value in the shown time range; bands are ranked by it. |
-| watch pattern | An absolute path pattern in the `--watch` file, e.g. `/npx/ana/IceCube/*/filtered`; wildcards match within one path component. |
-| watched dir | A directory of a tree that a watch pattern matches. |
+| watch pattern | A path pattern, relative to a tree's root, in that tree's section of the `--watch` file, e.g. `IceCube/*/filtered`; wildcards match within one path component. A pattern applies only to its own tree. |
+| watched dir | A directory of a tree that one of the tree's watch patterns matches. |
 | trend card | One watched dir's card in the Watched view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
 | span | A trend card's largest minus smallest size in the shown range, absent counting as 0; the Watched view's default sort. |
 | unchanged | A trend card whose span is 0: constant, or absent throughout the shown range. Hidden unless *Show unchanged* is on. |

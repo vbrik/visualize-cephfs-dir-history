@@ -2,7 +2,7 @@
 # Adjust paths and the database URL. The password goes in the PGPASSFILE,
 # not in TRACKDIR_DB. The dirhistory user, the PGPASSFILE (mode 600) and the
 # ReadWritePaths directory must exist first; see README.md, "Deploy". So must
-# the --watch file (from watch.toml.example; `watch = []` lists none), or
+# the --watch file (from watch.toml.example; an empty file lists none), or
 # every run fails.
 [Unit]
 Description=Regenerate CephFS directory history data files

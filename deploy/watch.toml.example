@@ -1,12 +1,26 @@
 # Directories to chart in the page's Watched view, one card each, in this
-# order. Read by `dirhistory-generate --watch FILE`; an empty list is valid.
+# order. Read by `dirhistory-generate --watch FILE`; an empty file is valid.
 #
-# Each entry is an absolute path; its components may hold shell wildcards
-# (*, ?, [...]), matched one component at a time: * never crosses /. There
-# is no **. A pattern applies to the trees whose path it starts with, and
-# matches only directories within their max depth.
+# One section per tree, named by the tree's root path (its fs_path); a tree
+# without a section has no watched directories. Tree roots are assumed to be
+# unique: two trees with the same root (on different clusters or
+# filesystems) cannot be told apart, and a section naming them is an error.
+# So is a section naming no tree. A tree whose root is not valid UTF-8 cannot
+# be named, so it cannot be watched.
+#
+# `watch` holds paths relative to the tree root. Their components may hold
+# shell wildcards (*, ?, [...]), matched one component at a time: * never
+# crosses /. There is no **. "." is the tree root itself. A pattern matches
+# only directories within the tree's max depth.
+
+[tree."/data/projects"]
 watch = [
-  "/data/projects/alpha",         # one directory
-  "/data/projects/*/raw",         # raw/ of every project, new ones included
-  "/data/scratch/[a-m]*",         # some of scratch's subdirectories
+  "alpha",                # one directory
+  "*/raw",                # raw/ of every project, new ones included
+]
+
+[tree."/data/scratch"]
+watch = [
+  "[a-m]*",               # some of the tree's subdirectories
+  ".",                    # the tree root itself
 ]

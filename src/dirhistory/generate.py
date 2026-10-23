@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -54,7 +54,7 @@ least --threshold over the tree's history. Own sizes never overlap, so units
 never count the same bytes twice.
 
 The page's Watched view charts the whole size (rbytes) of the directories
-that the --watch file names, one card each, in the file's order.
+that the --watch file names for each tree, one card each, in the file's order.
 
 The database is only read. Prints each file written to stdout; notes go to
 stderr.
@@ -182,7 +182,7 @@ def read_tree(
     threshold: int,
     limit: int,
     res: Resolution,
-    watch: Sequence[Parts | None] = (),
+    watch: Sequence[Parts] = (),
     watch_limit: int = MAX_WATCHED,
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
@@ -209,22 +209,39 @@ def read_tree(
 
 
 def watch_warnings(
-    patterns: Sequence[WatchPattern],
-    applied: Sequence[bool],
-    found: Sequence[int],
-    all_trees: bool,
+    tree: Tree, patterns: Sequence[WatchPattern], found: Sequence[int]
 ) -> list[str]:
-    """Return a warning per pattern that matched no directory of the trees
-    it APPLIED to (FOUND counts matches), and, when ALL_TREES were read, per
-    pattern that applied to no tree; with --tree, a pattern may well target
-    a tree not read."""
-    warnings = []
-    for p, used, n in zip(patterns, applied, found, strict=True):
-        if used and not n:
-            warnings.append(f"WARNING: watch pattern {p.text!r} matches no directory")
-        elif not used and all_trees:
-            warnings.append(f"WARNING: watch pattern {p.text!r} applies to no tree")
-    return warnings
+    """Return a warning per pattern of TREE that matched no directory
+    (FOUND counts each pattern's matches)."""
+    return [
+        f"WARNING: tree {tree.id} ({display(tree.fs_path)}): watch pattern"
+        f" {p.text!r} matches no directory"
+        for p, n in zip(patterns, found, strict=True)
+        if not n
+    ]
+
+
+def tree_patterns(
+    config: Mapping[bytes, Sequence[WatchPattern]], all_trees: Sequence[Tree]
+) -> dict[int, Sequence[WatchPattern]]:
+    """Return the watch patterns by tree id: each section of CONFIG (by tree
+    root) goes to the tree of ALL_TREES with that fs_path.
+
+    Raises ValueError for a section without a tree, or with several trees
+    (tree roots are assumed unique, so they cannot be told apart).
+    """
+    by_tree: dict[int, Sequence[WatchPattern]] = {}
+    for root, patterns in config.items():
+        ids = [t.id for t in all_trees if t.fs_path == root]
+        if not ids:
+            raise ValueError(f"--watch: no tree has root {display(root)}")
+        if len(ids) > 1:
+            raise ValueError(
+                f"--watch: trees {', '.join(map(str, ids))} all have root"
+                f" {display(root)}, so it cannot name one"
+            )
+        by_tree[ids[0]] = patterns
+    return by_tree
 
 
 def merged_index(out: Path, entries: list[dict], all_trees: Sequence[Tree]) -> list:
@@ -303,18 +320,18 @@ def parser() -> argparse.ArgumentParser:
         "--watch",
         type=Path,
         metavar="FILE",
-        help="TOML file of directories to chart in the page's Watched view:"
-        ' watch = ["/fs/path/*/dir", ...], absolute paths whose components may'
-        " hold wildcards (*, ?, [...]); see deploy/watch.toml.example"
-        " (default: none)",
+        help="TOML file of directories to chart in the page's Watched view,"
+        ' per tree: [tree."/tree/root"] watch = ["dir/*", ...], paths below'
+        " the tree root whose components may hold wildcards (*, ?, [...]);"
+        " see deploy/watch.toml.example (default: none)",
     )
     p.add_argument(
         "--max-watched",
         type=_positive_int,
         metavar="N",
         default=MAX_WATCHED,
-        help="fail if the --watch patterns match more than this many dirs of"
-        " a tree (default: %(default)s)",
+        help="fail if a tree's --watch patterns match more than this many dirs"
+        " (default: %(default)s)",
     )
     p.add_argument(
         "--tree",
@@ -372,32 +389,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
     try:
-        patterns = watch.load(args.watch) if args.watch else []
-        return run(args, patterns)
+        config = watch.load(args.watch) if args.watch else {}
+        return run(args, config)
     except (db.DbError, psycopg.Error, OSError, ValueError) as e:
         return _error(str(e).strip())
 
 
-def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
-    """Write the data files ARGS ask for, watching PATTERNS; return the exit
-    status.
+def run(
+    args: argparse.Namespace,
+    config: Mapping[bytes, Sequence[WatchPattern]] | None = None,
+) -> int:
+    """Write the data files ARGS ask for, watching CONFIG's patterns (by tree
+    root, as watch.load returns them); return the exit status.
 
-    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree
-    or a tree with more watched dirs than --max-watched.
+    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree,
+    a CONFIG section that names no single tree, or a tree with more watched
+    dirs than --max-watched.
     """
     conn = db.connect(args.db)
     db.check_schema(conn)
     all_trees = db.trees(conn)
+    patterns = tree_patterns(config or {}, all_trees)
     chosen = select_trees(all_trees, args.tree)
     args.out.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(UTC)
     entries = []
-    applied = [False] * len(patterns)
-    found = [0] * len(patterns)
     with conn:
         for tree in chosen:
             start = perf_counter()
-            parts = [p.for_tree(tree.fs_path) for p in patterns]
+            watch_patterns = patterns.get(tree.id, ())
             try:
                 result = read_tree(
                     conn,
@@ -405,7 +425,7 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
                     args.threshold,
                     args.max_units,
                     resolution(args),
-                    parts,
+                    [p.parts for p in watch_patterns],
                     args.max_watched,
                 )
             except TooManyWatched as e:
@@ -420,9 +440,6 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
                 )
                 continue
             history, errors = result
-            for i, part in enumerate(parts):
-                applied[i] |= part is not None
-                found[i] += history.watched.found[i]
             path = args.out / f"tree-{tree.id}.json"
             write_json(path, tree_document(tree, history, args.threshold, generated))
             entries.append(index_entry(tree, history, generated))
@@ -433,6 +450,8 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
                     " directories could not be read in its latest sample. Below them,"
                     " changes go unseen and sizes may be stale."
                 )
+            for warning in watch_warnings(tree, watch_patterns, history.watched.found):
+                _note(warning)
             if args.verbose:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}):"
@@ -440,8 +459,6 @@ def run(args: argparse.Namespace, patterns: Sequence[WatchPattern] = ()) -> int:
                     f" {len(history.watched.paths)} watched,"
                     f" {perf_counter() - start:.1f} s"
                 )
-    for warning in watch_warnings(patterns, applied, found, not args.tree):
-        _note(warning)
     index = args.out / INDEX
     write_json(index, merged_index(args.out, entries, all_trees))
     print(index)

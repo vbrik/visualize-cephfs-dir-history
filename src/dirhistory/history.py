@@ -155,7 +155,7 @@ def summarize(
     threshold: int,
     limit: int,
     resolution: Resolution = DEFAULT_RESOLUTION,
-    watch: Sequence[Parts | None] = (),
+    watch: Sequence[Parts] = (),
     watch_limit: int = MAX_WATCHED,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
@@ -178,7 +178,7 @@ def summarize(
     their raw range counts, including changes that last one point.
 
     The watched dirs are the paths that any of the first sample's paths or
-    CHANGED match in WATCH (watch.Matcher patterns, in config order); more
+    CHANGED match in WATCH (the tree's watch.Matcher patterns, in config order); more
     than WATCH_LIMIT raises watch.TooManyWatched before any series is
     fetched. Their series and their ancestors' are
     kept, so the page can drill into a watched dir and up its path, even

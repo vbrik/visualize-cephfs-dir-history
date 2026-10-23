@@ -1,11 +1,16 @@
 """Watch patterns: directories to chart in the page's Watched view.
 
-A watch pattern is an absolute path whose components may hold shell
-wildcards (`*`, `?`, `[...]`), e.g. `/npx/ana/IceCube/*/filtered`. It is
-matched component by component, so `*` never crosses `/`, and a match has
-exactly as many components as the pattern. There is no `**`: trees are
-sampled to a max depth anyway, and a recursive pattern could watch
-thousands of directories by accident.
+A watch file lists, per tree, patterns relative to the tree's root, e.g.
+`IceCube/*/filtered` under `[tree."/npx/ana"]`. A pattern may hold shell
+wildcards (`*`, `?`, `[...]`) and is matched component by component, so `*`
+never crosses `/`, and a match has exactly as many components as the
+pattern. `.` is the tree root itself. There is no `**`: trees are sampled to
+a max depth anyway, and a recursive pattern could watch thousands of
+directories by accident.
+
+Trees are named by their root path, which is assumed to be unique among
+trees: two trees with the same path (on different clusters or filesystems)
+cannot be told apart.
 """
 
 import os
@@ -36,51 +41,78 @@ class WatchPattern:
     text: str
     parts: Parts
 
-    def for_tree(self, fs_path: bytes) -> Parts | None:
-        """Return the components below FS_PATH, or None if the pattern does
-        not apply to the tree at FS_PATH: its first components must match all
-        of FS_PATH's."""
-        tree = _components(fs_path)
-        if len(self.parts) < len(tree):
-            return None
-        if all(fnmatchcase(t, p) for t, p in zip(tree, self.parts, strict=False)):
-            return self.parts[len(tree) :]
-        return None
+
+def _split(text: str, banned: set[str], what: str) -> list[str]:
+    """Return the components of the slash-separated TEXT. Raises ValueError
+    naming TEXT (as WHAT) for an empty component or one in BANNED."""
+    parts = text.split("/")
+    if bad := ({""} | banned) & set(parts):
+        which = "an empty" if "" in bad else f"a {sorted(bad)[0]!r}"
+        raise ValueError(f"{what} {text!r} has {which} component")
+    return parts
 
 
 def parse_pattern(text: str) -> WatchPattern:
-    """Return the watch pattern in TEXT. Raises ValueError naming TEXT unless
-    it is absolute, with no empty, `.`, `..` or `**` component."""
-    if not text.startswith("/"):
-        raise ValueError(f"watch pattern {text!r} is not an absolute path")
-    if text == "/":
+    """Return the watch pattern in TEXT: a path relative to the tree root, or
+    `.` for the root. Raises ValueError naming TEXT if it is absolute or has
+    an empty, `.`, `..` or `**` component."""
+    if text.startswith("/"):
+        raise ValueError(f"watch pattern {text!r} is not relative to the tree root")
+    if text == ".":
         return WatchPattern(text, ())
-    parts = text[1:].split("/")
-    if bad := {"", ".", "..", "**"} & set(parts):
-        what = "an empty" if "" in bad else f"a {sorted(bad)[0]!r}"
-        raise ValueError(f"watch pattern {text!r} has {what} component")
+    parts = _split(text, {".", "..", "**"}, "watch pattern")
     return WatchPattern(text, tuple(os.fsencode(p) for p in parts))
 
 
-def load(path: Path) -> list[WatchPattern]:
-    """Return the patterns of the TOML file at PATH: `watch = ["/a/*", ...]`.
+def _tree_root(text: str) -> bytes:
+    """Return the tree root path in TEXT. Raises ValueError naming TEXT unless
+    it is absolute, with no empty, `.` or `..` component (`/` is the root)."""
+    if text == "/":
+        return b"/"
+    if not text.startswith("/"):
+        raise ValueError(f"tree {text!r} is not an absolute path")
+    _split(text[1:], {".", ".."}, "tree")
+    return os.fsencode(text)
 
-    Raises ValueError naming PATH for bad TOML, keys other than `watch`, a
-    `watch` that is not a list of strings, or a bad pattern; OSError if PATH
-    cannot be read.
+
+def _patterns(tree: str, section: object) -> list[WatchPattern]:
+    """Return the patterns of a watch file's `[tree.TREE]` SECTION."""
+    if not isinstance(section, dict):
+        raise ValueError(f"tree {tree!r} must be a table")
+    if extra := sorted(set(section) - {"watch"}):
+        raise ValueError(f"tree {tree!r}: unknown key {extra[0]!r}")
+    patterns = section.get("watch")
+    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        raise ValueError(f"tree {tree!r}: 'watch' must be a list of strings")
+    return [parse_pattern(p) for p in patterns]
+
+
+def load(path: Path) -> dict[bytes, list[WatchPattern]]:
+    """Return the patterns per tree root of the TOML file at PATH:
+    `[tree."/fs/path"]` sections, each with `watch = ["a/*", ...]`.
+
+    Raises ValueError naming PATH for bad TOML, a top-level key other than
+    `tree` (the old top-level `watch` gets its own hint), a section that is
+    not as above, or a bad tree path or pattern; OSError if PATH cannot be
+    read.
     """
     with path.open("rb") as f:
         try:
             doc = tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
             raise ValueError(f"{path}: {e}") from None
-    if extra := sorted(set(doc) - {"watch"}):
-        raise ValueError(f"{path}: unknown key {extra[0]!r}; the only key is 'watch'")
-    patterns = doc.get("watch")
-    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
-        raise ValueError(f"{path}: 'watch' must be a list of strings")
+    if "watch" in doc:
+        raise ValueError(
+            f"{path}: a top-level 'watch' is the old format; put the patterns,"
+            ' relative to the tree root, in a [tree."/fs/path"] section'
+        )
+    if extra := sorted(set(doc) - {"tree"}):
+        raise ValueError(f"{path}: unknown key {extra[0]!r}; the only key is 'tree'")
+    trees = doc.get("tree", {})
+    if not isinstance(trees, dict):
+        raise ValueError(f"{path}: 'tree' must be a table of trees")
     try:
-        return [parse_pattern(p) for p in patterns]
+        return {_tree_root(t): _patterns(t, s) for t, s in trees.items()}
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from None
 
@@ -88,18 +120,18 @@ def load(path: Path) -> list[WatchPattern]:
 class Matcher:
     """Collects, per pattern, the paths that match it.
 
-    PATTERNS are components below a tree's ROOT (WatchPattern.for_tree);
-    None never matches. Paths are relative to ROOT (`.` has no components).
+    PATTERNS are a tree's patterns' components (WatchPattern.parts). Paths
+    are relative to the tree's ROOT (`.` has no components).
     """
 
-    def __init__(self, patterns: Sequence[Parts | None]):
+    def __init__(self, patterns: Sequence[Parts]):
         self._patterns = patterns
-        self._lengths = {len(p) for p in patterns if p is not None}
+        self._lengths = {len(p) for p in patterns}
         self._found: list[set[bytes]] = [set() for _ in patterns]
 
     @property
     def wants(self) -> bool:
-        """Whether any pattern applies, i.e. whether add can match."""
+        """Whether there are any patterns, i.e. whether add can match."""
         return bool(self._lengths)
 
     def add(self, path: bytes) -> None:
@@ -109,10 +141,8 @@ class Matcher:
             return
         parts = _components(path)
         for pattern, found in zip(self._patterns, self._found, strict=True):
-            if (
-                pattern is not None
-                and len(pattern) == len(parts)
-                and all(fnmatchcase(c, p) for c, p in zip(parts, pattern, strict=True))
+            if len(pattern) == len(parts) and all(
+                fnmatchcase(c, p) for c, p in zip(parts, pattern, strict=True)
             ):
                 found.add(path)
 

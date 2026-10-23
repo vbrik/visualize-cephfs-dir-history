@@ -78,12 +78,19 @@ those, one trend card each.
 
 - The list is a TOML file read by the generator (`--watch`), not edited in
   the page: the site is static, and the list is the operator's decision.
-- Patterns are absolute paths with wildcards matched per component
-  (`watch.py`), so `*` never crosses `/` and next year's directory joins
-  without an edit. No `**`: a recursive pattern could watch thousands of
-  directories by accident. More than `--max-watched` (5000) watched
-  directories in a tree is an error, which catches a pattern that matches
-  far more than meant.
+- The list is per tree: a `[tree."/fs/path"]` section, named by the tree's
+  root, holds patterns relative to that root. Trees may overlap
+  (`/npx/user` and `/npx/user/vbrik`), and a global list would apply
+  `/npx/user/*` to the inner tree too, watching its root. A tree without a
+  section watches nothing; `.` watches the root. Tree roots are assumed
+  unique, so a section naming two trees (same root on different clusters or
+  filesystems) is an error, as is one naming no tree; a root that is not
+  UTF-8 cannot be named in TOML, so that tree cannot be watched.
+- Wildcards are matched per component (`watch.py`), so `*` never crosses `/`
+  and next year's directory joins without an edit. No `**`: a recursive
+  pattern could watch thousands of directories by accident. More than
+  `--max-watched` (5000) watched directories in a tree is an error, which
+  catches a pattern that matches far more than meant.
 - Cards show rbytes, the whole directory, not own size: a watched directory
   asks "how big is this", and watched directories may nest, since cards are
   never added up.
@@ -91,8 +98,9 @@ those, one trend card each.
   watched directories are fetched explicitly, since one that never changed
   is otherwise never read. Their ancestors are kept too, so the page can
   drill into a watched directory and back up its path.
-- Config mistakes are errors. A pattern that matches nothing, or applies to
-  no tree, is a warning; with `--tree`, only for the trees read.
+- Config mistakes are errors, including a section for a tree that does not
+  exist, even with `--tree`. A pattern that matches nothing is a warning,
+  for the trees read.
 
 ### Page
 
