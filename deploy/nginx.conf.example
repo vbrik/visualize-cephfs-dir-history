@@ -7,6 +7,14 @@ server {
     gzip on;
     gzip_types application/json application/javascript text/css;
 
+    # Directory names are untrusted. Should one ever reach the page as HTML,
+    # this keeps it from running script: only script files from this site
+    # run. Tooltips carry inline styles, hence 'unsafe-inline' for styles;
+    # data: is the empty favicon. scripts/check_web.py serves the page with
+    # this policy. (A location with its own add_header drops this one, as
+    # /data/ below does; its JSON needs no CSP.)
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+
     # Data files change hourly; make browsers revalidate them.
     location /data/ {
         add_header Cache-Control "no-cache";

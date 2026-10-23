@@ -11,6 +11,8 @@ Serves web/ on a free local port with two data sets:
   every tree, in light and dark mode, it groups by one level, drills into
   the first group, hides a band, reloads from the URL hash and unhides it.
 
+Pages are served with the Content-Security-Policy of
+deploy/nginx.conf.example, so anything it blocks is a console error.
 Fails on any failed check, console error or uncaught exception. Needs
 `pip install playwright` and Chrome (no browser download: it drives the
 installed one).
@@ -34,6 +36,10 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 FIXTURE = ROOT / "tests" / "data" / "web"
 SETTLE_MS = 500  # time for fetch + render after a navigation or click
+CSP = re.search(
+    r'add_header Content-Security-Policy "([^"]+)"',
+    (ROOT / "deploy" / "nginx.conf.example").read_text(),
+)[1]
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -47,6 +53,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path.startswith("/data/"):
             return str(self.data / path.removeprefix("/data/").split("?")[0])
         return super().translate_path(path)
+
+    def end_headers(self) -> None:
+        self.send_header("Content-Security-Policy", CSP)
+        super().end_headers()
 
     def log_message(self, *args) -> None:
         pass
@@ -75,6 +85,12 @@ def check_fixture(page: Page, base: str) -> None:
     page.evaluate("location.hash = 'tree=1'")
     page.wait_for_timeout(SETTLE_MS)
     assert page.is_hidden("#error"), "error still shown after a good load"
+
+    # Enter in a field must not submit the form (a reload).
+    page.evaluate("window.notReloaded = true")
+    page.press("#min", "Enter")
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.evaluate("window.notReloaded === true"), "Enter reloaded the page"
 
     # A dir that is not in the tree, even one named like an Object property,
     # falls back to ROOT.

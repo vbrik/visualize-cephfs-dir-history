@@ -483,6 +483,8 @@ function hideButton(path, s) {
 
 // --- wiring -----------------------------------------------------------------
 
+// Enter in a field would submit the form and reload the page.
+$("controls").addEventListener("submit", (e) => e.preventDefault());
 $("tree").addEventListener("change", (e) =>
   writeState({ tree: Number(e.target.value), in: ROOT, hide: [] }),
 );
