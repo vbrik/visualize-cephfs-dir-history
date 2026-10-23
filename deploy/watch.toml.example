@@ -1,8 +1,13 @@
-# Directories to chart in the page's Watched view, one card each, in this
-# order. Read by `dirhistory-generate --watch FILE`; an empty file is valid.
+# Directories to chart in the page's Watched view, one card each. Read by
+# `dirhistory-generate --watch FILE`; an empty file is valid.
 #
-# One section per tree, named by the tree's root path (its fs_path); a tree
-# without a section has no watched directories. Tree roots are assumed to be
+# Each tree's directories come in named watch sets, which the page shows one
+# at a time, chosen in its Set menu (in this order; the first is the
+# default). Directories at different depths make poor neighbors, so give
+# each depth its own set. A directory may be in several sets.
+#
+# Sections are named by the tree's root path (its fs_path) and the set's
+# name; a tree without sets has no watched directories. Tree roots are assumed to be
 # unique: two trees with the same root (on different clusters or
 # filesystems) cannot be told apart, and a section naming them is an error.
 # So is a section naming no tree. A tree whose root is not valid UTF-8 cannot
@@ -11,16 +16,22 @@
 # `watch` holds paths relative to the tree root. Their components may hold
 # shell wildcards (*, ?, [...]), matched one component at a time: * never
 # crosses /. There is no **. "." is the tree root itself. A pattern matches
-# only directories within the tree's max depth.
+# only directories within the tree's max depth. A set may watch at most
+# --max-watched (default 5000) directories.
 
-[tree."/data/projects"]
+[tree."/data/projects".set."Projects"]
 watch = [
-  "alpha",                # one directory
-  "*/raw",                # raw/ of every project, new ones included
+  "*",                    # every project, new ones included
+  ".",                    # the tree root itself
 ]
 
-[tree."/data/scratch"]
+[tree."/data/projects".set."Raw data"]
+watch = [
+  "*/raw",                # raw/ of every project
+  "alpha/archive",        # one directory
+]
+
+[tree."/data/scratch".set."Users a-m"]
 watch = [
   "[a-m]*",               # some of the tree's subdirectories
-  ".",                    # the tree root itself
 ]

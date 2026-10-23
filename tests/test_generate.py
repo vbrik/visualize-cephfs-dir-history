@@ -17,12 +17,12 @@ from dirhistory.generate import (
     parser,
     select_trees,
     tree_document,
-    tree_patterns,
+    tree_sets,
     watch_warnings,
     write_json,
 )
 from dirhistory.history import ROOT, Resolution, Sample, TreeHistory, Unit
-from dirhistory.watch import Watched, parse_pattern
+from dirhistory.watch import Watched, WatchSet, parse_pattern
 
 TREE = Tree(2, "ad1bf53c-a6ca-11ec-b47e-b04f13b8e306", None, b"/npx/ana", 5)
 T1 = datetime(2026, 10, 21, 19, 19, 45, 208826, tzinfo=UTC)
@@ -107,7 +107,7 @@ def test_index_entry():
         "last_sample": "2026-10-21T20:00:00Z",
         "generated": "2026-10-21T20:00:00Z",
         "units": 2,
-        "watched": 0,
+        "watched": [],
     }
 
 
@@ -221,58 +221,68 @@ def test_tree_document_and_index_entry_carry_watched():
         HISTORY.times,
         HISTORY.rbytes,
         HISTORY.units,
-        Watched([b"caf\xe9", ROOT], [2]),
+        [Watched("Café & co", [b"caf\xe9", ROOT], [2]), Watched("Empty", [], [])],
     )
-    assert tree_document(TREE, h, 10, T2)["watched"] == ["caf\udce9", "."]
-    assert index_entry(TREE, h, T2)["watched"] == 2
+    assert tree_document(TREE, h, 10, T2)["watched"] == [
+        {"name": "Café & co", "paths": ["caf\udce9", "."]},
+        {"name": "Empty", "paths": []},
+    ]
+    assert index_entry(TREE, h, T2)["watched"] == [
+        {"name": "Café & co", "dirs": 2},
+        {"name": "Empty", "dirs": 0},
+    ]
 
 
 def test_tree_document_without_watch_has_empty_list():
     assert tree_document(TREE, HISTORY, 10, T2)["watched"] == []
 
 
+def _set(name, *patterns):
+    return WatchSet(name, [parse_pattern(t) for t in patterns])
+
+
 def test_watch_warnings():
-    ps = [parse_pattern(t) for t in ("x", "*", ".")]
-    assert watch_warnings(TREE, ps, [0, 3, 0]) == [
-        "WARNING: tree 2 (/npx/ana): watch pattern 'x' matches no directory",
-        "WARNING: tree 2 (/npx/ana): watch pattern '.' matches no directory",
+    sets = [_set("Top", "x", "*", "."), _set("Deep", "y")]
+    watched = [Watched("Top", [b"a"], [0, 3, 0]), Watched("Deep", [], [0])]
+    head = "WARNING: tree 2 (/npx/ana): watch set"
+    assert watch_warnings(TREE, sets, watched) == [
+        f"{head} 'Top': pattern 'x' matches no directory",
+        f"{head} 'Top': pattern '.' matches no directory",
+        f"{head} 'Deep': pattern 'y' matches no directory",
     ]
 
 
 def _config(**sections):
     """Return a watch.load result: SECTIONS maps a tree path (`_` for `/`) to
-    pattern texts."""
-    return {
-        k.replace("_", "/").encode(): [parse_pattern(t) for t in v]
-        for k, v in sections.items()
-    }
+    the pattern texts of its one set, "s"."""
+    return {k.replace("_", "/").encode(): [_set("s", *v)] for k, v in sections.items()}
 
 
-def test_tree_patterns_goes_by_tree_root():
+def test_tree_sets_goes_by_tree_root():
     a = Tree(1, "c", None, b"/npx/user", 2)
     b = Tree(2, "c", None, b"/npx/user/vbrik", 2)
     c = Tree(3, "c", None, b"/sim", 2)
     config = _config(_npx_user=["*"], _sim=["x", "y"])
-    by_tree = tree_patterns(config, [a, b, c])
-    assert {i: [p.text for p in ps] for i, ps in by_tree.items()} == {
+    by_tree = tree_sets(config, [a, b, c])
+    assert {i: [p.text for p in s.patterns] for i, [s] in by_tree.items()} == {
         1: ["*"],
         3: ["x", "y"],
     }
 
 
-def test_tree_patterns_rejects_a_section_without_a_tree():
+def test_tree_sets_rejects_a_section_without_a_tree():
     a = Tree(1, "c", None, b"/exp", 2)
     with pytest.raises(ValueError, match="/exq"):
-        tree_patterns(_config(_exp=["*"], _exq=["*"]), [a])
+        tree_sets(_config(_exp=["*"], _exq=["*"]), [a])
 
 
-def test_tree_patterns_rejects_a_root_shared_by_trees():
+def test_tree_sets_rejects_a_root_shared_by_trees():
     a = Tree(1, "c", None, b"/exp", 2)
     b = Tree(2, "d", None, b"/exp", 2)
     with pytest.raises(ValueError, match=r"trees 1, 2.*/exp"):
-        tree_patterns(_config(_exp=["*"]), [a, b])
+        tree_sets(_config(_exp=["*"]), [a, b])
     # without a section, sharing a root is harmless
-    assert tree_patterns({}, [a, b]) == {}
+    assert tree_sets({}, [a, b]) == {}
 
 
 def test_bad_watch_file_is_an_error_before_the_database(tmp_path, capsys, monkeypatch):
@@ -330,20 +340,31 @@ def test_run_writes_watched_and_warns_relative_to_selected_trees(
         {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)], sim: [(ROOT, 9), (b"s", 9)]},
     )
     watch = tmp_path / "watch.toml"
-    watch.write_text('[tree."/exp"]\nwatch = ["*"]\n[tree."/sim"]\nwatch = ["gone"]\n')
+    watch.write_text(
+        '[tree."/exp".set.All]\nwatch = ["*"]\n'
+        '[tree."/exp".set.B]\nwatch = ["b"]\n'
+        '[tree."/sim".set.Gone]\nwatch = ["gone"]\n'
+    )
     out = tmp_path / "data"
     argv = ["--db", "x", "--out", str(out), "--watch", str(watch)]
 
     assert generate.main([*argv, "--tree", "1"]) == 0
     doc = json.loads((out / "tree-1.json").read_text())
-    assert doc["watched"] == ["a", "b"]
+    assert doc["watched"] == [
+        {"name": "All", "paths": ["a", "b"]},
+        {"name": "B", "paths": ["b"]},
+    ]
     assert doc["rbytes"]["a"] == [5]
-    assert json.loads((out / "trees.json").read_text())[0]["watched"] == 2
+    assert json.loads((out / "trees.json").read_text())[0]["watched"] == [
+        {"name": "All", "dirs": 2},
+        {"name": "B", "dirs": 1},
+    ]
     assert "WARNING" not in capsys.readouterr().err  # /sim not run
 
     assert generate.main(argv) == 0
     assert capsys.readouterr().err == (
-        "WARNING: tree 2 (/sim): watch pattern 'gone' matches no directory\n"
+        "WARNING: tree 2 (/sim): watch set 'Gone': pattern 'gone' matches no"
+        " directory\n"
     )
 
 
@@ -360,12 +381,11 @@ def test_run_keeps_patterns_to_their_own_tree(monkeypatch, tmp_path):
         },
     )
     watch = tmp_path / "watch.toml"
-    watch.write_text('[tree."/npx/user"]\nwatch = ["*"]\n')
+    watch.write_text('[tree."/npx/user".set.Users]\nwatch = ["*"]\n')
     out = tmp_path / "data"
     assert generate.main(["--db", "x", "--out", str(out), "--watch", str(watch)]) == 0
     assert json.loads((out / "tree-1.json").read_text())["watched"] == [
-        "other",
-        "vbrik",
+        {"name": "Users", "paths": ["other", "vbrik"]}
     ]
     assert json.loads((out / "tree-2.json").read_text())["watched"] == []
 
@@ -374,7 +394,7 @@ def test_run_fails_for_a_section_without_a_tree(monkeypatch, tmp_path, capsys):
     exp = Tree(1, "c", None, b"/exp", 2)
     _fake_db(monkeypatch, {exp: [(ROOT, 9)]})
     watch = tmp_path / "watch.toml"
-    watch.write_text('[tree."/exq"]\nwatch = ["*"]\n')
+    watch.write_text('[tree."/exq".set.s]\nwatch = ["*"]\n')
     out = tmp_path / "d"
     argv = ["--db", "x", "--out", str(out), "--watch", str(watch), "--tree", "1"]
     assert generate.main(argv) == 1  # even though --tree 1 would not read it
@@ -386,13 +406,15 @@ def test_run_fails_when_watched_dirs_exceed_the_cap(monkeypatch, tmp_path, capsy
     exp = Tree(1, "c", None, b"/exp", 2)
     _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)]})
     watch = tmp_path / "watch.toml"
-    watch.write_text('[tree."/exp"]\nwatch = ["*"]\n')
+    watch.write_text(
+        '[tree."/exp".set.A]\nwatch = ["a"]\n[tree."/exp".set.All]\nwatch = ["*"]\n'
+    )
     out = tmp_path / "d"
     argv = ["--db", "x", "--out", str(out), "--watch", str(watch)]
     assert generate.main([*argv, "--max-watched", "1"]) == 1
     assert capsys.readouterr().err == (
-        "ERROR: tree 1 (/exp): the --watch patterns match 2 directories, more"
-        " than --max-watched 1. Narrow the patterns or raise --max-watched.\n"
+        "ERROR: tree 1 (/exp): watch set 'All' matches 2 directories, more"
+        " than --max-watched 1. Narrow its patterns or raise --max-watched.\n"
     )
     assert not (out / "tree-1.json").exists()
     assert generate.main([*argv, "--max-watched", "2"]) == 0

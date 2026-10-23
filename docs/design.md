@@ -78,23 +78,35 @@ those, one trend card each.
 
 - The list is a TOML file read by the generator (`--watch`), not edited in
   the page: the site is static, and the list is the operator's decision.
-- The list is per tree: a `[tree."/fs/path"]` section, named by the tree's
-  root, holds patterns relative to that root. Trees may overlap
+- The list is per tree: `[tree."/fs/path".set."NAME"]` sections, named by
+  the tree's root and a watch set's name, hold patterns relative to that
+  root. Trees may overlap
   (`/npx/user` and `/npx/user/vbrik`), and a global list would apply
-  `/npx/user/*` to the inner tree too, watching its root. A tree without a
-  section watches nothing; `.` watches the root. Tree roots are assumed
+  `/npx/user/*` to the inner tree too, watching its root. A tree without
+  sets watches nothing; `.` watches the root. Tree roots are assumed
   unique, so a section naming two trees (same root on different clusters or
   filesystems) is an error, as is one naming no tree; a root that is not
   UTF-8 cannot be named in TOML, so that tree cannot be watched.
+- A tree's watched directories come in named watch sets, shown one at a
+  time: cards of `*` and `*/*` side by side mix a directory with its own
+  subdirectories, at scales a sort cannot reconcile. Each set is its own
+  list (a directory may be in several, its series stored once), so its
+  name, not a pattern's depth, decides what is compared. A set's name is
+  what the page shows; sets keep the file's order, the first being the
+  default. `watch` directly in a tree section, the format before sets, is
+  an error with a hint rather than an unnamed set, so every set has a
+  name.
 - Wildcards are matched per component (`watch.py`), so `*` never crosses `/`
   and next year's directory joins without an edit. No `**`: a recursive
   pattern could watch thousands of directories by accident. More than
-  `--max-watched` (5000) watched directories in a tree is an error, which
-  catches a pattern that matches far more than meant.
+  `--max-watched` (5000) watched directories in a set is an error, which
+  catches a pattern that matches far more than meant. The cap is per set,
+  not per tree, since the page shows one set at a time.
 - Cards show rbytes, the whole directory, not own size: a watched directory
   asks "how big is this", and watched directories may nest, since cards are
   never added up.
-- Matching rides the generator's existing pass over the first sample, and
+- Matching rides the generator's existing pass over the first sample (one
+  matcher for all of a tree's sets, as that pass can be read only once), and
   watched directories are fetched explicitly, since one that never changed
   is otherwise never read. Their ancestors are kept too, so the page can
   drill into a watched directory and back up its path.
@@ -117,7 +129,12 @@ those, one trend card each.
   names that are not UTF-8 survive (`model.encodeValue`).
 - Hiding takes a unit (`hide=dir`) or a group, i.e. every unit in a subtree
   (`hide=dir/`); hiding a unit's own files leaves the units below it.
-- The Watched view (`view=watched`) is a separate view, not a section under
+- The Watched view (`view=watched`) shows one watch set (`set=NAME`, the
+  first by default or for a name the tree lacks). Set names belong to a
+  tree, so changing the tree drops `set=`. Sort, *Show unchanged* and the
+  range are shared by all sets. A tree without sets and a set that matches
+  nothing get different notes.
+- The Watched view is a separate view, not a section under
   the chart: the unit controls do not apply to it, so it hides them. It has
   its own slider, pinned to the window's bottom while the cards scroll; the
   zoomed range is shared, so switching views keeps it. A card's change and
@@ -145,7 +162,9 @@ those, one trend card each.
 `web/data/trees.json` lists the trees:
 `[{id, label, detail, file, last_sample, generated, units, watched}]`;
 `generated` is the tree file's, so the page refetches a file only when it
-changed; `watched` counts the tree's watched directories.
+changed; `watched` lists the tree's watch sets as `{name, dirs}`, `dirs`
+counting the set's watched directories, so the page knows whether any tree
+has some without fetching every file.
 
 `web/data/tree-<id>.json`:
 
@@ -157,7 +176,7 @@ changed; `watched` counts the tree's watched directories.
 | `times` | Time points, oldest first. |
 | `rbytes` | `{path: [bytes or null per point]}` for ROOT (`.`), every unit, every watched directory, and every ancestor of these. null: absent. |
 | `units` | `{path: {own: [bytes per point, ≥ 0], leaf: bool}}`. |
-| `watched` | Watched directories' paths in `--watch` order, by path within a pattern. The page sorts the cards itself. `[]` without `--watch`. |
+| `watched` | The tree's watch sets in `--watch` order, `[{name, paths}]`: a set's watched directories in pattern order, by path within a pattern. The page sorts the cards itself. `[]` without `--watch`. |
 
 ## Risks and limitations
 

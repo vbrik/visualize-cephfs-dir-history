@@ -1,6 +1,7 @@
 // Page controller: loads data files, keeps view state in the URL hash, and
 // renders the controls and the shown view: Units (the stacked chart, its
-// legend and its table) or Watched (trend cards and their range slider).
+// legend and its table) or Watched (a watch set's trend cards and their
+// range slider).
 
 import { rangeSliderOption } from "./charts/rangeSlider.js";
 import { stackedAreaOption } from "./charts/stackedArea.js";
@@ -35,6 +36,7 @@ const DEFAULTS = {
   min: "",
   hide: [],
   rest: false,
+  set: null, // the tree's first watch set
   sort: "span",
   flat: false,
 };
@@ -69,6 +71,7 @@ function readState() {
     min: p.get("min") ?? DEFAULTS.min,
     hide: p.getAll("hide"),
     rest: p.get("rest") === "1",
+    set: p.get("set") ?? DEFAULTS.set,
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
     flat: p.get("flat") === "1",
   };
@@ -84,6 +87,7 @@ function writeState(changes) {
   if (s.min) p.push(["min", s.min]);
   for (const h of s.hide) p.push(["hide", h]);
   if (s.rest) p.push(["rest", "1"]);
+  if (s.set !== DEFAULTS.set) p.push(["set", s.set]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
   if (s.flat) p.push(["flat", "1"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
@@ -182,7 +186,13 @@ function colors() {
 }
 
 /** Whether any tree has watched dirs, i.e. the Watched view exists. */
-const anyWatched = () => index.some((t) => t.watched > 0);
+const anyWatched = () => index.some((t) => t.watched.some((w) => w.dirs > 0));
+
+/** The loaded tree's watch set that S names, else its first; null if none. */
+const watchSet = (s) => {
+  const sets = data?.watched ?? [];
+  return sets.find((w) => w.name === s.set) ?? sets[0] ?? null;
+};
 
 /** Colors per band key: survivors keep their slot, newcomers take free ones. */
 function bandColors(viewKey, bands, palette) {
@@ -266,6 +276,15 @@ function renderControls(s, view) {
   }
   sort.value = s.sort;
   $("flat").checked = s.flat;
+  const sets = data?.watched ?? [];
+  $("set-label").hidden = sets.length === 0;
+  $("set").replaceChildren(
+    ...sets.map((w) => {
+      const n = w.paths.length;
+      return new Option(`${w.name} — ${n} dir${n === 1 ? "" : "s"}`, w.name);
+    }),
+  );
+  $("set").value = watchSet(s)?.name ?? "";
 }
 
 function renderCrumbs(inPath) {
@@ -356,14 +375,17 @@ function renderSummary(inPath) {
   );
 }
 
-/** The Watched view: S's cards, minus unchanged ones unless S.flat. */
+/** The Watched view: the cards of S's watch set, minus unchanged ones
+ * unless S.flat. */
 function renderWatched(s) {
   const [a, b] = range;
-  const all = trendCards(data, range);
+  const set = watchSet(s);
+  const all = trendCards(data, set?.paths ?? [], range);
   const cards = sortCards(s.flat ? all : all.filter((card) => !unchanged(card)), s.sort);
   const hidden = all.length - cards.length;
   hideSparkTip();
-  $("watch-note").hidden = all.length > 0;
+  $("watch-note").hidden = set !== null;
+  $("watch-empty").hidden = set === null || all.length > 0;
   $("watch-range").textContent = all.length
     ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
     : "";
@@ -537,7 +559,7 @@ function hideButton(path, s) {
 // Enter in a field would submit the form and reload the page.
 $("controls").addEventListener("submit", (e) => e.preventDefault());
 $("tree").addEventListener("change", (e) =>
-  writeState({ tree: Number(e.target.value), in: ROOT, hide: [] }),
+  writeState({ tree: Number(e.target.value), in: ROOT, hide: [], set: null }),
 );
 $("group").addEventListener("change", (e) => writeState({ group: Number(e.target.value) }));
 $("top").addEventListener("change", (e) => writeState({ top: clampInt(e.target.value, 1, MAX_BANDS, MAX_BANDS) }));
@@ -546,6 +568,7 @@ $("rest").addEventListener("change", (e) => writeState({ rest: e.target.checked 
 $("reset").addEventListener("click", () =>
   writeState(Object.fromEntries(UNITS_KEYS.map((k) => [k, DEFAULTS[k]]))),
 );
+$("set").addEventListener("change", (e) => writeState({ set: e.target.value }));
 $("sort").addEventListener("change", (e) => writeState({ sort: e.target.value }));
 $("flat").addEventListener("change", (e) => writeState({ flat: e.target.checked }));
 $("cards").addEventListener("pointermove", showSparkTip);

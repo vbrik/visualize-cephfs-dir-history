@@ -13,9 +13,10 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import islice
 from statistics import median
 
-from dirhistory.watch import MAX_WATCHED, Matcher, Parts, Watched, select
+from dirhistory.watch import MAX_WATCHED, Matcher, Watched, WatchSet, select
 
 ROOT = b"."
 
@@ -63,13 +64,14 @@ class Unit:
 
 @dataclass(frozen=True, slots=True)
 class TreeHistory:
-    """A tree's chosen time points, its units, its watched dirs, and the
-    rbytes series of ROOT, the units, the watched dirs, and their ancestors."""
+    """A tree's chosen time points, its units, its watched dirs per watch set
+    (in config order), and the rbytes series of ROOT, the units, the watched
+    dirs, and their ancestors."""
 
     times: list[datetime]
     rbytes: dict[bytes, Series]
     units: dict[bytes, Unit]
-    watched: Watched = field(default_factory=lambda: Watched([], []))
+    watched: list[Watched] = field(default_factory=list)
 
 
 def parent(path: bytes) -> bytes:
@@ -155,7 +157,7 @@ def summarize(
     threshold: int,
     limit: int,
     resolution: Resolution = DEFAULT_RESOLUTION,
-    watch: Sequence[Parts] = (),
+    watch: Sequence[WatchSet] = (),
     watch_limit: int = MAX_WATCHED,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
@@ -177,23 +179,29 @@ def summarize(
     median, which drops such dips. Other directories cannot dip that way, so
     their raw range counts, including changes that last one point.
 
-    The watched dirs are the paths that any of the first sample's paths or
-    CHANGED match in WATCH (the tree's watch.Matcher patterns, in config order); more
-    than WATCH_LIMIT raises watch.TooManyWatched before any series is
-    fetched. Their series and their ancestors' are
-    kept, so the page can drill into a watched dir and up its path, even
-    when they never changed and are not units.
+    Each of the tree's watch sets in WATCH has as watched dirs the paths,
+    among the first sample's and CHANGED, that its patterns match; more than
+    WATCH_LIMIT in a set raises watch.TooManyWatched before any series is
+    fetched. The watched dirs' series and their ancestors' are kept, once
+    however many sets hold them, so the page can drill into a watched dir
+    and up its path, even when they never changed and are not units.
     """
     points = choose_points(samples, resolution)
     dirs = changed | {parent(p) for p in changed if p != ROOT}
-    matcher = Matcher(watch)
+    # One matcher for all sets: FIRST can be read only once.
+    matcher = Matcher([p.parts for s in watch for p in s.patterns])
     visit = matcher.add if matcher.wants else None
     constant, has_children = _children(first, changed, dirs, visit)
     if visit:
         for path in changed:
             visit(path)
-    watched = select(matcher.matches(), watch_limit)
-    shown = set(watched.paths) | {a for w in watched.paths for a in ancestors(w)}
+    matches = iter(matcher.matches())
+    watched = [
+        select(s.name, list(islice(matches, len(s.patterns))), watch_limit)
+        for s in watch
+    ]
+    paths = {p for w in watched for p in w.paths}
+    shown = paths | {a for p in paths for a in ancestors(p)}
     wanted = {ROOT} | changed | {a for p in changed for a in ancestors(p)} | shown
     rbytes = _replay(samples, points, fetch(wanted))
 

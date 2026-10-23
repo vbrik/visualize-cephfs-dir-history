@@ -189,8 +189,8 @@ function bandLabel(g, data, inPath) {
 }
 
 /**
- * Shape DATA's watched dirs into trend cards for RANGE ([first, last] point
- * indexes), in DATA.watched order.
+ * Shape the watched dirs PATHS (a watch set's, in DATA.watched) into trend
+ * cards for RANGE ([first, last] point indexes), in PATHS order.
  *
  * Returns [{path, values, start, end, change, peak, span, lo, hi}]: values
  * is the dir's whole rbytes series (null: absent). Within the range, absent
@@ -198,11 +198,11 @@ function bandLabel(g, data, inPath) {
  * change = end - start, peak the largest and span the largest minus the
  * smallest, so a dir that appears or disappears has a span. lo and hi bound
  * its present values (the sparkline's scale), both null if it is absent
- * throughout. A file without watched dirs gives [].
+ * throughout.
  */
-export function trendCards(data, range) {
+export function trendCards(data, paths, range) {
   const [a, b] = range;
-  return (data.watched ?? []).map((path) => {
+  return paths.map((path) => {
     const values = data.rbytes[path];
     const inRange = values.slice(a, b + 1);
     const present = inRange.filter((v) => v !== null);

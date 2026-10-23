@@ -1,7 +1,9 @@
 """Watch patterns: directories to chart in the page's Watched view.
 
-A watch file lists, per tree, patterns relative to the tree's root, e.g.
-`IceCube/*/filtered` under `[tree."/npx/ana"]`. A pattern may hold shell
+A watch file lists, per tree, named watch sets of patterns relative to the
+tree's root, e.g. `IceCube/*/filtered` under `[tree."/npx/ana".set."Filtered"]`.
+The page shows one set at a time: dirs at different depths (`*` and `*/*`)
+make poor neighbors. A pattern may hold shell
 wildcards (`*`, `?`, `[...]`) and is matched component by component, so `*`
 never crosses `/`, and a match has exactly as many components as the
 pattern. `.` is the tree root itself. There is no `**`: trees are sampled to
@@ -20,7 +22,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-# Default most watched dirs per tree; more is an error. It guards against a
+# Default most watched dirs per watch set; more is an error. It guards against a
 # pattern that matches far more than meant: each watched dir is a series in
 # the data file and a card on the page.
 MAX_WATCHED = 5000
@@ -40,6 +42,14 @@ class WatchPattern:
 
     text: str
     parts: Parts
+
+
+@dataclass(frozen=True, slots=True)
+class WatchSet:
+    """A tree's watch set: its NAME, as the page shows it, and its PATTERNS."""
+
+    name: str
+    patterns: list[WatchPattern]
 
 
 def _split(text: str, banned: set[str], what: str) -> list[str]:
@@ -75,26 +85,50 @@ def _tree_root(text: str) -> bytes:
     return os.fsencode(text)
 
 
-def _patterns(tree: str, section: object) -> list[WatchPattern]:
-    """Return the patterns of a watch file's `[tree.TREE]` SECTION."""
+def _sets(tree: str, section: object) -> list[WatchSet]:
+    """Return the watch sets of a watch file's `[tree.TREE]` SECTION."""
     if not isinstance(section, dict):
         raise ValueError(f"tree {tree!r} must be a table")
-    if extra := sorted(set(section) - {"watch"}):
+    if "watch" in section:
+        raise ValueError(
+            f"tree {tree!r}: 'watch' directly in a tree is the old format; put"
+            f' it in a named set: [tree."{tree}".set."NAME"]'
+        )
+    if extra := sorted(set(section) - {"set"}):
         raise ValueError(f"tree {tree!r}: unknown key {extra[0]!r}")
+    sets = section.get("set")
+    if not isinstance(sets, dict):
+        raise ValueError(f"tree {tree!r}: 'set' must be a table of watch sets")
+    return [_set(tree, name, s) for name, s in sets.items()]
+
+
+def _set(tree: str, name: str, section: object) -> WatchSet:
+    """Return the watch set NAME of TREE from its SECTION."""
+    where = f"tree {tree!r}, set {name!r}"
+    if not name.strip():
+        raise ValueError(f"tree {tree!r}: a set name must not be blank")
+    if not isinstance(section, dict):
+        raise ValueError(f"{where} must be a table")
+    if extra := sorted(set(section) - {"watch"}):
+        raise ValueError(f"{where}: unknown key {extra[0]!r}")
     patterns = section.get("watch")
     if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
-        raise ValueError(f"tree {tree!r}: 'watch' must be a list of strings")
-    return [parse_pattern(p) for p in patterns]
+        raise ValueError(f"{where}: 'watch' must be a list of strings")
+    try:
+        return WatchSet(name, [parse_pattern(p) for p in patterns])
+    except ValueError as e:
+        raise ValueError(f"{where}: {e}") from None
 
 
-def load(path: Path) -> dict[bytes, list[WatchPattern]]:
-    """Return the patterns per tree root of the TOML file at PATH:
-    `[tree."/fs/path"]` sections, each with `watch = ["a/*", ...]`.
+def load(path: Path) -> dict[bytes, list[WatchSet]]:
+    """Return the watch sets per tree root of the TOML file at PATH, each
+    tree's in file order: `[tree."/fs/path".set."NAME"]` sections, each with
+    `watch = ["a/*", ...]`.
 
     Raises ValueError naming PATH for bad TOML, a top-level key other than
-    `tree` (the old top-level `watch` gets its own hint), a section that is
-    not as above, or a bad tree path or pattern; OSError if PATH cannot be
-    read.
+    `tree`, a section that is not as above (the old formats, a top-level
+    `watch` or one directly in a tree, get a hint), a blank set name, or a
+    bad tree path or pattern; OSError if PATH cannot be read.
     """
     with path.open("rb") as f:
         try:
@@ -104,7 +138,7 @@ def load(path: Path) -> dict[bytes, list[WatchPattern]]:
     if "watch" in doc:
         raise ValueError(
             f"{path}: a top-level 'watch' is the old format; put the patterns,"
-            ' relative to the tree root, in a [tree."/fs/path"] section'
+            ' relative to the tree root, in a [tree."/fs/path".set."NAME"] section'
         )
     if extra := sorted(set(doc) - {"tree"}):
         raise ValueError(f"{path}: unknown key {extra[0]!r}; the only key is 'tree'")
@@ -112,7 +146,7 @@ def load(path: Path) -> dict[bytes, list[WatchPattern]]:
     if not isinstance(trees, dict):
         raise ValueError(f"{path}: 'tree' must be a table of trees")
     try:
-        return {_tree_root(t): _patterns(t, s) for t, s in trees.items()}
+        return {_tree_root(t): _sets(t, s) for t, s in trees.items()}
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from None
 
@@ -120,8 +154,9 @@ def load(path: Path) -> dict[bytes, list[WatchPattern]]:
 class Matcher:
     """Collects, per pattern, the paths that match it.
 
-    PATTERNS are a tree's patterns' components (WatchPattern.parts). Paths
-    are relative to the tree's ROOT (`.` has no components).
+    PATTERNS are the components (WatchPattern.parts) of the patterns of all
+    of a tree's watch sets, one after another. Paths are relative to the
+    tree's ROOT (`.` has no components).
     """
 
     def __init__(self, patterns: Sequence[Parts]):
@@ -153,29 +188,34 @@ class Matcher:
 
 @dataclass(frozen=True, slots=True)
 class Watched:
-    """A tree's watched dirs.
+    """A watch set's watched dirs.
 
-    paths: in display order. found: per pattern, how many paths it matched.
+    name: the set's. paths: in display order. found: per pattern, how many
+    paths it matched.
     """
 
+    name: str
     paths: list[bytes]
     found: list[int]
 
 
 class TooManyWatched(ValueError):
-    """More distinct watched dirs (FOUND) than the cap (LIMIT)."""
+    """More distinct watched dirs (FOUND) in the set NAME than the cap (LIMIT)."""
 
-    def __init__(self, found: int, limit: int):
-        super().__init__(f"{found} watched directories, more than {limit}")
+    def __init__(self, name: str, found: int, limit: int):
+        super().__init__(
+            f"set {name!r}: {found} watched directories, more than {limit}"
+        )
+        self.name = name
         self.found = found
         self.limit = limit
 
 
-def select(matches: list[list[bytes]], limit: int) -> Watched:
-    """Return the watched dirs from MATCHES (per pattern, in config order):
-    a path matched by several patterns counts at its first. Raises
-    TooManyWatched for more than LIMIT paths."""
+def select(name: str, matches: list[list[bytes]], limit: int) -> Watched:
+    """Return the watched dirs of the set NAME from MATCHES (per pattern, in
+    config order): a path matched by several patterns counts at its first.
+    Raises TooManyWatched for more than LIMIT paths."""
     ordered = list(dict.fromkeys(p for found in matches for p in found))
     if len(ordered) > limit:
-        raise TooManyWatched(len(ordered), limit)
-    return Watched(ordered, [len(found) for found in matches])
+        raise TooManyWatched(name, len(ordered), limit)
+    return Watched(name, ordered, [len(found) for found in matches])

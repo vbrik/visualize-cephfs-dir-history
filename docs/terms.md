@@ -18,10 +18,11 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | Rest of tree | The shown directory's bytes that are in no unit: rbytes minus the own sizes of all its units. Off by default. |
 | hidden | A unit, or all units of a group, removed from the chart entirely: their bytes are in no band, so the total shrinks. Hiding a unit's own files does not hide the units below it. |
 | peak | A band's largest value in the shown time range; bands are ranked by it. |
-| watch pattern | A path pattern, relative to a tree's root, in that tree's section of the `--watch` file, e.g. `IceCube/*/filtered`; wildcards match within one path component. A pattern applies only to its own tree. |
-| watched dir | A directory of a tree that one of the tree's watch patterns matches. |
+| watch set | A named list of watch patterns of one tree, in its `[tree."/fs/path".set."NAME"]` section of the `--watch` file. The Watched view shows one set at a time ("Set"). |
+| watch pattern | A path pattern, relative to a tree's root, in one of that tree's watch sets, e.g. `IceCube/*/filtered`; wildcards match within one path component. A pattern applies only to its own tree. |
+| watched dir | A directory of a tree that a pattern of one of the tree's watch sets matches. |
 | trend card | One watched dir's card in the Watched view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
 | span | A trend card's largest minus smallest size in the shown range, absent counting as 0; the Watched view's default sort. |
 | unchanged | A trend card whose span is 0: constant, or absent throughout the shown range. Hidden unless *Show unchanged* is on. |
-| Units view / Watched view | The page's two views (`view=` in the URL hash): stacked units, or trend cards of watched dirs. |
+| Units view / Watched view | The page's two views (`view=` in the URL hash): stacked units, or trend cards of a watch set's dirs. |
 | ghost unit | A directory that looks like a unit only because CephFS propagates rbytes upward with a delay, so its own size dips while a child has grown but it has not yet. See [design.md](design.md#propagation-lag). |

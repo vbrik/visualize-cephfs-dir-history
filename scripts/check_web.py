@@ -5,8 +5,9 @@ Serves web/ on a free local port with two data sets:
 - tests/data/web, two synthetic trees (the first with a non-leaf unit, a
   unit below it and a name that is not UTF-8), for regression checks of
   the page's semantics, URL codec, update ordering, data refresh, click
-  hit-testing and the Watched view (tree 1 watches three dirs, tree 2
-  none); some checks serve altered copies of them;
+  hit-testing and the Watched view (tree 1 has three watch sets: three
+  dirs, three dirs two of which are also in the first, and none; tree 2
+  has none); some checks serve altered copies of them;
 - web/data (if present), the real data written by dirhistory-generate: for
   every tree, in light and dark mode, it groups by one level, drills into
   the first group, hides a band, reloads from the URL hash and unhides it.
@@ -148,9 +149,9 @@ def check_model(page: Page, base: str) -> None:
     cards = page.evaluate(
         """async () => {
             const m = await import("./js/model.js");
-            const data = {times: ["t0", "t1", "t2"], watched: ["a", "gone", "flat"],
+            const data = {times: ["t0", "t1", "t2"],
               rbytes: {a: [10, 30, 20], gone: [5, null, null], flat: [7, 7, 7]}};
-            return m.trendCards(data, [0, 2]);
+            return m.trendCards(data, ["a", "gone", "flat"], [0, 2]);
         }"""
     )
     assert [c["path"] for c in cards] == ["a", "gone", "flat"], "cards out of order"
@@ -164,20 +165,14 @@ def check_model(page: Page, base: str) -> None:
     assert flat["span"] == 0, f"span of a constant dir: {flat}"
     zoomed = page.evaluate(
         """async () => (await import("./js/model.js")).trendCards(
-            {times: ["t0", "t1", "t2"], watched: ["a"], rbytes: {a: [10, 30, 20]}},
-            [1, 2])"""
+            {times: ["t0", "t1", "t2"], rbytes: {a: [10, 30, 20]}}, ["a"], [1, 2])"""
     )
     assert (zoomed[0]["lo"], zoomed[0]["change"]) == (20, -10), "scale not by range"
     absent = page.evaluate(
         """async () => (await import("./js/model.js")).trendCards(
-            {times: ["t0", "t1"], watched: ["x"], rbytes: {x: [null, null]}}, [0, 1])"""
+            {times: ["t0", "t1"], rbytes: {x: [null, null]}}, ["x"], [0, 1])"""
     )
     assert absent[0]["lo"] is None and absent[0]["hi"] is None, f"absent: {absent}"
-    none = page.evaluate(
-        """async () => (await import("./js/model.js")).trendCards(
-            {times: ["t0"], rbytes: {}}, [0, 0])"""
-    )
-    assert none == [], "a file without `watched` must give no cards"
 
     # Unchanged: constant or absent throughout the range; a dir that appears
     # or disappears in it changed.
@@ -185,10 +180,10 @@ def check_model(page: Page, base: str) -> None:
         """async () => {
             const m = await import("./js/model.js");
             const data = {times: ["t0", "t1", "t2"],
-              watched: ["const", "never", "new", "gone", "back", "up"],
               rbytes: {const: [7, 7, 7], never: [null, null, null], new: [null, 5, 5],
                 gone: [5, null, null], back: [5, null, 5], up: [5, 5, 6]}};
-            return m.trendCards(data, [0, 2]).filter((c) => !m.unchanged(c))
+            return m.trendCards(data, Object.keys(data.rbytes), [0, 2])
+              .filter((c) => !m.unchanged(c))
               .map((c) => c.path);
         }"""
     )
@@ -197,10 +192,10 @@ def check_model(page: Page, base: str) -> None:
     orders = page.evaluate(
         """async () => {
             const m = await import("./js/model.js");
-            const data = {times: ["t0", "t1"], watched: ["b", "a", "c", "B", "x"],
+            const data = {times: ["t0", "t1"],
               rbytes: {a: [10, 40], b: [50, 20], c: [90, 90], B: [10, 40],
                 x: [null, null]}};
-            const cards = m.trendCards(data, [0, 1]);
+            const cards = m.trendCards(data, ["b", "a", "c", "B", "x"], [0, 1]);
             return Object.fromEntries(Object.keys(m.CARD_SORTS).map(
               (k) => [k, m.sortCards(cards, k).map((c) => c.path)]));
         }"""
@@ -218,16 +213,16 @@ def check_model(page: Page, base: str) -> None:
             const t = await import("./js/charts/trendCard.js");
             const data = {times: ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z",
                 "2026-10-01T03:00:00Z", "2026-10-01T04:00:00Z"],
-              watched: ["up", "flat", "gap", "never"],
               rbytes: {up: [0, 10, 20, 30], flat: [7, 7, 7, 7], gap: [1, 2, null, 3],
                 never: [null, null, null, null]}};
-            const cards = m.trendCards(data, [0, 3]);
+            const paths = Object.keys(data.rbytes);
+            const cards = m.trendCards(data, paths, [0, 3]);
             const xs = t.sparkXs(data.times, [0, 3]);
             return {
               paths: cards.map((c) => t.sparkPaths(xs, c, [0, 3])),
               at: [0, 0.3, 0.6, 1].map((f) => t.sparkPointAt(xs, [0, 3], f)),
               zoomed: t.sparkPaths(t.sparkXs(data.times, [1, 2]),
-                m.trendCards(data, [1, 2])[0], [1, 2]),
+                m.trendCards(data, paths, [1, 2])[0], [1, 2]),
               zoomedAt: t.sparkPointAt(t.sparkXs(data.times, [1, 2]), [1, 2], 1),
             };
         }"""
@@ -362,8 +357,62 @@ def check_watched(page: Page, base: str) -> None:
     )
     shown = page.inner_text("#table-range")
     assert shown == f"{start} \u2013 {end}", f"range after switching: {shown}"
-    for watched_only in ("#sort", "#flat", "#cards"):
+    for watched_only in ("#set", "#sort", "#flat", "#cards"):
         assert page.is_hidden(watched_only), f"{watched_only} shown in the Units view"
+
+
+def check_watch_sets(page: Page, base: str) -> None:
+    """The Set dropdown: one set's cards at a time, kept in the URL."""
+
+    def state() -> str:
+        return page.evaluate("location.hash")
+
+    def options() -> list[str]:
+        return page.eval_on_selector_all("#set option", "os => os.map(o => o.text)")
+
+    page.goto(f"{base}#tree=1&view=watched")
+    page.wait_for_timeout(SETTLE_MS)
+    assert options() == ["Mixed — 3 dirs", "Top & café — 3 dirs", "Empty — 0 dirs"], (
+        f"sets: {options()}"
+    )
+    assert page.input_value("#set") == "Mixed", "not on the first set"
+    assert sorted(n[:3] for n in cards(page)) == ["A", "Z/y", "caf"], (
+        "first set's cards"
+    )
+
+    # A name with a space, & and non-ASCII survives the URL and a reload.
+    page.select_option("#set", "Top & café")
+    page.wait_for_timeout(SETTLE_MS)
+    assert "set=" in state(), f"set not in the URL: {state()}"
+    assert sorted(n[:3] for n in cards(page)) == ["A", "Z", "caf"], "second set"
+    page.reload()
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.input_value("#set") == "Top & café", "set lost on reload"
+    assert len(cards(page)) == 3, "cards lost on reload"
+
+    # A set matching nothing says so, unlike a tree without sets.
+    page.select_option("#set", "Empty")
+    page.wait_for_timeout(SETTLE_MS)
+    assert cards(page) == [] and page.is_visible("#watch-empty"), "no empty-set note"
+    assert page.is_hidden("#watch-note"), "tree note shown for an empty set"
+    assert page.is_hidden("#watch-range"), "range shown for an empty set"
+
+    # An unknown set falls back to the first.
+    page.goto(f"{base}#tree=1&view=watched&set=nope")
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.input_value("#set") == "Mixed", "unknown set not ignored"
+    assert len(cards(page)) == 3, "unknown set shows no cards"
+
+    # Set names belong to a tree: changing the tree drops the set.
+    page.select_option("#set", "Top & café")
+    page.wait_for_timeout(SETTLE_MS)
+    page.select_option("#tree", "2")
+    page.wait_for_timeout(SETTLE_MS)
+    assert "set=" not in state(), f"set kept across trees: {state()}"
+    assert page.is_hidden("#set"), "Set shown for a tree without sets"
+    page.select_option("#tree", "1")
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.input_value("#set") == "Mixed", "tree 1 not back on its first set"
 
 
 def check_sort_and_unchanged(page: Page, base: str) -> None:
@@ -402,9 +451,8 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
 
     # With every card unchanged, the count says where they went.
     tree["rbytes"]["A"] = [2**40] * 3
-    tree["rbytes"][next(p for p in tree["watched"] if p.startswith("caf"))] = [
-        2**30
-    ] * 3
+    caf = next(p for p in tree["watched"][0]["paths"] if p.startswith("caf"))
+    tree["rbytes"][caf] = [2**30] * 3
     page.goto(f"{base}#tree=1&view=watched")
     page.reload()  # a hash change alone keeps the loaded file
     page.wait_for_timeout(SETTLE_MS)
@@ -455,10 +503,10 @@ def check_absent_in_range(page: Page, base: str) -> None:
 
 
 def check_no_watched(page: Page, base: str) -> None:
-    """Without watched dirs in any tree, there is no Watched view."""
+    """Without watched dirs in any tree, even with sets, there is no Watched view."""
     index = json.loads((FIXTURE / "trees.json").read_text())
     for t in index:
-        t["watched"] = 0
+        t["watched"] = [{**w, "dirs": 0} for w in t["watched"]]
     page.route("**/data/trees.json", lambda r: r.fulfill(json=index))
     page.goto(f"{base}#tree=1&view=watched")
     page.wait_for_timeout(SETTLE_MS)
@@ -615,26 +663,42 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         assert "hide=" not in state(), f"tree {tree}: unhiding failed"
 
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
-    watched = next(t.get("watched", 0) for t in entries if t["id"] == tree)
-    if not any(t.get("watched", 0) for t in entries):
+    sets = next(t["watched"] for t in entries if t["id"] == tree)
+    if not any(w["dirs"] for t in entries for w in t["watched"]):
         return
     page.goto(f"{base}#tree={tree}&view=watched")
     page.wait_for_timeout(SETTLE_MS)
     if shots:
         page.screenshot(path=shots / f"tree-{tree}-watched.png", full_page=True)
-    if not watched:
-        assert page.is_visible("#watch-note"), f"tree {tree}: no note without cards"
+    if not sets:
+        assert page.is_visible("#watch-note"), f"tree {tree}: no note without sets"
         return
-    # Unchanged cards are hidden, and counted, unless asked for.
-    shown = page.locator("#cards .trend-card").count()
-    hidden = page.eval_on_selector(
-        "#watch-hidden", "e => e.hidden ? 0 : parseInt(e.textContent)"
-    )
+    for w in sets:
+        # Unchanged cards are hidden, and counted, unless asked for.
+        page.goto(f"{base}#tree={tree}&view=watched")
+        page.wait_for_timeout(SETTLE_MS)
+        page.select_option("#set", w["name"])
+        page.wait_for_timeout(SETTLE_MS)
+        shown = page.locator("#cards .trend-card").count()
+        hidden = page.eval_on_selector(
+            "#watch-hidden", "e => e.hidden ? 0 : parseInt(e.textContent)"
+        )
+        page.check("#flat")
+        page.wait_for_timeout(SETTLE_MS)
+        n = page.locator("#cards .trend-card").count()
+        where = f"tree {tree}, set {w['name']!r}"
+        assert n == w["dirs"], f"{where}: {n} cards, trees.json says {w['dirs']}"
+        assert shown + hidden == n, f"{where}: {shown} shown + {hidden} hidden != {n}"
+        if not n:
+            assert page.is_visible("#watch-empty"), f"{where}: no note without cards"
+    if not any(w["dirs"] for w in sets):
+        return
+    # The rest needs cards: the first set with any.
+    first = next(w["name"] for w in sets if w["dirs"])
     page.goto(f"{base}#tree={tree}&view=watched&flat=1")
     page.wait_for_timeout(SETTLE_MS)
-    n = page.locator("#cards .trend-card").count()
-    assert n == watched, f"tree {tree}: {n} cards, trees.json says {watched}"
-    assert shown + hidden == n, f"tree {tree}: {shown} shown + {hidden} hidden != {n}"
+    page.select_option("#set", first)
+    page.wait_for_timeout(SETTLE_MS)
 
     # Drag the slider's left handle a third of the way; cards follow.
     before = page.inner_text("#watch-range")
@@ -652,7 +716,9 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         page.select_option("#tree", str(other))
         page.wait_for_timeout(SETTLE_MS)
         assert "view=watched" in state(), f"tree {tree}: tree change left Watched"
-        page.goto(f"{base}#tree={tree}&view=watched")
+        page.goto(f"{base}#tree={tree}&view=watched&flat=1")
+        page.wait_for_timeout(SETTLE_MS)
+        page.select_option("#set", first)
         page.wait_for_timeout(SETTLE_MS)
     page.locator("#cards .trend-card").first.click()
     page.wait_for_timeout(SETTLE_MS)
@@ -692,6 +758,7 @@ def main() -> int:
             check_model,
             check_fixture,
             check_watched,
+            check_watch_sets,
             check_sort_and_unchanged,
             check_watched_resize,
             check_absent_in_range,

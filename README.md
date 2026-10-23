@@ -42,7 +42,7 @@ Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
 The database is only read. See `dirhistory-generate --help` for the options:
 threshold, unit limit, watched directories, trees, output directory, and
 time resolution. `--watch FILE` names the directories of the page's Watched
-view, per tree, in a TOML file; see [deploy/watch.toml.example](deploy/watch.toml.example).
+view, in named sets per tree, in a TOML file; see [deploy/watch.toml.example](deploy/watch.toml.example).
 By
 default the last 7 days keep hourly points (`--recent`, `--min-bucket`),
 and older history gets coarser points so a tree has at most 400
@@ -81,7 +81,8 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Control | Effect |
 |---|---|
 | Tree | Which sampled tree to show. |
-| View | *Units*: the stacked chart of units (the rows below). *Watched*: a trend card per watched dir (`--watch`), each on its own scale; click one to see its units. Shown when any tree has watched dirs. |
+| View | *Units*: the stacked chart of units (the rows below). *Watched*: a trend card per watched dir of a watch set (`--watch`), each on its own scale; click one to see its units. Shown when any tree has watched dirs. |
+| Set | Watched view: which of the tree's watch sets to show, with its number of dirs. Changing the tree shows its first set. |
 | Group by | Sum units into their ancestor N levels down; click a group (in the legend or the chart) to show its units, and the path above the chart to go back. |
 | Bands | How many bands to name (up to 8); the rest are *Smaller units*. |
 | Min peak | Bands whose peak in the shown range is smaller join *Smaller units* (e.g. `1TiB`). |
