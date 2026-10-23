@@ -85,6 +85,9 @@ export function decodeValue(text) {
   return out;
 }
 
+/** S with HTML's special characters escaped, for ECharts tooltip HTML. */
+export const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
 /** Bytes as a short IEC string, e.g. "1.2 TiB". */
 export function formatBytes(bytes) {
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
@@ -183,6 +186,35 @@ function bandLabel(g, data, inPath) {
   }
   const n = g.units.length;
   return `${rel}/ (${n} unit${n === 1 ? "" : "s"})`;
+}
+
+/**
+ * Shape DATA's watched dirs into trend cards for RANGE ([first, last] point
+ * indexes), in DATA.watched order.
+ *
+ * Returns [{path, values, start, end, change, lo, hi}]: values is the dir's
+ * whole rbytes series (null: absent); start and end its bytes at the range's
+ * ends, absent counting as 0 (as for units), and change = end - start; lo
+ * and hi bound its values within the range, both null if it is absent
+ * throughout. A file without watched dirs gives [].
+ */
+export function trendCards(data, range) {
+  const [a, b] = range;
+  return (data.watched ?? []).map((path) => {
+    const values = data.rbytes[path];
+    const shown = values.slice(a, b + 1).filter((v) => v !== null);
+    const start = values[a] ?? 0;
+    const end = values[b] ?? 0;
+    return {
+      path,
+      values,
+      start,
+      end,
+      change: end - start,
+      lo: shown.length ? Math.min(...shown) : null,
+      hi: shown.length ? Math.max(...shown) : null,
+    };
+  });
 }
 
 /**

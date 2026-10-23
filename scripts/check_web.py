@@ -123,6 +123,55 @@ def check_fixture(page: Page, base: str) -> None:
     assert not any(r.startswith("x") for r in legend(page)), "hide lost on reload"
 
 
+def check_model(page: Page, base: str) -> None:
+    """Pure model functions, called in the page."""
+    page.goto(base)
+    page.wait_for_timeout(SETTLE_MS)
+    cards = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const data = {times: ["t0", "t1", "t2"], watched: ["a", "gone", "flat"],
+              rbytes: {a: [10, 30, 20], gone: [5, null, null], flat: [7, 7, 7]}};
+            return m.trendCards(data, [0, 2]);
+        }"""
+    )
+    assert [c["path"] for c in cards] == ["a", "gone", "flat"], "cards out of order"
+    a, gone, flat = cards
+    assert (a["start"], a["end"], a["change"]) == (10, 20, 10), f"change: {a}"
+    assert (a["lo"], a["hi"]) == (10, 30), f"scale: {a}"
+    assert (gone["end"], gone["change"]) == (0, -5), f"absent end: {gone}"
+    assert flat["lo"] == flat["hi"] == 7, f"flat scale: {flat}"
+    zoomed = page.evaluate(
+        """async () => (await import("./js/model.js")).trendCards(
+            {times: ["t0", "t1", "t2"], watched: ["a"], rbytes: {a: [10, 30, 20]}},
+            [1, 2])"""
+    )
+    assert (zoomed[0]["lo"], zoomed[0]["change"]) == (20, -10), "scale not by range"
+    absent = page.evaluate(
+        """async () => (await import("./js/model.js")).trendCards(
+            {times: ["t0", "t1"], watched: ["x"], rbytes: {x: [null, null]}}, [0, 1])"""
+    )
+    assert absent[0]["lo"] is None and absent[0]["hi"] is None, f"absent: {absent}"
+    none = page.evaluate(
+        """async () => (await import("./js/model.js")).trendCards(
+            {times: ["t0"], rbytes: {}}, [0, 0])"""
+    )
+    assert none == [], "a file without `watched` must give no cards"
+    scales = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const {trendCardOption} = await import("./js/charts/trendCard.js");
+            const data = {times: ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z"],
+              watched: ["flat", "gone"], rbytes: {flat: [7, 7], gone: [null, null]}};
+            return m.trendCards(data, [0, 1]).map((c) => {
+              const y = trendCardOption(data, c, {colors: {}, range: [0, 1]}).yAxis;
+              return [y.min, y.max];
+            });
+        }"""
+    )
+    assert scales == [[6, 8], [0, 1]], f"flat or absent card scale: {scales}"
+
+
 def slow_fetch(page: Page, file: str, ms: int = SETTLE_MS) -> None:
     """Make the page's fetches of data/FILE take MS longer."""
     page.add_init_script(f"""{{
@@ -301,6 +350,7 @@ def main() -> int:
     ):
         browser = pw.chromium.launch(executable_path=args.chrome)
         for check in (
+            check_model,
             check_fixture,
             check_slow_tree,
             check_slow_index,

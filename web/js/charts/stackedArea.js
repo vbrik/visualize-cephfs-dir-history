@@ -1,6 +1,6 @@
 // View 2a: stacked area of unit own sizes over time (ECharts).
 
-import { formatBytes, formatDelta } from "../model.js";
+import { escapeHtml, formatBytes, formatDelta } from "../model.js";
 
 /**
  * Return the ECharts option for MODEL (from model.stack) on DATA's times.
@@ -62,9 +62,6 @@ export function stackedAreaOption(data, model, { colors, showRest, range }) {
     })),
   };
 }
-
-const escapeHtml = (s) =>
-  s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 function tooltip(i, layers, data, model, [a], showRest) {
   const when = new Date(data.times[i]).toLocaleString();

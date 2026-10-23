@@ -1,5 +1,8 @@
 /* Tokens. Page colors follow the warm design reference; series colors are
-   the validated 8-slot categorical palette (light and dark steps). */
+   the validated 8-slot categorical palette (light and dark steps). Trend
+   cards color by direction (growth, shrinkage, no change): a warm/cool pair
+   validated for color-vision deficiency against --page, plus fills behind
+   them. The mock's sage failed that check beside terracotta. */
 :root {
   color-scheme: light;
   --page: #f5ead8;
@@ -20,6 +23,12 @@
   --series-6: #008300;
   --series-7: #6250d6;
   --series-8: #e34948;
+  --grow: #b2622d;
+  --grow-fill: #f2d6c3;
+  --shrink: #2a78d6;
+  --shrink-fill: #d3e3f6;
+  --flat: #82796a;
+  --flat-fill: #e8e0d2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,6 +52,12 @@
     --series-6: #008300;
     --series-7: #9085e9;
     --series-8: #e66767;
+    --grow: #c96a33;
+    --grow-fill: #44271a;
+    --shrink: #3987e5;
+    --shrink-fill: #1a2f4a;
+    --flat: #9a9283;
+    --flat-fill: #2e2b25;
   }
 }
 
