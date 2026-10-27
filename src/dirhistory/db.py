@@ -102,21 +102,18 @@ def changed_paths(conn: psycopg.Connection, later: list[int]) -> set[bytes]:
     return {bytes(path) for (path,) in rows}
 
 
-def sample_rows(
-    conn: psycopg.Connection, sample_id: int
-) -> Iterator[tuple[bytes, int | None]]:
-    """Stream (path, rbytes) of every row of a sample.
+def sample_paths(conn: psycopg.Connection, sample_id: int) -> Iterator[bytes]:
+    """Stream the path of every row of a sample.
 
     Needs an open transaction: it uses a server-side cursor.
     """
-    with conn.cursor(name="sample_rows") as cur:
+    with conn.cursor(name="sample_paths") as cur:
         cur.itersize = STREAM_ROWS
         cur.execute(
-            "SELECT path, rbytes FROM trackdir.dir_state WHERE sample_id = %s",
-            (sample_id,),
+            "SELECT path FROM trackdir.dir_state WHERE sample_id = %s", (sample_id,)
         )
-        for path, rbytes in cur:
-            yield bytes(path), rbytes
+        for (path,) in cur:
+            yield bytes(path)
 
 
 def path_rows(

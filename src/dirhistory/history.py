@@ -2,21 +2,17 @@
 
 Pure logic, no database: the caller supplies samples and dir_state rows.
 
-rbytes covers a directory's whole subtree, so the series of nested
-directories overlap. Charts stack *own sizes* instead: a directory's rbytes
-minus its direct children's rbytes, i.e. the bytes of its own files (all of
-it for a leaf). Own sizes never overlap and sum to ROOT's rbytes. A *unit* is
-a directory whose own size changed by at least a threshold; see summarize.
+The series kept are the rbytes of the *stored* directories: those the tree's
+sets cover (sets.Matcher). The page derives the bands and cards it draws from
+them, including a directory's own-files size (its rbytes minus its stored
+subdirectories'), so no own sizes are computed here.
 """
 
-from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from itertools import islice
-from statistics import median
 
-from dirhistory.watch import MAX_WATCHED, Matcher, Watched, WatchSet, select
+from dirhistory.sets import MAX_DIRS, DirSet, Matcher, SetDirs, TooManyDirs, select
 
 ROOT = b"."
 
@@ -27,9 +23,10 @@ MAX_POINTS = 400
 # visible however long the history grows.
 RECENT = timedelta(days=7)
 # The finest bucket: an hour, not trackdir's typical 5-minute sampling
-# interval. A parent's rbytes can lag its children's within a sample, and one
-# sample per hour exposes far fewer lagging samples (summarize smooths out
-# the rest).
+# interval. A parent's rbytes can lag its children's within a sample, which
+# shows as a one-point dip in the page's own-files band (the parent's rbytes
+# minus its subdirectories'). One sample per hour exposes far fewer lagging
+# samples.
 MIN_BUCKET = timedelta(hours=1)
 
 # Coarser bucket widths for older history, finest first.
@@ -50,28 +47,18 @@ class Sample:
 
 
 @dataclass(frozen=True, slots=True)
-class Unit:
-    """A directory whose own size changed significantly.
-
-    own: bytes of its own files per time point, clamped at 0; 0 while absent.
-    leaf: whether it has no sampled subdirectories (none ever, or it is at
-    the tree's max depth), so own is its whole rbytes.
-    """
-
-    own: list[int]
-    leaf: bool
-
-
-@dataclass(frozen=True, slots=True)
 class TreeHistory:
-    """A tree's chosen time points, its units, its watched dirs per watch set
-    (in config order), and the rbytes series of ROOT, the units, the watched
-    dirs, and their ancestors."""
+    """A tree's chosen time points, its sets' dirs (in config order), the
+    rbytes series of every stored dir, and the dirs to split.
+
+    split: the sorted dirs whose subdirectories are all stored, so the page
+    can replace such a dir by them.
+    """
 
     times: list[datetime]
     rbytes: dict[bytes, Series]
-    units: dict[bytes, Unit]
-    watched: list[Watched] = field(default_factory=list)
+    sets: list[SetDirs]
+    split: list[bytes]
 
 
 def parent(path: bytes) -> bytes:
@@ -152,108 +139,48 @@ def _last_per_bucket(samples: Sequence[Sample], width: timedelta) -> list[Sample
 def summarize(
     samples: Sequence[Sample],
     changed: set[bytes],
-    first: Iterable[tuple[bytes, int | None]],
+    first: Iterable[bytes],
     fetch: Callable[[set[bytes]], Iterable[Row]],
-    threshold: int,
-    limit: int,
     resolution: Resolution = DEFAULT_RESOLUTION,
-    watch: Sequence[WatchSet] = (),
-    watch_limit: int = MAX_WATCHED,
+    sets: Sequence[DirSet] = (),
+    max_dirs: int = MAX_DIRS,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
 
     CHANGED holds the paths with a row in any sample after the first. FIRST
-    yields (path, rbytes) for the first sample's rows. FETCH(paths) yields
-    every row of PATHS, ordered as SAMPLES are. Both are read once, so they
-    may stream. RESOLUTION picks the time points.
+    yields the paths of the first sample's rows. FETCH(paths) yields every
+    row of PATHS, ordered as SAMPLES are. Both are read once, so they may
+    stream. RESOLUTION picks the time points.
 
-    A path outside CHANGED has its single row in the first sample, so its
-    value is constant, and only CHANGED paths and their parents can change
-    own size. A unit is such a directory whose own size ranges by at least
-    THRESHOLD bytes over the chosen points. At most LIMIT units are kept,
-    widest range first, ties by path.
+    The stored dirs are the paths, among the first sample's and CHANGED, that
+    SETS cover (sets.Matcher). A path outside CHANGED has its single row in
+    the first sample, so a never-changed dir gets a constant series. More
+    than MAX_DIRS stored dirs raise sets.TooManyDirs before any series is
+    fetched.
 
-    A directory with changed children subtracts their rbytes, which CephFS
-    may not yet have propagated to the directory's own rbytes, so its own
-    size can dip for one point. Its range is taken over a 3-point running
-    median, which drops such dips. Other directories cannot dip that way, so
-    their raw range counts, including changes that last one point.
-
-    Each of the tree's watch sets in WATCH has as watched dirs the paths,
-    among the first sample's and CHANGED, that its patterns match; more than
-    WATCH_LIMIT in a set raises watch.TooManyWatched before any series is
-    fetched. The watched dirs' series and their ancestors' are kept, once
-    however many sets hold them, so the page can drill into a watched dir
-    and up its path, even when they never changed and are not units.
+    A dir is split when it is stored with at least one level below it, i.e.
+    all its subdirectories are stored too.
     """
     points = choose_points(samples, resolution)
-    dirs = changed | {parent(p) for p in changed if p != ROOT}
-    # One matcher for all sets: FIRST can be read only once.
-    matcher = Matcher([p.parts for s in watch for p in s.patterns])
-    visit = matcher.add if matcher.wants else None
-    constant, has_children = _children(first, changed, dirs, visit)
-    if visit:
+    matcher = Matcher(sets)
+    if matcher.wants:
+        for path in first:
+            matcher.add(path)
         for path in changed:
-            visit(path)
-    matches = iter(matcher.matches())
-    watched = [
-        select(s.name, list(islice(matches, len(s.patterns))), watch_limit)
-        for s in watch
-    ]
-    paths = {p for w in watched for p in w.paths}
-    shown = paths | {a for p in paths for a in ancestors(p)}
-    wanted = {ROOT} | changed | {a for p in changed for a in ancestors(p)} | shown
-    rbytes = _replay(samples, points, fetch(wanted))
-
-    children = defaultdict(list)
-    for path in changed - {ROOT}:
-        children[parent(path)].append(path)
-    own = {d: _own(d, rbytes, constant[d], children[d], len(points)) for d in dirs}
-
-    ranges = {
-        d: _range(_running_median(s) if children[d] else s) for d, s in own.items()
-    }
-    picked = sorted(
-        (d for d, r in ranges.items() if r >= threshold), key=lambda d: (-ranges[d], d)
-    )[:limit]
-    units = {
-        d: Unit([max(v, 0) for v in own[d]], d not in has_children)
-        for d in sorted(picked)
-    }
-    kept = {ROOT} | set(units) | {a for u in units for a in ancestors(u)} | shown
+            matcher.add(path)
+    stored = matcher.stored()
+    if len(stored) > max_dirs:
+        counts = list(zip((s.name for s in sets), matcher.counts(), strict=True))
+        raise TooManyDirs(len(stored), max_dirs, counts)
+    matches = matcher.matches()
+    rbytes = _replay(samples, points, fetch(set(stored)))
+    split = {parent(p) for p in stored if p != ROOT and stored.get(parent(p), -1) >= 1}
     return TreeHistory(
         [p.started for p in points],
-        {p: rbytes.get(p, [None] * len(points)) for p in sorted(kept)},
-        units,
-        watched,
+        {p: rbytes.get(p, [None] * len(points)) for p in sorted(stored)},
+        [select(s.name, m) for s, m in zip(sets, matches, strict=True)],
+        sorted(split),
     )
-
-
-def _children(
-    first: Iterable[tuple[bytes, int | None]],
-    changed: set[bytes],
-    dirs: set[bytes],
-    visit: Callable[[bytes], None] | None = None,
-) -> tuple[Counter[bytes], set[bytes]]:
-    """Return, for DIRS, the summed rbytes of children outside CHANGED, and
-    the DIRS that have any child. Calls VISIT, if any, with every path of
-    FIRST, so callers need not read it again.
-
-    FIRST yields the first sample's (path, rbytes); NULL rbytes count as 0.
-    """
-    constant: Counter[bytes] = Counter()
-    has_children = {parent(p) for p in changed if p != ROOT}
-    for path, rbytes in first:
-        if visit:
-            visit(path)
-        if path == ROOT:
-            continue
-        up = parent(path)
-        if up in dirs:
-            has_children.add(up)
-            if path not in changed:
-                constant[up] += rbytes or 0
-    return constant, has_children
 
 
 def _replay(
@@ -287,35 +214,3 @@ def _replay(
     if row is not None:
         raise ValueError(f"a row of sample {row[0]} is out of sample order")
     return series
-
-
-def _own(
-    path: bytes,
-    rbytes: dict[bytes, Series],
-    constant: int,
-    children: list[bytes],
-    n: int,
-) -> list[int]:
-    """Return PATH's own size per point, unclamped; 0 while it is absent.
-
-    Its changed CHILDREN's values come from RBYTES; CONSTANT is the sum of
-    the others. Absent children count as 0.
-    """
-    mine = rbytes.get(path, [None] * n)
-    kids = [rbytes.get(c, [None] * n) for c in children]
-    return [
-        0 if mine[i] is None else mine[i] - constant - sum(k[i] or 0 for k in kids)
-        for i in range(n)
-    ]
-
-
-def _running_median(values: list[int]) -> list[float]:
-    """Return the 3-point running median of VALUES; the ends stay as they are."""
-    if len(values) < 3:
-        return list(values)
-    inner = [median(values[i - 1 : i + 2]) for i in range(1, len(values) - 1)]
-    return [values[0], *inner, values[-1]]
-
-
-def _range(values: list[float]) -> float:
-    return max(values) - min(values) if values else 0
