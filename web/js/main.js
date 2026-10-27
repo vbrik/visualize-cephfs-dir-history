@@ -1,7 +1,7 @@
 // Page controller: loads data files, keeps view state in the URL hash, and
-// renders the controls and the shown view: Units (the stacked chart, its
-// legend and its table) or Watched (a watch set's trend cards and their
-// range slider).
+// renders the controls and the shown view of the chosen set: Stack (the
+// stacked chart of its dirs' bands, its legend and its table) or Trends (its
+// dirs' trend cards and their range slider).
 
 import { rangeSliderOption } from "./charts/rangeSlider.js";
 import { stackedAreaOption } from "./charts/stackedArea.js";
@@ -14,13 +14,15 @@ import {
   encodeValue,
   formatBytes,
   formatDelta,
-  hideKey,
   indexRange,
-  isUnder,
   layerAt,
-  parseSize,
+  maxDepth,
+  normalize,
+  reachable,
+  relative,
+  setDirOf,
   sortCards,
-  stack,
+  stackBands,
   trendCards,
   unchanged,
 } from "./model.js";
@@ -29,19 +31,17 @@ import {
 const REFRESH_MS = 10 * 60 * 1000;
 const DEFAULTS = {
   tree: null,
-  view: "units",
-  group: 0,
-  in: ROOT,
+  view: "stack",
+  set: null, // the tree's first set, "Top level"
+  depth: 0,
   top: MAX_BANDS,
-  min: "",
+  in: "", // the drilled-into dir; "": none, the set's dirs are shown
   hide: [],
-  rest: false,
-  set: null, // the tree's first watch set
   sort: "span",
   flat: false,
 };
-// The Units view's state keys, which its Reset restores.
-const UNITS_KEYS = ["in", "group", "top", "min", "hide", "rest"];
+// The Stack view's state keys, which its Reset restores.
+const STACK_KEYS = ["depth", "top", "in", "hide"];
 const SVG = "http://www.w3.org/2000/svg";
 
 const $ = (id) => document.getElementById(id);
@@ -49,29 +49,29 @@ const chart = echarts.init($("chart"), null, { renderer: "canvas" });
 let index = [];
 let data = null; // the current tree file
 let range = null; // [a, b] point indexes shown by the zoom slider
-let model = null; // the bands drawn, from model.stack
+let model = null; // the bands drawn, from model.stackBands
 const slots = new Map(); // view key -> Map(band key -> palette slot)
-// The Watched view's slider, made when it is first shown: ECharts sizes a
+// The Trends view's slider, made when it is first shown: ECharts sizes a
 // chart from its element, which is 0×0 while hidden.
 let slider = null;
-const cardEls = new Map(); // watched path -> its card element
+const cardEls = new Map(); // set dir -> its card element
 const cardOf = new WeakMap(); // shown card element -> its card (model.trendCards)
 let sparkX = []; // the sparklines' point x's, from sparkXs
 
 // --- state <-> URL hash ---------------------------------------------------
 
+// Keys of older pages (group, min, rest; view=units or watched) are ignored.
 function readState() {
   const p = parseHash(location.hash.slice(1));
   return {
     tree: p.has("tree") ? Number(p.get("tree")) : (index[0]?.id ?? null),
-    view: p.get("view") === "watched" ? "watched" : "units",
-    group: clampInt(p.get("group"), 0, 16, DEFAULTS.group),
-    in: p.get("in") || DEFAULTS.in,
-    top: clampInt(p.get("top"), 1, MAX_BANDS, DEFAULTS.top),
-    min: p.get("min") ?? DEFAULTS.min,
-    hide: p.getAll("hide"),
-    rest: p.get("rest") === "1",
+    view: p.get("view") === "trends" ? "trends" : "stack",
     set: p.get("set") ?? DEFAULTS.set,
+    // Clamped to the levels stored when rendering, which needs the data.
+    depth: clampInt(p.get("depth"), 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth),
+    top: clampInt(p.get("top"), 1, MAX_BANDS, DEFAULTS.top),
+    in: p.get("in") ?? DEFAULTS.in,
+    hide: p.getAll("hide"),
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
     flat: p.get("flat") === "1",
   };
@@ -81,13 +81,11 @@ function writeState(changes) {
   const s = { ...readState(), ...changes };
   const p = [["tree", s.tree]];
   if (s.view !== DEFAULTS.view) p.push(["view", s.view]);
-  if (s.group !== DEFAULTS.group) p.push(["group", s.group]);
-  if (s.in !== ROOT) p.push(["in", s.in]);
-  if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
-  if (s.min) p.push(["min", s.min]);
-  for (const h of s.hide) p.push(["hide", h]);
-  if (s.rest) p.push(["rest", "1"]);
   if (s.set !== DEFAULTS.set) p.push(["set", s.set]);
+  if (s.depth !== DEFAULTS.depth) p.push(["depth", s.depth]);
+  if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
+  if (s.in) p.push(["in", s.in]);
+  for (const h of s.hide) p.push(["hide", h]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
   if (s.flat) p.push(["flat", "1"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
@@ -128,7 +126,7 @@ async function load(treeId) {
   const entry = index.find((t) => t.id === treeId);
   if (!entry) throw new Error(`no tree ${treeId} in data/trees.json`);
   if (data?.tree.id === treeId && data.generated === entry.generated) return null;
-  const fresh = await fetchJson(entry.file);
+  const fresh = normalize(await fetchJson(entry.file));
   if (data?.tree.id !== treeId || range === null || range[0] === 0) {
     return { data: fresh, range: [0, fresh.times.length - 1] };
   }
@@ -176,8 +174,6 @@ function colors() {
   const v = (name) => css.getPropertyValue(name).trim();
   return {
     palette: Array.from({ length: MAX_BANDS }, (_, i) => v(`--series-${i + 1}`)),
-    smaller: v("--band-smaller"),
-    rest: v("--band-rest"),
     surface: v("--surface"),
     ink: v("--ink"),
     muted: v("--muted"),
@@ -185,14 +181,8 @@ function colors() {
   };
 }
 
-/** Whether any tree has watched dirs, i.e. the Watched view exists. */
-const anyWatched = () => index.some((t) => t.watched.some((w) => w.dirs > 0));
-
-/** The loaded tree's watch set that S names, else its first; null if none. */
-const watchSet = (s) => {
-  const sets = data?.watched ?? [];
-  return sets.find((w) => w.name === s.set) ?? sets[0] ?? null;
-};
+/** The loaded tree's set that S names, else its first ("Top level"). */
+const currentSet = (s) => data.sets.find((set) => set.name === s.set) ?? data.sets[0];
 
 /** Colors per band key: survivors keep their slot, newcomers take free ones. */
 function bandColors(viewKey, bands, palette) {
@@ -207,125 +197,114 @@ function bandColors(viewKey, bands, palette) {
 
 function render() {
   const s = readState();
-  const view = s.view === "watched" && anyWatched() ? "watched" : "units";
-  document.body.dataset.view = view;
-  renderControls(s, view);
+  document.body.dataset.view = s.view;
+  renderControls(s);
   if (!data) return;
-  if (view === "watched") renderWatched(s);
-  else renderUnits(s);
+  const set = currentSet(s);
+  $("stack-empty").hidden = set.paths.length > 0;
+  if (s.view === "trends") renderTrends(s, set);
+  else renderStack(s, set);
 }
 
-function renderUnits(s) {
+/** The Stack view of SET: its dirs' bands, or those of S.in if drilling
+ * can reach it from them. */
+function renderStack(s, set) {
+  const inPath = s.in && reachable(data, set.paths, s.in) ? s.in : null;
+  renderCrumbs(set, inPath);
+  $("stack-body").hidden = set.paths.length === 0;
+  if (!set.paths.length) {
+    model = null;
+    return;
+  }
   chart.resize(); // it may have been hidden, and so 0×0
-  const minBytes = parseSize(s.min || "0");
-  $("min").setAttribute("aria-invalid", minBytes === null);
-  const inPath = Object.hasOwn(data.rbytes, s.in) ? s.in : ROOT;
+  const roots = inPath === null ? set.paths : [inPath];
+  const levels = maxDepth(data, roots);
+  const depth = Math.min(s.depth, levels);
+  $("depth").max = levels;
+  $("depth").value = depth;
 
-  model = stack(data, {
-    inPath,
-    group: s.group,
-    top: s.top,
-    min: minBytes ?? 0,
-    hidden: s.hide,
-    range,
-  });
+  model = stackBands(data, { roots, base: inPath, depth, top: s.top, hidden: s.hide, range });
   const c = colors();
-  c.bands = bandColors(`${data.tree.id}|${s.group}|${inPath}`, model.bands, c.palette);
+  // Keyed without Depth and Top, so bands keep their colors when those change.
+  c.bands = bandColors(`${data.tree.id}|${set.name}|${inPath}`, model.bands, c.palette);
 
   // A tooltip left open over series that are being replaced would throw.
   chart.dispatchAction({ type: "hideTip" });
-  chart.setOption(stackedAreaOption(data, model, { colors: c, showRest: s.rest, range }), {
-    replaceMerge: ["series"],
-  });
+  chart.setOption(stackedAreaOption(data, model, { colors: c, range }), { replaceMerge: ["series"] });
   zoomTo(chart);
 
-  renderCrumbs(inPath);
   renderLegend(model, c, s);
-  renderTable(model, c, s);
+  renderTable(model);
   renderChips(s.hide);
-  renderSummary(inPath);
+  renderSummary(s, set, inPath);
 }
 
-function renderControls(s, view) {
-  $("view").hidden = !anyWatched();
+function renderControls(s) {
   for (const b of $("view").querySelectorAll("button")) {
-    b.setAttribute("aria-pressed", b.dataset.view === view);
+    b.setAttribute("aria-pressed", b.dataset.view === s.view);
   }
   const tree = $("tree");
   tree.replaceChildren(
     ...index.map((t) => {
-      const o = new Option(`${t.label} — ${t.units} units`, t.id, false, t.id === s.tree);
+      const o = new Option(t.label, t.id, false, t.id === s.tree);
       o.title = t.detail;
       return o;
     }),
   );
-  const group = $("group");
-  const levels = data ? data.tree.max_depth : 0;
-  group.replaceChildren(
-    new Option("none: one band per unit", 0),
-    ...Array.from({ length: levels }, (_, i) => new Option(`${i + 1} level${i ? "s" : ""} down`, i + 1)),
-  );
-  group.value = String(Math.min(s.group, levels));
   $("top").value = s.top;
-  $("top").max = MAX_BANDS;
-  if (document.activeElement !== $("min")) $("min").value = s.min;
-  $("rest").checked = s.rest;
   const sort = $("sort");
   if (!sort.options.length) {
     sort.append(...Object.entries(CARD_SORTS).map(([key, [label]]) => new Option(label, key)));
   }
   sort.value = s.sort;
   $("flat").checked = s.flat;
-  const sets = data?.watched ?? [];
-  $("set-label").hidden = sets.length === 0;
   $("set").replaceChildren(
-    ...sets.map((w) => {
-      const n = w.paths.length;
-      return new Option(`${w.name} — ${n} dir${n === 1 ? "" : "s"}`, w.name);
+    ...(data?.sets ?? []).map((set) => {
+      const n = set.paths.length;
+      return new Option(`${set.name} — ${n} dir${n === 1 ? "" : "s"}`, set.name);
     }),
   );
-  $("set").value = watchSet(s)?.name ?? "";
+  $("set").value = data ? currentSet(s).name : "";
 }
 
-function renderCrumbs(inPath) {
-  const parts = inPath === ROOT ? [] : inPath.split("/");
-  const crumbs = [button(data.tree.fs_path, () => writeState({ in: ROOT }), inPath === ROOT)];
-  parts.forEach((name, i) => {
-    const path = parts.slice(0, i + 1).join("/");
-    crumbs.push(text(" / "), button(name, () => writeState({ in: path }), i === parts.length - 1));
-  });
+/** Crumbs: the set, then (when drilled) the set dir holding INPATH, as one
+ * crumb, and each component below it. */
+function renderCrumbs(set, inPath) {
+  const crumbs = [button(`Set ${set.name}`, () => writeState({ in: "", depth: 0 }), inPath === null)];
+  if (inPath !== null) {
+    const top = setDirOf(set.paths, inPath);
+    const below = relative(inPath, top);
+    const parts = below === ROOT ? [] : below.split("/");
+    const name = top === ROOT ? data.tree.fs_path : top;
+    crumbs.push(text(" / "), button(name, () => drill(top), parts.length === 0));
+    parts.forEach((part, i) => {
+      const path = [top, ...parts.slice(0, i + 1)].filter((p) => p !== ROOT).join("/");
+      crumbs.push(text(" / "), button(part, () => drill(path), i === parts.length - 1));
+    });
+  }
   $("crumbs").replaceChildren(...crumbs);
 }
+
+/** Show the bands inside DIR, one level down. */
+const drill = (dir) => writeState({ in: dir, depth: 1 });
 
 function renderLegend(model, c, s) {
   const [, b] = range;
   const items = model.bands.map((band) => {
     const li = document.createElement("li");
-    const name = band.drillable
-      ? button(band.label, () => writeState({ in: band.key }))
-      : text(band.label);
-    if (band.drillable) name.title = `Show the units in ${band.key}`;
-    li.append(swatch(c.bands.get(band.key)), name, value(band.values[b]), hideButton(hideKey(band), s));
+    const name = band.drillable ? button(band.label, () => drill(band.dir)) : text(band.label);
+    name.classList.add("label");
+    if (band.drillable) name.title = `Split ${absolute(band.dir)} into its subdirectories`;
+    li.append(swatch(c.bands.get(band.key)), name, value(band.values[b]), hideButton(band, s));
     return li;
   });
-  const smaller = document.createElement("li");
-  smaller.append(swatch(c.smaller), text(`Smaller units`), value(model.smaller[b]));
-  items.push(smaller);
-  if (s.rest) {
-    const rest = document.createElement("li");
-    rest.append(swatch(c.rest), text("Rest of tree"), value(model.rest[b]));
-    items.push(rest);
-  }
   $("legend").replaceChildren(...items.reverse());
 }
 
-function renderTable(model, c, s) {
+function renderTable(model) {
   const [a, b] = range;
-  const rows = model.bands.map((band) => [band.label, band.values]);
-  rows.push(["Smaller units", model.smaller]);
-  if (s.rest) rows.push(["Rest of tree", model.rest]);
   $("table-body").replaceChildren(
-    ...rows.map(([label, values]) => {
+    ...model.bands.map(({ label, values }) => {
       const tr = document.createElement("tr");
       for (const cell of [
         label,
@@ -345,9 +324,16 @@ function renderTable(model, c, s) {
     `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`;
 }
 
+/** A hide-list key as a name: a dir's path, or `dir/ bytes` for a dir's own files. */
+function hiddenName(key) {
+  if (!key.endsWith("/.")) return key === ROOT ? data.tree.fs_path : key;
+  const dir = key.slice(0, -2);
+  return `${dir === ROOT ? data.tree.fs_path : dir}/ bytes`;
+}
+
 function renderChips(hide) {
-  const chips = hide.map((path) => {
-    const chip = button(`${path} ✕`, () => writeState({ hide: hide.filter((h) => h !== path) }));
+  const chips = hide.map((key) => {
+    const chip = button(`${hiddenName(key)} ✕`, () => writeState({ hide: hide.filter((h) => h !== key) }));
     chip.className = "chip";
     chip.title = "Show again";
     return chip;
@@ -361,44 +347,41 @@ function absolute(path) {
   return path === ROOT ? data.tree.fs_path : `${data.tree.fs_path}/${path}`;
 }
 
-function renderSummary(inPath) {
+function renderSummary(s, set, inPath) {
   const b = range[1];
-  const total = data.rbytes[inPath][b] ?? 0;
-  const units = Object.keys(data.units).filter((u) => isUnder(u, inPath));
-  const where = absolute(inPath);
+  const total = model.bands.reduce((sum, band) => sum + band.values[b], 0);
+  const n = model.bands.length;
+  const k = set.paths.length;
+  const where = inPath === null ? set.name : absolute(inPath);
+  // At Top's max, raising it cannot help; hiding bands or drilling in can.
+  const cut = model.cut ? `, ${model.cut} more not shown${s.top < MAX_BANDS ? " (raise Top)" : ""}` : "";
   $("summary").textContent =
-    `${where}: ${formatBytes(total)} in total, ${units.length ? `${units.length} units` : "no units here"}`
-    + ` (own size changed by ≥ ${formatBytes(data.threshold)}). Data generated ${new Date(data.generated).toLocaleString()}.`;
-  $("chart").setAttribute(
-    "aria-label",
-    `Stacked area of own sizes under ${where}; values are in the table below.`,
-  );
+    `${where}: ${formatBytes(total)} in ${n} band${n === 1 ? "" : "s"}${cut}; `
+    + `set ${set.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
+  $("chart").setAttribute("aria-label", `Stacked area of directory sizes in ${where}; values are in the table below.`);
 }
 
-/** The Watched view: the cards of S's watch set, minus unchanged ones
- * unless S.flat. */
-function renderWatched(s) {
+/** The Trends view: the cards of SET's dirs, minus unchanged ones unless
+ * S.flat. */
+function renderTrends(s, set) {
   const [a, b] = range;
-  const set = watchSet(s);
-  const all = trendCards(data, set?.paths ?? [], range);
+  const all = trendCards(data, set.paths, range);
   const cards = sortCards(s.flat ? all : all.filter((card) => !unchanged(card)), s.sort);
   const hidden = all.length - cards.length;
   hideSparkTip();
-  $("watch-note").hidden = set !== null;
-  $("watch-empty").hidden = set === null || all.length > 0;
   $("watch-range").textContent = all.length
     ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
     : "";
   $("watch-hidden").hidden = hidden === 0;
   $("watch-hidden").textContent = cards.length === 0
-    ? `All ${hidden} watched directories are unchanged in this range; check Show unchanged to see them.`
+    ? `All ${hidden} directories are unchanged in this range; check Show unchanged to see them.`
     : hidden === 1
       ? "1 directory unchanged in this range is hidden."
       : `${hidden} directories unchanged in this range are hidden.`;
 
   sparkX = sparkXs(data.times, range);
-  const watched = new Set(all.map((card) => card.path));
-  for (const path of cardEls.keys()) if (!watched.has(path)) cardEls.delete(path);
+  const shown = new Set(all.map((card) => card.path));
+  for (const path of cardEls.keys()) if (!shown.has(path)) cardEls.delete(path);
   $("cards").replaceChildren(...cards.map((card) => cardEls.get(card.path) ?? newCard(card.path)));
   for (const card of cards) {
     const el = cardEls.get(card.path);
@@ -423,11 +406,20 @@ function renderWatched(s) {
     slider.on("datazoom", () => followZoom(slider));
   }
   slider.resize();
-  slider.setOption(rangeSliderOption(data, { colors: colors() }), { replaceMerge: ["series"] });
+  slider.setOption(rangeSliderOption(data, { colors: colors(), shadow: setTotal(set) }), {
+    replaceMerge: ["series"],
+  });
   zoomTo(slider);
 }
 
-/** A trend card element for PATH; its content is filled by renderWatched. */
+/** SET's dirs' summed rbytes per point (absent as 0): the slider's shadow. */
+function setTotal(set) {
+  const total = new Array(data.times.length).fill(0);
+  for (const path of set.paths) data.rbytes[path].forEach((v, i) => (total[i] += v ?? 0));
+  return total;
+}
+
+/** A trend card element for PATH; its content is filled by renderTrends. */
 function newCard(path) {
   const el = document.createElement("div");
   el.tabIndex = 0;
@@ -443,7 +435,8 @@ function newCard(path) {
   cursor.setAttribute("y2", HEIGHT);
   spark.append(svg("path", "fill"), svg("path", "line"), cursor);
   el.append(head, spark, Object.assign(text(""), { className: "scale" }));
-  const open = () => writeState({ view: "units", in: path });
+  // The Stack view inside the card's dir, split one level if it can be.
+  const open = () => writeState({ view: "stack", in: path, depth: data.split.has(path) ? 1 : 0 });
   el.addEventListener("click", open);
   el.addEventListener("keydown", (e) => e.key === "Enter" && open());
   cardEls.set(path, el);
@@ -547,10 +540,13 @@ function value(bytes) {
   return v;
 }
 
-function hideButton(path, s) {
-  const b = button("hide", () => writeState({ hide: [...s.hide, path] }));
+/** A button that hides BAND: its key is its hide-list key (see model.stackBands). */
+function hideButton(band, s) {
+  const b = button("hide", () => writeState({ hide: [...s.hide, band.key] }));
   b.className = "hide";
-  b.title = path.endsWith("/") ? `Remove all units in ${path}` : `Remove ${path}`;
+  b.title = band.own
+    ? `Remove the files directly in ${absolute(band.dir)}`
+    : `Remove ${absolute(band.dir)} and everything in it`;
   return b;
 }
 
@@ -558,30 +554,31 @@ function hideButton(path, s) {
 
 // Enter in a field would submit the form and reload the page.
 $("controls").addEventListener("submit", (e) => e.preventDefault());
+// Set names, dirs and hides belong to a tree; a dir drilled into, to a set.
 $("tree").addEventListener("change", (e) =>
-  writeState({ tree: Number(e.target.value), in: ROOT, hide: [], set: null }),
+  writeState({ tree: Number(e.target.value), in: "", hide: [], set: null }),
 );
-$("group").addEventListener("change", (e) => writeState({ group: Number(e.target.value) }));
+$("set").addEventListener("change", (e) => writeState({ set: e.target.value, in: "" }));
+$("depth").addEventListener("change", (e) =>
+  writeState({ depth: clampInt(e.target.value, 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth) }),
+);
 $("top").addEventListener("change", (e) => writeState({ top: clampInt(e.target.value, 1, MAX_BANDS, MAX_BANDS) }));
-$("min").addEventListener("change", (e) => writeState({ min: e.target.value.trim() }));
-$("rest").addEventListener("change", (e) => writeState({ rest: e.target.checked }));
 $("reset").addEventListener("click", () =>
-  writeState(Object.fromEntries(UNITS_KEYS.map((k) => [k, DEFAULTS[k]]))),
+  writeState(Object.fromEntries(STACK_KEYS.map((k) => [k, DEFAULTS[k]]))),
 );
-$("set").addEventListener("change", (e) => writeState({ set: e.target.value }));
 $("sort").addEventListener("change", (e) => writeState({ sort: e.target.value }));
 $("flat").addEventListener("change", (e) => writeState({ flat: e.target.checked }));
 $("cards").addEventListener("pointermove", showSparkTip);
 $("cards").addEventListener("pointerleave", hideSparkTip);
 addEventListener("scroll", hideSparkTip, { passive: true });
 
-// Clicking a group's area drills into it. ECharts reports clicks on a line
-// series' line only, so find the band under the pointer from the stack.
+// Clicking a drillable band's area drills into it. ECharts reports clicks on
+// a line series' line only, so find the band under the pointer from the stack.
 chart.getZr().on("click", (e) => {
   if (!model || !chart.containPixel("grid", [e.offsetX, e.offsetY])) return;
   const [ms, bytes] = chart.convertFromPixel("grid", [e.offsetX, e.offsetY]);
   const band = model.bands[layerAt(model.bands.map((b) => b.values), data.times, ms, bytes)];
-  if (band?.drillable) writeState({ in: band.key });
+  if (band?.drillable) drill(band.dir);
 });
 chart.on("datazoom", () => followZoom(chart));
 for (const b of $("view").querySelectorAll("button")) {

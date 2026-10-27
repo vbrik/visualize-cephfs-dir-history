@@ -9,58 +9,60 @@
   <script src="vendor/echarts.min.js"></script>
   <script type="module" src="js/main.js"></script>
 </head>
-<body data-view="units">
+<body data-view="stack">
   <header>
     <h1>CephFS directory history</h1>
-    <p class="muted units-only">Which directories grow and shrink. Each band is a <em>unit</em>: a directory
-      whose own size (rbytes minus its subdirectories') changed significantly.
-      Bands never overlap, so they add up.</p>
-    <p class="muted watched-only">Each card is a watched directory's whole size (rbytes,
+    <p class="muted stack-only">Which directories grow and shrink. Each band is a directory's
+      whole size (rbytes), or, as <code>dir/ bytes</code>, the files directly in a directory
+      that Depth splits. Bands add up unless the set holds a directory and its own
+      subdirectory.</p>
+    <p class="muted trends-only">Each card is a set directory's whole size (rbytes,
       including its subdirectories) over the shown range. Each card has its own scale:
       compare shapes, not heights.</p>
   </header>
 
   <form id="controls" class="controls">
     <label>Tree <select id="tree"></select></label>
-    <div id="view" class="seg" role="group" aria-label="View" hidden>
-      <button type="button" data-view="units">Units</button><button type="button" data-view="watched">Watched</button>
+    <div id="view" class="seg" role="group" aria-label="View">
+      <button type="button" data-view="stack">Stack</button><button type="button" data-view="trends">Trends</button>
     </div>
-    <label class="units-only">Group by <select id="group"></select></label>
-    <label class="units-only">Bands <input id="top" type="number" min="1" step="1" inputmode="numeric"></label>
-    <label class="units-only">Min peak <input id="min" type="text" size="7" placeholder="e.g. 1TiB"
-      title="Bands whose peak in the shown range is smaller fold into “Smaller units”"></label>
-    <label class="check units-only"><input id="rest" type="checkbox"> Rest of tree</label>
-    <button id="reset" class="units-only" type="button">Reset</button>
-    <label id="set-label" class="watched-only">Set <select id="set"></select></label>
-    <label class="watched-only">Sort <select id="sort"></select></label>
-    <label class="check watched-only"
+    <label>Set <select id="set"></select></label>
+    <label class="stack-only"
+      title="Levels below the set's directories (or the one drilled into) to split into subdirectories">Depth
+      <input id="depth" type="number" min="0" step="1" inputmode="numeric"></label>
+    <label class="stack-only" title="Most bands to draw, the largest spans in the shown range first">Top
+      <input id="top" type="number" min="1" max="64" step="1" inputmode="numeric"></label>
+    <button id="reset" class="stack-only" type="button">Reset</button>
+    <label class="trends-only">Sort <select id="sort"></select></label>
+    <label class="check trends-only"
       title="Also show directories whose size did not change in the shown range"><input id="flat" type="checkbox"> Show unchanged</label>
   </form>
 
   <p id="error" class="error" role="alert" hidden></p>
 
   <main class="card">
-   <div class="units-only">
+   <p id="stack-empty" hidden>No directories match this set's patterns.</p>
+   <div class="stack-only">
     <nav id="crumbs" class="crumbs" aria-label="Directory"></nav>
-    <p id="summary" class="muted"></p>
-    <div class="chart-row">
-      <div id="chart" class="chart" role="img"></div>
-      <ul id="legend" class="legend" aria-label="Legend"></ul>
+    <div id="stack-body">
+     <p id="summary" class="muted"></p>
+     <div class="chart-row">
+       <div id="chart" class="chart" role="img"></div>
+       <ul id="legend" class="legend" aria-label="Legend"></ul>
+     </div>
+     <p id="hidden" class="chips" hidden>Hidden: <span id="hidden-list"></span></p>
+     <details>
+       <summary>Table <span id="table-range" class="muted"></span></summary>
+       <table>
+         <thead><tr><th>Band</th><th>Start</th><th>End</th><th>Change</th><th>Peak</th></tr></thead>
+         <tbody id="table-body"></tbody>
+       </table>
+     </details>
     </div>
-    <p id="hidden" class="chips" hidden>Hidden: <span id="hidden-list"></span></p>
-    <details>
-      <summary>Table <span id="table-range" class="muted"></span></summary>
-      <table>
-        <thead><tr><th>Band</th><th>Start</th><th>End</th><th>Change</th><th>Peak</th></tr></thead>
-        <tbody id="table-body"></tbody>
-      </table>
-    </details>
    </div>
-   <div class="watched-only">
+   <div class="trends-only">
     <p id="watch-range" class="muted"></p>
     <p id="watch-hidden" class="muted" hidden></p>
-    <p id="watch-note" hidden>No watched directories in this tree. See <code>dirhistory-generate --watch</code>.</p>
-    <p id="watch-empty" hidden>No directories match this watch set's patterns.</p>
     <div id="cards" class="cards"></div>
     <div id="watch-slider" class="watch-slider" aria-label="Time range"></div>
    </div>

@@ -1,21 +1,22 @@
-// View 2a: stacked area of unit own sizes over time (ECharts).
+// The Stack view's chart: stacked area of its bands over time (ECharts).
 
 import { escapeHtml, formatBytes, formatDelta } from "../model.js";
 
 /**
- * Return the ECharts option for MODEL (from model.stack) on DATA's times.
+ * Return the ECharts option for MODEL (from model.stackBands) on DATA's
+ * times; the first band is the bottom layer.
  *
- * colors: {bands: Map key -> color, smaller, rest, surface, ink, muted, grid}.
- * showRest: whether to draw the "Rest of tree" band. range: [a, b] point
- * indexes; the tooltip shows each value's change since point a.
+ * colors: {bands: Map key -> color, surface, ink, muted, grid}. range: [a, b]
+ * point indexes; the tooltip shows each value's change since point a.
  */
-export function stackedAreaOption(data, model, { colors, showRest, range }) {
+export function stackedAreaOption(data, model, { colors, range }) {
   const times = data.times.map((t) => Date.parse(t));
-  const layers = [
-    ...model.bands.map((b) => ({ id: b.key, name: b.label, values: b.values, color: colors.bands.get(b.key) })),
-    { id: "\0smaller", name: "Smaller units", values: model.smaller, color: colors.smaller },
-  ];
-  if (showRest) layers.push({ id: "\0rest", name: "Rest of tree", values: model.rest, color: colors.rest });
+  const layers = model.bands.map((b) => ({
+    id: b.key,
+    name: b.label,
+    values: b.values,
+    color: colors.bands.get(b.key),
+  }));
 
   return {
     animation: false,
@@ -41,7 +42,8 @@ export function stackedAreaOption(data, model, { colors, showRest, range }) {
       borderColor: colors.grid,
       textStyle: { color: colors.ink },
       confine: true,
-      formatter: (params) => tooltip(params[0].dataIndex, layers, data, model, range, showRest),
+      // params is empty when no band is drawn (all hidden).
+      formatter: (params) => (params.length ? tooltip(params[0].dataIndex, layers, data, range) : ""),
     },
     dataZoom: [
       { type: "slider", bottom: 16, height: 24, labelFormatter: "", borderColor: colors.grid },
@@ -63,7 +65,7 @@ export function stackedAreaOption(data, model, { colors, showRest, range }) {
   };
 }
 
-function tooltip(i, layers, data, model, [a], showRest) {
+function tooltip(i, layers, data, [a]) {
   const when = new Date(data.times[i]).toLocaleString();
   const rows = [...layers]
     .reverse()
@@ -71,7 +73,6 @@ function tooltip(i, layers, data, model, [a], showRest) {
   const drawn = layers.reduce((s, l) => s + l.values[i], 0);
   const drawnStart = layers.reduce((s, l) => s + l.values[a], 0);
   rows.push(row(null, "Total shown", drawn, drawn - drawnStart));
-  if (!showRest) rows.push(row(null, "Rest of tree (not drawn)", model.rest[i], model.rest[i] - model.rest[a]));
   return `<div class="tt"><div class="tt-when">${escapeHtml(when)}</div>${rows.join("")}`
     + `<div class="tt-note">change since ${escapeHtml(new Date(data.times[a]).toLocaleString())}</div></div>`;
 }

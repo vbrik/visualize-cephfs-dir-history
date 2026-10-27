@@ -1,17 +1,13 @@
-// Pure data shaping for the charts; no DOM. See docs/terms.md for "unit"
-// and "own size". A tree file holds, per time point, each unit's own size
-// and the rbytes of ROOT, the units, the watched dirs and their ancestors.
+// Pure data shaping for the charts; no DOM. See docs/terms.md for "set",
+// "stored dir" and "own-files band". A tree file holds, per time point, the
+// rbytes of every stored dir (a set dir, or one within its depth below it),
+// the tree's sets, and `split`: the stored dirs whose subdirs are all stored.
 
 export const ROOT = ".";
 
-// Distinct bands a chart may color: the categorical palette's slot count.
-export const MAX_BANDS = 8;
-
-/** The hidden-list entry that hides BAND: its unit, or, for a group, every
- * unit below the group's dir (paths never end in "/", so "dir/" is unique). */
-export function hideKey(band) {
-  return band.drillable ? `${band.key}/` : band.key;
-}
+// Most bands the Stack view draws (Top's max): the categorical palette's
+// slot count, so colors never repeat.
+export const MAX_BANDS = 64;
 
 /** Number of path components; ROOT is 0. */
 export function depth(path) {
@@ -23,9 +19,10 @@ export function isUnder(path, base) {
   return base === ROOT || path === base || path.startsWith(`${base}/`);
 }
 
-/** PATH's ancestor at depth D, or PATH itself if it is not deeper. */
-export function ancestorAt(path, d) {
-  return depth(path) <= d ? path : path.split("/").slice(0, d).join("/");
+/** PATH's parent dir; ROOT for a top-level dir. */
+export function parentOf(path) {
+  const at = path.lastIndexOf("/");
+  return at < 0 ? ROOT : path.slice(0, at);
 }
 
 /** PATH relative to BASE ("." for BASE itself). */
@@ -106,95 +103,129 @@ export function formatDelta(bytes) {
   return bytes > 0 ? `+${formatBytes(bytes)}` : bytes < 0 ? formatBytes(bytes) : "±0 B";
 }
 
-/** Bytes in TEXT ("1024", "10GiB", "1.5 tib"), or null if it is not a size. */
-export function parseSize(text) {
-  const m = /^\s*(\d+(?:\.\d+)?)\s*(?:([kmgtp])ib)?\s*$/i.exec(text);
-  if (!m || (!m[2] && m[1].includes("."))) return null;
-  const power = m[2] ? "kmgtp".indexOf(m[2].toLowerCase()) + 1 : 0;
-  return Math.floor(Number(m[1]) * 1024 ** power);
-}
-
 /**
- * Shape a tree's units into stacked bands.
- *
- * opts: inPath (drilled-into dir), group (levels below inPath to sum units
- * into; 0 = each unit is a band), top (max named bands), min (bytes: a band
- * whose peak over the range is lower folds into "smaller"), hidden (units
- * dropped entirely: a unit path, or "dir/" for every unit in dir's
- * subtree; see hideKey), range ([first, last] point indexes).
- *
- * Bands are ranked by peak over the range, ties by key, so dirs that shrank
- * or vanished stay visible. Returns {bands, smaller, rest}: bands are
- * {key, label, units, values, drillable}; smaller sums the folded units;
- * rest is inPath's bytes in no unit (rbytes minus all its units' own sizes,
- * at least 0). Hidden units are in neither, so hiding shrinks the total.
+ * RAW, a tree file as read, ready for the views: every rbytes series a list
+ * of one value (bytes, or null: absent) per time point, where the file has
+ * one number for a series that never changed; `split` a Set; and `children`
+ * a Map from each split dir to its stored subdirs, sorted.
  */
-export function stack(data, opts) {
-  const { inPath, group, top, min, hidden, range } = opts;
-  const n = data.times.length;
-  const [a, b] = range;
-  const all = Object.keys(data.units).filter((u) => isUnder(u, inPath));
-  const isHidden = (u) =>
-    hidden.some((h) => (h.endsWith("/") ? isUnder(u, h.slice(0, -1)) : u === h));
-
-  const groups = new Map();
-  for (const u of all) {
-    if (isHidden(u)) continue;
-    const key = group ? ancestorAt(u, depth(inPath) + group) : u;
-    if (!groups.has(key)) groups.set(key, { key, units: [], values: new Array(n).fill(0) });
-    const g = groups.get(key);
-    g.units.push(u);
-    data.units[u].own.forEach((v, i) => {
-      g.values[i] += v;
-    });
-  }
-
-  const peak = (g) => Math.max(...g.values.slice(a, b + 1));
-  const ranked = [...groups.values()]
-    .map((g) => ({ ...g, peak: peak(g) }))
-    .sort((x, y) => y.peak - x.peak || (x.key < y.key ? -1 : 1));
-  const bands = ranked.filter((g) => g.peak >= min).slice(0, Math.min(top, MAX_BANDS));
-  const shown = new Set(bands.map((g) => g.key));
-
-  const smaller = new Array(n).fill(0);
-  for (const g of ranked) {
-    if (!shown.has(g.key)) g.values.forEach((v, i) => (smaller[i] += v));
-  }
-  const base = data.rbytes[inPath] ?? new Array(n).fill(null);
-  const rest = base.map((r, i) =>
-    Math.max(0, (r ?? 0) - all.reduce((s, u) => s + data.units[u].own[i], 0)),
+export function normalize(raw) {
+  const n = raw.times.length;
+  const rbytes = Object.fromEntries(
+    Object.entries(raw.rbytes).map(([p, v]) => [p, Array.isArray(v) ? v : new Array(n).fill(v)]),
   );
-
-  return {
-    bands: bands.map((g) => ({
-      key: g.key,
-      units: g.units,
-      values: g.values,
-      label: bandLabel(g, data, inPath),
-      drillable: g.units.some((u) => u !== g.key),
-    })),
-    smaller,
-    rest,
-  };
-}
-
-function bandLabel(g, data, inPath) {
-  const rel = relative(g.key, inPath);
-  if (g.units.length === 1 && g.units[0] === g.key) {
-    const name = rel === "." ? "this directory" : rel;
-    return data.units[g.key].leaf ? name : `${name} (own files)`;
+  const split = new Set(raw.split);
+  const children = new Map([...split].map((dir) => [dir, []]));
+  for (const p of Object.keys(rbytes)) {
+    if (p !== ROOT) children.get(parentOf(p))?.push(p);
   }
-  const n = g.units.length;
-  return `${rel}/ (${n} unit${n === 1 ? "" : "s"})`;
+  for (const kids of children.values()) kids.sort();
+  return { ...raw, rbytes, split, children };
 }
 
 /**
- * Shape the watched dirs PATHS (a watch set's, in DATA.watched) into trend
- * cards for RANGE ([first, last] point indexes), in PATHS order.
+ * The Stack view's bands for DATA (from normalize).
+ *
+ * opts: roots (the dirs to show: a set's dirs, or the drilled-into dir),
+ * base (labels are relative to it; null: the tree root), depth (levels to
+ * split below each root), top (most bands returned), hidden (band keys; see
+ * below), range ([first, last] point indexes).
+ *
+ * A dir less than DEPTH below its root and in data.split becomes an
+ * own-files band (key `${dir}/.`: the files directly in it, its rbytes minus
+ * its subdirs', at least 0) plus the bands of its stored subdirs, likewise;
+ * any other dir is one band of its rbytes (key: the dir). Absent counts as
+ * 0. A band reached from two roots (a set holding a dir and its subdir)
+ * appears once.
+ *
+ * A band is hidden if HIDDEN holds its key, or a dir key (not ending "/.")
+ * that its dir is under: hiding a dir hides its subtree at any depth,
+ * hiding an own-files band only that band. The other bands rank by span
+ * (max − min) over the range, ties by key, so dirs that shrank or vanished
+ * stay visible. Returns {bands, cut}: the first TOP, as {key, dir, own,
+ * label, values, drillable}, and how many ranked past them.
+ */
+export function stackBands(data, { roots, base, depth, top, hidden, range }) {
+  const zeroed = (dir) => data.rbytes[dir].map((v) => v ?? 0);
+  const all = new Map(); // band key -> band
+  const add = (band) => all.has(band.key) || all.set(band.key, band);
+  const expand = (dir, level) => {
+    if (level >= depth || !data.split.has(dir)) {
+      add({ key: dir, dir, own: false, values: zeroed(dir) });
+      return;
+    }
+    const kids = data.children.get(dir);
+    const own = zeroed(dir);
+    for (const kid of kids) data.rbytes[kid].forEach((v, i) => (own[i] -= v ?? 0));
+    add({ key: `${dir}/.`, dir, own: true, values: own.map((v) => Math.max(0, v)) });
+    for (const kid of kids) expand(kid, level + 1);
+  };
+  for (const root of roots) expand(root, 0);
+
+  const dirKeys = hidden.filter((h) => !h.endsWith("/."));
+  const isHidden = (band) => hidden.includes(band.key) || dirKeys.some((h) => isUnder(band.dir, h));
+  const [a, b] = range;
+  const span = (values) => {
+    const shown = values.slice(a, b + 1);
+    return Math.max(...shown) - Math.min(...shown);
+  };
+  const ranked = [...all.values()]
+    .filter((band) => !isHidden(band))
+    .map((band) => ({ band, span: span(band.values) }))
+    .sort((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
+    .map(({ band }) => band);
+  const bands = ranked.slice(0, top).map((band) => ({
+    ...band,
+    label: bandLabel(data, band, base ?? ROOT),
+    drillable: !band.own && data.split.has(band.dir),
+  }));
+  return { bands, cut: ranked.length - bands.length };
+}
+
+/** BAND's label: its dir relative to BASE, where BASE itself (and ROOT) is
+ * named, not "."; an own-files band adds "/ bytes". */
+function bandLabel(data, band, base) {
+  const { dir } = band;
+  let name = relative(dir, base);
+  if (dir === ROOT) name = data.tree.fs_path;
+  else if (dir === base) name = dir.slice(dir.lastIndexOf("/") + 1);
+  return band.own ? `${name}/ bytes` : name;
+}
+
+/** How many levels below ROOTS the Stack view can split: the most levels
+ * of data.split below any of them, 0 if none is split. */
+export function maxDepth(data, roots) {
+  const levels = (dir) =>
+    data.split.has(dir) ? 1 + Math.max(0, ...data.children.get(dir).map(levels)) : 0;
+  return Math.max(0, ...roots.map(levels));
+}
+
+/** The deepest of PATHS that PATH is under (or is), or null if none. */
+export function setDirOf(paths, path) {
+  let best = null;
+  for (const p of paths) {
+    if (isUnder(path, p) && (best === null || depth(p) > depth(best))) best = p;
+  }
+  return best;
+}
+
+/** Whether drilling can reach PATH from the set dirs PATHS: PATH is one of
+ * them, or a stored subdir of a split dir that drilling can reach. So an
+ * untrusted PATH (e.g. from the URL) is safe to look up in data.rbytes. */
+export function reachable(data, paths, path) {
+  if (paths.includes(path)) return true;
+  if (path === ROOT) return false;
+  const parent = parentOf(path);
+  return data.children.get(parent)?.includes(path) === true && reachable(data, paths, parent);
+}
+
+/**
+ * Shape the set dirs PATHS (a set's, in DATA.sets) into trend cards for
+ * RANGE ([first, last] point indexes), in PATHS order.
  *
  * Returns [{path, values, start, end, change, peak, span, lo, hi}]: values
  * is the dir's whole rbytes series (null: absent). Within the range, absent
- * counting as 0 (as for units): start and end are its bytes at the ends,
+ * counting as 0 (as in the Stack view): start and end are its bytes at the ends,
  * change = end - start, peak the largest and span the largest minus the
  * smallest, so a dir that appears or disappears has a span. lo and hi bound
  * its present values (the sparkline's scale), both null if it is absent
@@ -227,7 +258,7 @@ export function trendCards(data, paths, range) {
 /** Whether CARD's dir is unchanged in its range: constant, or absent throughout. */
 export const unchanged = (card) => card.span === 0;
 
-// Card orders for the Watched view: sort key -> [label, card's value].
+// Card orders for the Trends view: sort key -> [label, card's value].
 // Values sort largest first; "name" sorts by path.
 export const CARD_SORTS = {
   span: ["Span (max − min)", (card) => card.span],

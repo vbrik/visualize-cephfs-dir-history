@@ -16,8 +16,6 @@
   --grid: #e3d9c8;
   --accent: #b2622d;
   --error: #b42318;
-  --band-smaller: #c0b6a5;
-  --band-rest: #e3d9c8;
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -101,8 +99,6 @@
     --grid: #34312d;
     --accent: #f6a06b;
     --error: #f97066;
-    --band-smaller: #645c50;
-    --band-rest: #3a3631;
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
@@ -178,8 +174,8 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body[data-view="watched"] .units-only,
-body[data-view="units"] .watched-only { display: none !important; }
+body[data-view="trends"] .stack-only,
+body[data-view="stack"] .trends-only { display: none !important; }
 
 body {
   margin: 0 auto;

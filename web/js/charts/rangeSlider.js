@@ -1,11 +1,11 @@
-// The Watched view's time-range slider: an ECharts dataZoom on its own,
-// with ROOT's rbytes as its data shadow. It applies a drag on release
+// The Trends view's time-range slider: an ECharts dataZoom on its own,
+// with a series of the caller's (the set's total) as its data shadow. It applies a drag on release
 // (realtime: false): cards are sorted and filtered by the range, so they
 // would reorder and come and go under the pointer while it moves.
 
 /** Return the ECharts option of a bare zoom slider over DATA's times.
- * colors: {grid}. */
-export function rangeSliderOption(data, { colors }) {
+ * colors: {grid}. shadow: one value per time point. */
+export function rangeSliderOption(data, { colors, shadow }) {
   return {
     animation: false,
     grid: { left: 24, right: 24, top: 0, height: 1 },
@@ -30,7 +30,7 @@ export function rangeSliderOption(data, { colors }) {
         symbol: "none",
         silent: true,
         lineStyle: { opacity: 0 },
-        data: data.times.map((t, i) => [Date.parse(t), data.rbytes["."]?.[i] ?? null]),
+        data: data.times.map((t, i) => [Date.parse(t), shadow[i]]),
       },
     ],
   };

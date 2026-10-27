@@ -2,15 +2,17 @@
 
 Serves web/ on a free local port with two data sets:
 
-- tests/data/web, two synthetic trees (the first with a non-leaf unit, a
-  unit below it and a name that is not UTF-8), for regression checks of
-  the page's semantics, URL codec, update ordering, data refresh, click
-  hit-testing and the Watched view (tree 1 has three watch sets: three
-  dirs, three dirs two of which are also in the first, and none; tree 2
-  has none); some checks serve altered copies of them;
+- tests/data/web, two synthetic trees, for regression checks of the page's
+  semantics, URL codec, update ordering, data refresh, click hit-testing
+  and both views. Tree 1 has split dirs (A, Z, and a name that is not
+  UTF-8), an unsplit dir Q stored with one subdir, a dir absent at the first
+  point (Z/y), dirs stored as one number, and four sets: Top level, Mixed
+  (a subdir and two top-level dirs), Partial (Q/r only) and Empty. Tree 2
+  has one dir and only Top level. Some checks serve altered copies.
 - web/data (if present), the real data written by dirhistory-generate: for
-  every tree, in light and dark mode, it groups by one level, drills into
-  the first group, hides a band, reloads from the URL hash and unhides it.
+  every tree, in light and dark mode, the Stack view at Depth 0 and 1,
+  drilling into the first drillable band, hiding a band, reloading from
+  the URL hash and unhiding it; then each set's Trends cards.
 
 Pages are served with the Content-Security-Policy of
 deploy/nginx.conf.example, so anything it blocks is a console error.
@@ -74,47 +76,70 @@ def url(server: http.server.ThreadingHTTPServer) -> str:
     return f"http://127.0.0.1:{server.server_address[1]}/"
 
 
-def legend(page: Page) -> list[str]:
-    return page.eval_on_selector_all("#legend li", "els => els.map(e => e.innerText)")
+def bands(page: Page) -> list[str]:
+    """The legend's band labels, top of the stack first."""
+    return page.eval_on_selector_all(
+        "#legend .label", "els => els.map(e => e.textContent)"
+    )
+
+
+def state(page: Page) -> str:
+    return page.evaluate("location.hash")
+
+
+def go(page: Page, where: str) -> None:
+    """Load WHERE and let the page fetch and render."""
+    page.goto(where)
+    page.wait_for_timeout(SETTLE_MS)
+
+
+def act(page: Page, action: Callable[[], object]) -> None:
+    """Run ACTION, then let the page render."""
+    action()
+    page.wait_for_timeout(SETTLE_MS)
+
+
+def link(page: Page, name: str) -> Locator:
+    """The legend's drill button named NAME, exactly."""
+    return page.locator(
+        "#legend button.link", has_text=re.compile(f"^{re.escape(name)}$")
+    )
 
 
 def check_fixture(page: Page, base: str) -> None:
-    """Regression checks against tests/data/web."""
-    page.goto(f"{base}#tree=99")
-    page.wait_for_timeout(SETTLE_MS)
+    """Regression checks of the Stack view against tests/data/web."""
+    go(page, f"{base}#tree=99")
     assert page.is_visible("#error"), "no error shown for an unknown tree"
-    page.evaluate("location.hash = 'tree=1'")
-    page.wait_for_timeout(SETTLE_MS)
+    act(page, lambda: page.evaluate("location.hash = 'tree=1'"))
     assert page.is_hidden("#error"), "error still shown after a good load"
 
     # Enter in a field must not submit the form (a reload).
     page.evaluate("window.notReloaded = true")
-    page.press("#min", "Enter")
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.evaluate("window.notReloaded === true"), "Enter reloaded the page"
+    for field in ("#depth", "#top"):
+        act(page, lambda f=field: page.press(f, "Enter"))
+        assert page.evaluate("window.notReloaded === true"), (
+            f"Enter in {field} reloaded"
+        )
 
-    # A dir that is not in the tree, even one named like an Object property,
-    # falls back to ROOT.
-    page.evaluate("location.hash = 'tree=1&in=constructor'")
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.is_hidden("#error"), "in=constructor broke the page"
-    assert page.inner_text("#crumbs") == "/fixture", "in=constructor not ignored"
+    # Out-of-range state from an old or edited URL is ignored: a dir named
+    # like an Object property, a dir drilling cannot reach from the set (Q
+    # is not split), an old view name.
+    for bad in ("in=constructor", "set=Top%20level&in=Q/r", "view=watched"):
+        act(page, lambda b=bad: page.evaluate(f"location.hash = 'tree=1&{b}'"))
+        assert page.is_hidden("#error"), f"{bad} broke the page"
+        assert page.inner_text("#crumbs") == "Set Top level", f"{bad} not ignored"
+        assert page.is_visible("#chart"), f"{bad}: Stack view not shown"
+    go(page, f"{base}#tree=1&depth=9")
+    assert page.input_value("#depth") == "1", "depth not clamped to the split levels"
 
-    # Hiding a unit's own files must not hide the units below it.
-    page.locator("#legend li", has_text="A (own files)").locator("button.hide").click()
-    page.wait_for_timeout(SETTLE_MS)
-    rows = legend(page)
-    assert not any("A (own files)" in r for r in rows), "unit not hidden"
-    assert any(r.startswith("A/b") for r in rows), "hiding A's own files hid A/b"
-    page.locator("#hidden-list button").first.click()
-    page.wait_for_timeout(SETTLE_MS)
-
-    # Hiding a group hides all of its units.
-    page.goto(f"{base}#tree=1&group=1")
-    page.wait_for_timeout(SETTLE_MS)
-    page.locator("#legend li", has_text="A/ (2 units)").locator("button.hide").click()
-    page.wait_for_timeout(SETTLE_MS)
-    assert not any(r.startswith("A") for r in legend(page)), "group not hidden"
+    # The legend drills into a split dir at Depth 1.
+    go(page, f"{base}#tree=1")
+    assert page.input_value("#depth") == "0", "Depth not 0 by default"
+    act(page, lambda: link(page, "A").click())
+    assert "in=A" in state(page) and "depth=1" in state(page), f"drill: {state(page)}"
+    assert page.input_value("#depth") == "1", "drilling did not show Depth 1"
+    assert page.inner_text("#crumbs") == "Set Top level / A", page.inner_text("#crumbs")
+    assert set(bands(page)) == {"A/ bytes", "b", "c"}, f"in A: {bands(page)}"
 
     # The URL codec round-trips any name, including ones TextDecoder alters.
     # Names stay in the page: Playwright turns lone surrogates into U+FFFD.
@@ -128,24 +153,146 @@ def check_fixture(page: Page, base: str) -> None:
     )
     assert changed == "[]", f"URL codec changed names: {changed}"
 
-    # Names that are not UTF-8: drilling and hiding survive the URL hash.
-    page.goto(f"{base}#tree=1&group=1")
-    page.wait_for_timeout(SETTLE_MS)
-    page.locator("#legend li", has_text="caf").locator("button.link").click()
-    page.wait_for_timeout(SETTLE_MS)
-    assert "caf" in page.inner_text("#crumbs"), "drilling into a non-UTF-8 dir failed"
-    page.locator("#legend li", has_text="x").locator("button.hide").click()
-    page.wait_for_timeout(SETTLE_MS)
-    page.reload()
-    page.wait_for_timeout(SETTLE_MS)
-    assert "caf" in page.inner_text("#crumbs"), "drill lost on reload"
-    assert not any(r.startswith("x") for r in legend(page)), "hide lost on reload"
+    # Names that are not UTF-8: hiding an own-files band and a dir band
+    # survives the URL hash; chips bring them back.
+    go(page, f"{base}#tree=1&depth=1")
+    own = page.locator("#legend li").filter(has_text="caf").filter(has_text="/ bytes")
+    act(page, lambda: own.locator("button.hide").click())
+    assert not any(
+        b.startswith("caf") and b.endswith("/ bytes") for b in bands(page)
+    ), "own-files band not hidden"
+    assert any(b.startswith("caf") and b.endswith("/x") for b in bands(page)), (
+        "hiding caf/ bytes hid caf/x"
+    )
+    act(page, lambda: page.locator("#crumbs button").first.click())  # Depth 0
+    assert "hide=" in state(page) and "depth=" not in state(page), state(page)
+    act(
+        page,
+        lambda: (
+            page.locator("#legend li", has_text="caf").locator("button.hide").click()
+        ),
+    )
+    act(page, page.reload)
+    assert not any(b.startswith("caf") for b in bands(page)), "hide lost on reload"
+    assert page.locator("#hidden-list button").count() == 2, "hides lost on reload"
+    for _ in range(2):
+        act(page, lambda: page.locator("#hidden-list button").first.click())
+    assert "hide=" not in state(page), f"chips did not unhide: {state(page)}"
+    assert any(b.startswith("caf") for b in bands(page)), "chips did not bring caf back"
+
+    # Bands past Top are counted.
+    go(page, f"{base}#tree=1&top=2")
+    assert len(bands(page)) == 2, f"top=2: {bands(page)}"
+    assert "2 more not shown" in page.inner_text("#summary"), page.inner_text(
+        "#summary"
+    )
+
+    # Reset restores the Stack view's state.
+    go(page, f"{base}#tree=1&depth=1&top=2&in=A&hide=Z&sort=size")
+    act(page, lambda: page.click("#reset"))
+    for key in ("depth=", "top=", "in=", "hide="):
+        assert key not in state(page), f"Reset kept {key}: {state(page)}"
+    assert "sort=size" in state(page), f"Reset changed the Trends view: {state(page)}"
+    assert page.input_value("#depth") == "0" and page.input_value("#top") == "64", (
+        "Reset did not restore the fields"
+    )
 
 
 def check_model(page: Page, base: str) -> None:
     """Pure model functions, called in the page."""
-    page.goto(base)
-    page.wait_for_timeout(SETTLE_MS)
+    gib = 2**30
+    caf = "caf\udce9"
+    # Built and compared in the page, returned as JSON: Playwright turns
+    # lone surrogates into U+FFFD, json.loads keeps them.
+    go(page, base)
+    got = json.loads(
+        page.evaluate(
+            """async () => {
+            const m = await import("./js/model.js");
+            const raw = await (await fetch("data/tree-1.json")).json();
+            const data = m.normalize(raw);
+            const set = (name) => data.sets.find((s) => s.name === name).paths;
+            const top = set("Top level");
+            const opts = {roots: top, base: null, depth: 0, top: m.MAX_BANDS,
+              hidden: [], range: [0, 2]};
+            const run = (o) => m.stackBands(data, {...opts, ...o});
+            const keys = (o) => {
+              const r = run(o);
+              return {keys: r.bands.map((b) => b.key), cut: r.cut};
+            };
+            const info = (bands) => Object.fromEntries(bands.map((b) => [b.key,
+              {label: b.label, own: b.own, drillable: b.drillable, values: b.values}]));
+            const rooted = m.normalize({...raw,
+              rbytes: {".": 300, a: 100, b: [50, 100, 150]},
+              sets: [{name: "Root", paths: ["."]}], split: ["."]});
+            return JSON.stringify({
+              n: m.MAX_BANDS,
+              rbytes: data.rbytes,
+              children: [...data.children],
+              d0: keys({}),
+              d1: keys({depth: 1}),
+              bands0: info(run({}).bands),
+              bands1: info(run({depth: 1}).bands),
+              inA: info(run({roots: ["A"], base: "A", depth: 1}).bands),
+              top2: keys({top: 2}),
+              hideA: keys({depth: 1, hidden: ["A"]}),
+              hideOwnA: keys({depth: 1, hidden: ["A/."]}),
+              maxTop: m.maxDepth(data, top),
+              maxPartial: m.maxDepth(data, set("Partial")),
+              root: info(m.stackBands(rooted, {...opts, roots: ["."], depth: 1}).bands),
+              setDirOf: [m.setDirOf([".", "A"], "A/b"), m.setDirOf(["A", "."], "Q"),
+                m.setDirOf(["Z"], "A")],
+              reachable: ["A", "A/b", "caf\\uDCE9/x", "Q", "Q/r", "constructor",
+                "Z/y/q"].filter((p) => m.reachable(data, top, p)),
+            });
+        }"""
+        )
+    )
+    assert got["n"] == 64, f"MAX_BANDS: {got['n']}"
+    rb = got["rbytes"]
+    assert rb["A/c"] == [100 * gib] * 3 and rb["Q/r"] == [10 * gib] * 3, "scalars"
+    assert rb["Z/y"][0] is None, "null not kept"
+    assert dict(got["children"]) == {
+        "A": ["A/b", "A/c"],
+        "Z": ["Z/y"],
+        caf: [f"{caf}/x"],
+    }, f"children: {got['children']}"
+
+    # Depth 0: the set dirs, by span (A 200, café 100, Z 50, Q 0 GiB).
+    assert got["d0"] == {"keys": ["A", caf, "Z", "Q"], "cut": 0}, (
+        f"depth 0: {got['d0']}"
+    )
+    b0 = got["bands0"]
+    assert b0["A"]["label"] == "A" and b0["A"]["drillable"], f"band A: {b0['A']}"
+    assert not b0["Q"]["drillable"], "unsplit Q drillable"
+    assert b0["Z"]["values"] == [100 * gib, 100 * gib, 50 * gib], "Z values"
+
+    # Depth 1: split dirs become own files plus subdirs; Q stays whole.
+    want = {"A/.", "A/b", "A/c", "Q", "Z/.", "Z/y", f"{caf}/.", f"{caf}/x"}
+    assert set(got["d1"]["keys"]) == want, f"depth 1: {got['d1']}"
+    b1 = got["bands1"]
+    assert b1["A/."]["values"][2] == 250 * gib, f"A/ bytes: {b1['A/.']}"
+    assert b1["Z/."]["values"][0] == 100 * gib, f"Z/ bytes with absent Z/y: {b1['Z/.']}"
+    assert b1["Z/y"]["values"][0] == 0, "absent not 0"
+    assert all(v >= 0 for b in b1.values() for v in b["values"]), "negative value"
+    assert b1["A/."]["label"] == "A/ bytes" and b1["A/."]["own"], f"own: {b1['A/.']}"
+    assert not b1["A/."]["drillable"], "own-files band drillable"
+    assert b1["A/b"]["label"] == "A/b", f"label relative to the root: {b1['A/b']}"
+    labels = {k: v["label"] for k, v in got["inA"].items()}
+    assert labels == {"A/.": "A/ bytes", "A/b": "b", "A/c": "c"}, f"in A: {labels}"
+
+    # Top, and hiding a dir (its subtree) or only its own files.
+    assert len(got["top2"]["keys"]) == 2 and got["top2"]["cut"] == 2, got["top2"]
+    assert not {"A/.", "A/b", "A/c"} & set(got["hideA"]["keys"]), got["hideA"]
+    assert "Q" in got["hideA"]["keys"], f"hiding A hid Q: {got['hideA']}"
+    assert set(got["hideOwnA"]["keys"]) == want - {"A/."}, got["hideOwnA"]
+
+    assert (got["maxTop"], got["maxPartial"]) == (1, 0), "maxDepth"
+    assert got["root"]["./."]["label"] == "/fixture/ bytes", f"ROOT: {got['root']}"
+    assert got["root"]["./."]["values"] == [150, 100, 50], f"ROOT: {got['root']}"
+    assert got["setDirOf"] == ["A", ".", None], f"setDirOf: {got['setDirOf']}"
+    assert got["reachable"] == ["A", "A/b", f"{caf}/x", "Q"], got["reachable"]
+
     cards = page.evaluate(
         """async () => {
             const m = await import("./js/model.js");
@@ -260,24 +407,18 @@ def card(page: Page, name: str) -> Locator:
     return page.locator("#cards .trend-card").filter(has=exact)
 
 
-def check_watched(page: Page, base: str) -> None:
-    """The Watched view: switching, order, click-through, shared range."""
-
-    def state() -> str:
-        return page.evaluate("location.hash")
-
-    page.goto(f"{base}#tree=1")
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.is_visible("#view"), "view switch hidden although tree 1 watches dirs"
-    page.click("#view button[data-view=watched]")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "view=watched" in state(), "switching did not change the URL"
+def check_trends(page: Page, base: str) -> None:
+    """The Trends view: switching, order, click-through, shared range."""
+    go(page, f"{base}#tree=1&set=Mixed")
+    act(page, lambda: page.click("#view button[data-view=trends]"))
+    assert "view=trends" in state(page), "switching did not change the URL"
     names = cards(page)
-    # Largest span first: A 200 GiB, café 100 GiB, Z/y 50 GiB.
+    # Largest span first: A 200 GiB, café 100 GiB, Z/y 80 GiB (absent = 0).
     assert names[0] == "A" and names[2] == "Z/y", f"card order: {names}"
-    assert names[1].startswith("caf"), "non-UTF-8 watched dir not shown"
-    for unit_only in ("#group", "#top", "#min", "#rest", "#reset", "#legend"):
-        assert page.is_hidden(unit_only), f"{unit_only} shown in the Watched view"
+    assert names[1].startswith("caf"), "non-UTF-8 set dir not shown"
+    for stack_only in ("#depth", "#top", "#reset", "#legend"):
+        assert page.is_hidden(stack_only), f"{stack_only} shown in the Trends view"
+    assert page.is_visible("#set"), "Set hidden in the Trends view"
     a = card(page, "A")
     assert "+200 GiB" in a.inner_text(), f"change of A: {a.inner_text()}"
     # The scale's span shows even when its ends round alike (e.g. 108 TiB).
@@ -308,177 +449,157 @@ def check_watched(page: Page, base: str) -> None:
     page.mouse.up()
     page.wait_for_timeout(SETTLE_MS)
     assert page.inner_text("#watch-range") != before, "no render on release"
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1&view=trends&set=Mixed")
 
-    # Zooming here is the Units view's range too.
+    # Zooming here is the Stack view's range too.
     times = json.loads((FIXTURE / "tree-1.json").read_text())["times"]
-    zoom(page, "watch-slider", times[1], times[2])
-    page.wait_for_timeout(SETTLE_MS)
+    act(page, lambda: zoom(page, "watch-slider", times[1], times[2]))
     assert "+100 GiB" in a.inner_text(), f"zoomed change of A: {a.inner_text()}"
-    page.reload()
-    page.wait_for_timeout(SETTLE_MS)
+    act(page, page.reload)
     assert len(cards(page)) == 3, "view lost on reload"
 
-    # A card opens the Units view in its dir; every crumb above it works.
-    card(page, "Z/y").click()
-    page.wait_for_timeout(SETTLE_MS)
-    assert "view=" not in state() and "in=Z/y" in state(), f"click-through: {state()}"
-    assert "no units" in page.inner_text("#summary"), "a dir without units looks broken"
-    page.locator("#crumbs button", has_text="Z").first.click()
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.inner_text("#crumbs") == "/fixture / Z", "crumb above a watched dir"
+    # A card opens the Stack view in its dir: Depth 1 if it is split, else 0.
+    act(page, lambda: card(page, "Z/y").click())
+    assert "view=" not in state(page) and "in=Z/y" in state(page), state(page)
+    assert "depth=" not in state(page), f"unsplit Z/y at Depth 1: {state(page)}"
+    assert page.inner_text("#crumbs") == "Set Mixed / Z/y", page.inner_text("#crumbs")
+    # The drilled-into dir is named, not "."; Z/y is unsplit: one band.
+    assert bands(page) == ["y"], f"bands of Z/y: {bands(page)}"
+    go(page, f"{base}#tree=1&view=trends&flat=1")
+    act(page, lambda: card(page, "Q").click())
+    assert "in=Q" in state(page) and page.input_value("#depth") == "0", state(page)
 
     # Enter on a focused card works like a click.
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1&view=trends")
     card(page, "A").focus()
-    page.keyboard.press("Enter")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "in=A" in state(), "Enter on a card did nothing"
+    act(page, lambda: page.keyboard.press("Enter"))
+    assert "in=A" in state(page) and "depth=1" in state(page), f"Enter: {state(page)}"
 
-    # Changing the tree keeps the view; a tree without watched dirs says so.
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
-    page.select_option("#tree", "2")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "view=watched" in state(), "changing the tree left the Watched view"
-    assert page.is_visible("#watch-note") and cards(page) == [], "no note for tree 2"
+    # Changing the tree keeps the view.
+    go(page, f"{base}#tree=1&view=trends")
+    act(page, lambda: page.select_option("#tree", "2"))
+    assert "view=trends" in state(page), "changing the tree left the Trends view"
+    assert cards(page) == ["solo"], f"tree 2: {cards(page)}"
 
-    # The Units view shows a range zoomed in the Watched view.
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
-    zoom(page, "watch-slider", times[1], times[2])
-    page.wait_for_timeout(SETTLE_MS)
-    page.click("#view button[data-view=units]")
-    page.wait_for_timeout(SETTLE_MS)
+    # The Stack view shows a range zoomed in the Trends view.
+    go(page, f"{base}#tree=1&view=trends")
+    act(page, lambda: zoom(page, "watch-slider", times[1], times[2]))
+    act(page, lambda: page.click("#view button[data-view=stack]"))
     start, end = page.evaluate(
         "(ts) => ts.map((t) => new Date(t).toLocaleString())", [times[1], times[2]]
     )
     shown = page.inner_text("#table-range")
     assert shown == f"{start} \u2013 {end}", f"range after switching: {shown}"
-    for watched_only in ("#set", "#sort", "#flat", "#cards"):
-        assert page.is_hidden(watched_only), f"{watched_only} shown in the Units view"
+    for trends_only in ("#sort", "#flat", "#cards"):
+        assert page.is_hidden(trends_only), f"{trends_only} shown in the Stack view"
 
 
-def check_watch_sets(page: Page, base: str) -> None:
-    """The Set dropdown: one set's cards at a time, kept in the URL."""
-
-    def state() -> str:
-        return page.evaluate("location.hash")
+def check_sets(page: Page, base: str) -> None:
+    """The Set menu: one set at a time in both views, kept in the URL."""
 
     def options() -> list[str]:
         return page.eval_on_selector_all("#set option", "os => os.map(o => o.text)")
 
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
-    assert options() == ["Mixed — 3 dirs", "Top & café — 3 dirs", "Empty — 0 dirs"], (
-        f"sets: {options()}"
-    )
-    assert page.input_value("#set") == "Mixed", "not on the first set"
-    assert sorted(n[:3] for n in cards(page)) == ["A", "Z/y", "caf"], (
-        "first set's cards"
-    )
+    go(page, f"{base}#tree=1&in=A&depth=1")
+    assert options() == [
+        "Top level — 4 dirs",
+        "Mixed — 3 dirs",
+        "Partial — 1 dir",
+        "Empty — 0 dirs",
+    ], f"sets: {options()}"
+    assert page.input_value("#set") == "Top level", "not on the first set"
 
-    # A name with a space, & and non-ASCII survives the URL and a reload.
-    page.select_option("#set", "Top & café")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "set=" in state(), f"set not in the URL: {state()}"
-    assert sorted(n[:3] for n in cards(page)) == ["A", "Z", "caf"], "second set"
-    page.reload()
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.input_value("#set") == "Top & café", "set lost on reload"
-    assert len(cards(page)) == 3, "cards lost on reload"
+    # Changing the set clears the drilled-into dir; the set survives a reload.
+    act(page, lambda: page.select_option("#set", "Mixed"))
+    assert "set=Mixed" in state(page) and "in=" not in state(page), state(page)
+    act(page, page.reload)
+    assert page.input_value("#set") == "Mixed", "set lost on reload"
+    names = sorted(bands(page))
+    assert names[:4] == ["A/ bytes", "A/b", "A/c", "Z/y"], f"Mixed at Depth 1: {names}"
+    assert len(names) == 6, f"caf at Depth 1: {names}"
 
-    # A set matching nothing says so, unlike a tree without sets.
-    page.select_option("#set", "Empty")
-    page.wait_for_timeout(SETTLE_MS)
-    assert cards(page) == [] and page.is_visible("#watch-empty"), "no empty-set note"
-    assert page.is_hidden("#watch-note"), "tree note shown for an empty set"
-    assert page.is_hidden("#watch-range"), "range shown for an empty set"
+    # Partial: a stored subdir of an unsplit dir.
+    go(page, f"{base}#tree=1&set=Partial")
+    assert bands(page) == ["Q/r"], f"Partial: {bands(page)}"
+    assert page.get_attribute("#depth", "max") == "0", "Depth max for Partial"
+
+    # A set matching nothing says so, in both views.
+    for view in ("stack", "trends"):
+        go(page, f"{base}#tree=1&set=Empty&view={view}")
+        assert page.inner_text("#stack-empty") == (
+            "No directories match this set's patterns."
+        ), f"{view}: no empty-set note"
+        assert page.is_visible("#stack-empty"), f"{view}: empty-set note hidden"
+    assert cards(page) == [] and page.is_hidden("#watch-range"), "range for Empty"
+    act(page, lambda: page.click("#view button[data-view=stack]"))
+    assert page.is_hidden("#chart"), "empty chart shown"
+    assert page.is_hidden("#legend"), "legend shown for an empty set"
+    act(page, lambda: page.select_option("#set", "Top level"))
+    assert page.is_hidden("#stack-empty") and page.is_visible("#chart"), "note stuck"
 
     # An unknown set falls back to the first.
-    page.goto(f"{base}#tree=1&view=watched&set=nope")
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.input_value("#set") == "Mixed", "unknown set not ignored"
+    go(page, f"{base}#tree=1&view=trends&set=nope")
+    assert page.input_value("#set") == "Top level", "unknown set not ignored"
     assert len(cards(page)) == 3, "unknown set shows no cards"
 
     # Set names belong to a tree: changing the tree drops the set.
-    page.select_option("#set", "Top & café")
-    page.wait_for_timeout(SETTLE_MS)
-    page.select_option("#tree", "2")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "set=" not in state(), f"set kept across trees: {state()}"
-    assert page.is_hidden("#set"), "Set shown for a tree without sets"
-    page.select_option("#tree", "1")
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.input_value("#set") == "Mixed", "tree 1 not back on its first set"
+    act(page, lambda: page.select_option("#set", "Mixed"))
+    act(page, lambda: page.select_option("#tree", "2"))
+    assert "set=" not in state(page), f"set kept across trees: {state(page)}"
+    assert options() == ["Top level — 1 dir"], f"tree 2 sets: {options()}"
+    act(page, lambda: page.select_option("#tree", "1"))
+    assert page.input_value("#set") == "Top level", "tree 1 not back on its first set"
 
 
 def check_sort_and_unchanged(page: Page, base: str) -> None:
     """Sorting cards, and hiding unchanged ones unless asked."""
-
-    def state() -> str:
-        return page.evaluate("location.hash")
-
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
-    tree["rbytes"]["Z/y"] = [2**30] * 3
+    tree["rbytes"]["Z/y"] = 2**30
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1&view=trends&set=Mixed")
     assert len(cards(page)) == 2, f"unchanged card shown: {cards(page)}"
     hidden = page.inner_text("#watch-hidden")
     assert hidden == "1 directory unchanged in this range is hidden.", hidden
 
-    page.check("#flat")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "flat=1" in state() and "Z/y" in cards(page), "Show unchanged did nothing"
+    act(page, lambda: page.check("#flat"))
+    assert "flat=1" in state(page) and "Z/y" in cards(page), (
+        "Show unchanged did nothing"
+    )
     assert page.is_hidden("#watch-hidden"), "hidden count shown with none hidden"
 
-    page.select_option("#sort", "name")
-    page.wait_for_timeout(SETTLE_MS)
+    act(page, lambda: page.select_option("#sort", "name"))
     names = cards(page)
     assert names[:2] == ["A", "Z/y"] and len(names) == 3, f"by name: {names}"
-    page.select_option("#sort", "size")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "sort=size" in state(), f"sort not in the URL: {state()}"
-    page.reload()
-    page.wait_for_timeout(SETTLE_MS)
+    act(page, lambda: page.select_option("#sort", "size"))
+    assert "sort=size" in state(page), f"sort not in the URL: {state(page)}"
+    act(page, page.reload)
     assert page.input_value("#sort") == "size" and page.is_checked("#flat"), (
         "lost on reload"
     )
     assert cards(page)[0] == "A" and cards(page)[2] == "Z/y", f"by size: {cards(page)}"
 
     # With every card unchanged, the count says where they went.
-    tree["rbytes"]["A"] = [2**40] * 3
-    caf = next(p for p in tree["watched"][0]["paths"] if p.startswith("caf"))
-    tree["rbytes"][caf] = [2**30] * 3
-    page.goto(f"{base}#tree=1&view=watched")
-    page.reload()  # a hash change alone keeps the loaded file
-    page.wait_for_timeout(SETTLE_MS)
+    tree["rbytes"]["A"] = 2**40
+    caf = next(p for p in tree["rbytes"] if p.startswith("caf") and "/" not in p)
+    tree["rbytes"][caf] = 2**30
+    page.goto(f"{base}#tree=1&view=trends&set=Mixed")
+    act(page, page.reload)  # a hash change alone keeps the loaded file
     text = page.inner_text("#watch-hidden")
     assert cards(page) == [] and "Show unchanged" in text, f"all hidden: {text}"
-    page.goto(f"{base}#tree=1&view=watched&sort=size&flat=1")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1&view=trends&sort=size&flat=1")
 
-    # Reset is the Units view's: it keeps the Watched view's state.
-    page.click("#view button[data-view=units]")
-    page.wait_for_timeout(SETTLE_MS)
-    page.click("#reset")
-    page.wait_for_timeout(SETTLE_MS)
-    assert "sort=size" in state() and "flat=1" in state(), f"reset: {state()}"
+    # Reset is the Stack view's: it keeps the Trends view's state.
+    act(page, lambda: page.click("#view button[data-view=stack]"))
+    act(page, lambda: page.click("#reset"))
+    assert "sort=size" in state(page) and "flat=1" in state(page), state(page)
 
 
-def check_watched_resize(page: Page, base: str) -> None:
+def check_trends_resize(page: Page, base: str) -> None:
     """Sparklines take their card's width after resizes while hidden."""
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
-    page.click("#view button[data-view=units]")
-    page.wait_for_timeout(SETTLE_MS)
-    page.set_viewport_size({"width": 900, "height": 700})
-    page.wait_for_timeout(SETTLE_MS)
-    page.click("#view button[data-view=watched]")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1&view=trends")
+    act(page, lambda: page.click("#view button[data-view=stack]"))
+    act(page, lambda: page.set_viewport_size({"width": 900, "height": 700}))
+    act(page, lambda: page.click("#view button[data-view=trends]"))
     widths = page.eval_on_selector_all(
         "#cards .spark",
         """els => els.map((e) => [e.previousElementSibling, e].map(
@@ -494,24 +615,10 @@ def check_absent_in_range(page: Page, base: str) -> None:
     tree["rbytes"]["Z/y"] = [2**30, None, None]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     times = tree["times"]
-    page.goto(f"{base}#tree=1&view=watched&flat=1")
-    page.wait_for_timeout(SETTLE_MS)
-    zoom(page, "watch-slider", times[1], times[2])
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1&view=trends&set=Mixed&flat=1")
+    act(page, lambda: zoom(page, "watch-slider", times[1], times[2]))
     text = card(page, "Z/y").inner_text()
     assert "absent in this range" in text, f"absent card: {text}"
-
-
-def check_no_watched(page: Page, base: str) -> None:
-    """Without watched dirs in any tree, even with sets, there is no Watched view."""
-    index = json.loads((FIXTURE / "trees.json").read_text())
-    for t in index:
-        t["watched"] = [{**w, "dirs": 0} for w in t["watched"]]
-    page.route("**/data/trees.json", lambda r: r.fulfill(json=index))
-    page.goto(f"{base}#tree=1&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
-    assert page.is_hidden("#view"), "view switch shown with no watched dirs"
-    assert page.locator("#legend li").count(), "Units view not shown"
 
 
 def slow_fetch(page: Page, file: str, ms: int = SETTLE_MS) -> None:
@@ -534,7 +641,7 @@ def check_slow_tree(page: Page, base: str) -> None:
     page.goto(f"{base}#tree=1")
     page.evaluate("location.hash = 'tree=2'")
     page.wait_for_timeout(3 * SETTLE_MS)
-    assert page.inner_text("#crumbs") == "/fixture2", "a stale tree replaced tree 2"
+    assert bands(page) == ["solo"], f"a stale tree replaced tree 2: {bands(page)}"
 
 
 def check_slow_index(page: Page, base: str) -> None:
@@ -544,7 +651,7 @@ def check_slow_index(page: Page, base: str) -> None:
     page.evaluate("location.hash = 'tree=2'")
     page.wait_for_timeout(3 * SETTLE_MS)
     assert page.is_hidden("#error"), "a URL change before the index loaded failed"
-    assert page.inner_text("#crumbs") == "/fixture2", "tree 2 not shown"
+    assert bands(page) == ["solo"], f"tree 2 not shown: {bands(page)}"
 
 
 def refresh_with(page: Page, index: list, tree: dict) -> None:
@@ -559,16 +666,16 @@ def refresh_with(page: Page, index: list, tree: dict) -> None:
 def check_refresh_after_regeneration(page: Page, base: str) -> None:
     """A regenerated tree file is fetched even with no new sample."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
-    tree["threshold"] = 2**40  # e.g. a rerun with another --threshold
+    tree["sets"].append({"name": "New", "paths": ["A"]})  # e.g. an edited sets file
     tree["generated"] = "2026-10-01T04:00:00Z"
     index = json.loads((FIXTURE / "trees.json").read_text())
     index[0]["generated"] = tree["generated"]
 
     page.clock.install()
-    page.goto(f"{base}#tree=1")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1")
     refresh_with(page, index, tree)
-    assert "≥ 1.00 TiB" in page.inner_text("#summary"), "regenerated file not fetched"
+    sets = page.eval_on_selector_all("#set option", "os => os.map(o => o.value)")
+    assert "New" in sets, f"regenerated file not fetched: {sets}"
 
 
 def check_refresh_keeps_zoom(page: Page, base: str) -> None:
@@ -577,24 +684,16 @@ def check_refresh_keeps_zoom(page: Page, base: str) -> None:
     times = tree["times"]  # hourly points 00:00, 01:00, 02:00
     later = "2026-10-01T03:00:00Z"
     tree["times"] = [*times[1:], later]  # 00:00 merged away, 03:00 added
-    for series in [
-        *tree["rbytes"].values(),
-        *(u["own"] for u in tree["units"].values()),
-    ]:
-        series[:] = [*series[1:], series[-1]]
+    for series in tree["rbytes"].values():
+        if isinstance(series, list):  # else one number: the same at every point
+            series[:] = [*series[1:], series[-1]]
     index = json.loads((FIXTURE / "trees.json").read_text())
     tree["generated"] = index[0]["generated"] = "2026-10-01T04:00:00Z"
     index[0]["last_sample"] = later
 
     page.clock.install()
-    page.goto(f"{base}#tree=1")
-    page.wait_for_timeout(SETTLE_MS)
-    page.evaluate(
-        """([from, to]) => echarts.getInstanceByDom(document.getElementById("chart"))
-            .dispatchAction({type: "dataZoom", startValue: from, endValue: to})""",
-        [times[1], times[-1]],
-    )
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1")
+    act(page, lambda: zoom(page, "chart", times[1], times[-1]))
     refresh_with(page, index, tree)
     shown = page.inner_text("#table-range")
     start, end = page.evaluate(
@@ -612,11 +711,11 @@ def check_click_between_points(page: Page, base: str) -> None:
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["tree"]["max_depth"] = 2
     tree["times"] = [t0, t1]
-    tree["rbytes"] = {".": [200 * gib, 100 * gib], "G": g, "G/x": g, "H": h, "H/y": h}
-    tree["units"] = {"G/x": {"own": g, "leaf": True}, "H/y": {"own": h, "leaf": True}}
+    tree["rbytes"] = {"G": g, "G/x": g, "H": h, "H/y": h}
+    tree["sets"] = [{"name": "Top level", "paths": ["G", "H"]}]
+    tree["split"] = ["G", "H"]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
-    page.goto(f"{base}#tree=1&group=1")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree=1")
     # A quarter of the way along, G's top is at 75 GiB; the nearest point's 100.
     x, y = page.evaluate(
         """([t0, t1, bytes]) => {
@@ -629,76 +728,68 @@ def check_click_between_points(page: Page, base: str) -> None:
         }""",
         [t0, t1, 80 * gib],
     )
-    page.mouse.click(x, y)
-    page.wait_for_timeout(SETTLE_MS)
-    state = page.evaluate("location.hash")
-    assert "in=H" in state, f"click between points drilled to {state}"
+    act(page, lambda: page.mouse.click(x, y))
+    assert "in=H" in state(page), f"click between points drilled to {state(page)}"
+    assert "depth=1" in state(page), f"chart drill not at Depth 1: {state(page)}"
 
 
 def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     """Generic checks of one tree of real data."""
-
-    def state() -> str:
-        return page.evaluate("location.hash")
-
-    page.goto(f"{base}#tree={tree}&group=1")
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree={tree}")
     if shots:
         page.screenshot(path=shots / f"tree-{tree}.png")
-    groups = page.locator("#legend button.link")
-    if groups.count():
-        groups.first.click()
-        page.wait_for_timeout(SETTLE_MS)
-        assert "in=" in state(), f"tree {tree}: drilling did not change the view"
+    assert page.input_value("#depth") == "0", f"tree {tree}: Depth not 0"
+    n = len(bands(page))
+    assert n <= 64, f"tree {tree}: {n} bands drawn"
+    assert n or page.is_visible("#stack-empty"), f"tree {tree}: no bands, no note"
+    if int(page.get_attribute("#depth", "max")) >= 1:
+        go(page, f"{base}#tree={tree}&depth=1")
+        assert page.input_value("#depth") == "1", f"tree {tree}: Depth 1 not shown"
+        assert bands(page), f"tree {tree}: no bands at Depth 1"
+        if shots:
+            page.screenshot(path=shots / f"tree-{tree}-depth-1.png")
+        go(page, f"{base}#tree={tree}")
+    drillable = page.locator("#legend button.link")
+    if drillable.count():
+        act(page, drillable.first.click)
+        assert "in=" in state(page), f"tree {tree}: drilling did not change the view"
+        assert page.input_value("#depth") == "1", f"tree {tree}: drilled not at Depth 1"
+        assert bands(page), f"tree {tree}: no bands after drilling"
     hide = page.locator("#legend button.hide")
     if hide.count():
-        hide.first.click()
-        page.wait_for_timeout(SETTLE_MS)
-        assert "hide=" in state(), f"tree {tree}: hiding did not change the view"
-        page.reload()
-        page.wait_for_timeout(SETTLE_MS)
+        act(page, hide.first.click)
+        assert "hide=" in state(page), f"tree {tree}: hiding did not change the view"
+        act(page, page.reload)
         assert page.locator("#hidden-list button").count() == 1, "hide not restored"
-        page.locator("#hidden-list button").first.click()
-        page.wait_for_timeout(SETTLE_MS)
-        assert "hide=" not in state(), f"tree {tree}: unhiding failed"
+        act(page, page.locator("#hidden-list button").first.click)
+        assert "hide=" not in state(page), f"tree {tree}: unhiding failed"
 
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
-    sets = next(t["watched"] for t in entries if t["id"] == tree)
-    if not any(w["dirs"] for t in entries for w in t["watched"]):
-        return
-    page.goto(f"{base}#tree={tree}&view=watched")
-    page.wait_for_timeout(SETTLE_MS)
+    sets = next(t["sets"] for t in entries if t["id"] == tree)
+    go(page, f"{base}#tree={tree}&view=trends")
     if shots:
-        page.screenshot(path=shots / f"tree-{tree}-watched.png", full_page=True)
-    if not sets:
-        assert page.is_visible("#watch-note"), f"tree {tree}: no note without sets"
-        return
+        page.screenshot(path=shots / f"tree-{tree}-trends.png", full_page=True)
     for w in sets:
         # Unchanged cards are hidden, and counted, unless asked for.
-        page.goto(f"{base}#tree={tree}&view=watched")
-        page.wait_for_timeout(SETTLE_MS)
-        page.select_option("#set", w["name"])
-        page.wait_for_timeout(SETTLE_MS)
+        go(page, f"{base}#tree={tree}&view=trends")
+        act(page, lambda name=w["name"]: page.select_option("#set", name))
         shown = page.locator("#cards .trend-card").count()
         hidden = page.eval_on_selector(
-            "#watch-hidden", "e => e.hidden ? 0 : parseInt(e.textContent)"
+            "#watch-hidden", "e => e.hidden ? 0 : parseInt(e.textContent.match(/\\d+/))"
         )
-        page.check("#flat")
-        page.wait_for_timeout(SETTLE_MS)
+        act(page, lambda: page.check("#flat"))
         n = page.locator("#cards .trend-card").count()
         where = f"tree {tree}, set {w['name']!r}"
         assert n == w["dirs"], f"{where}: {n} cards, trees.json says {w['dirs']}"
         assert shown + hidden == n, f"{where}: {shown} shown + {hidden} hidden != {n}"
         if not n:
-            assert page.is_visible("#watch-empty"), f"{where}: no note without cards"
+            assert page.is_visible("#stack-empty"), f"{where}: no note without cards"
     if not any(w["dirs"] for w in sets):
         return
     # The rest needs cards: the first set with any.
     first = next(w["name"] for w in sets if w["dirs"])
-    page.goto(f"{base}#tree={tree}&view=watched&flat=1")
-    page.wait_for_timeout(SETTLE_MS)
-    page.select_option("#set", first)
-    page.wait_for_timeout(SETTLE_MS)
+    go(page, f"{base}#tree={tree}&view=trends&flat=1")
+    act(page, lambda: page.select_option("#set", first))
 
     # Drag the slider's left handle a third of the way; cards follow.
     before = page.inner_text("#watch-range")
@@ -713,17 +804,13 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
 
     other = next((t["id"] for t in entries if t["id"] != tree), None)
     if other is not None:
-        page.select_option("#tree", str(other))
-        page.wait_for_timeout(SETTLE_MS)
-        assert "view=watched" in state(), f"tree {tree}: tree change left Watched"
-        page.goto(f"{base}#tree={tree}&view=watched&flat=1")
-        page.wait_for_timeout(SETTLE_MS)
-        page.select_option("#set", first)
-        page.wait_for_timeout(SETTLE_MS)
-    page.locator("#cards .trend-card").first.click()
-    page.wait_for_timeout(SETTLE_MS)
-    assert "view=" not in state(), f"tree {tree}: click-through stayed in Watched"
-    assert page.locator("#legend li").count(), f"tree {tree}: Units not shown"
+        act(page, lambda: page.select_option("#tree", str(other)))
+        assert "view=trends" in state(page), f"tree {tree}: tree change left Trends"
+        go(page, f"{base}#tree={tree}&view=trends&flat=1")
+        act(page, lambda: page.select_option("#set", first))
+    act(page, page.locator("#cards .trend-card").first.click)
+    assert "view=" not in state(page), f"tree {tree}: click-through stayed in Trends"
+    assert bands(page), f"tree {tree}: Stack view not shown"
 
 
 def run_checks(
@@ -742,7 +829,7 @@ def run_checks(
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--chrome", default="/usr/bin/google-chrome-stable")
-    p.add_argument("--shots", type=Path, help="save a screenshot per real tree here")
+    p.add_argument("--shots", type=Path, help="save screenshots per real tree here")
     args = p.parse_args()
 
     real = WEB / "data" / "trees.json"
@@ -757,12 +844,11 @@ def main() -> int:
         for check in (
             check_model,
             check_fixture,
-            check_watched,
-            check_watch_sets,
+            check_trends,
+            check_sets,
             check_sort_and_unchanged,
-            check_watched_resize,
+            check_trends_resize,
             check_absent_in_range,
-            check_no_watched,
             check_slow_tree,
             check_slow_index,
             check_refresh_after_regeneration,
