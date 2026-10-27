@@ -8,7 +8,6 @@ from dirhistory.history import (
     ROOT,
     Resolution,
     Sample,
-    ancestors,
     choose_points,
     summarize,
 )
@@ -41,12 +40,6 @@ def run(rows, n=None, step=timedelta(hours=1), sets=(), cap=100):
         return [r for r in rows if r[1] in paths]
 
     return summarize(samples(n, step), changed, first, fetch, sets=sets, max_dirs=cap)
-
-
-def test_ancestors_end_at_root():
-    assert list(ancestors(b"a/b/c")) == [b"a/b", b"a", ROOT]
-    assert list(ancestors(b"a")) == [ROOT]
-    assert list(ancestors(ROOT)) == []
 
 
 def test_choose_points_keeps_every_sample_when_few():

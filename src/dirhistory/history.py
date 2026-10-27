@@ -8,7 +8,7 @@ them, including a directory's own-files size (its rbytes minus its stored
 subdirectories'), so no own sizes are computed here.
 """
 
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -65,13 +65,6 @@ def parent(path: bytes) -> bytes:
     """Return the parent of PATH, which must not be ROOT."""
     head, sep, _ = path.rpartition(b"/")
     return head if sep else ROOT
-
-
-def ancestors(path: bytes) -> Iterator[bytes]:
-    """Yield the ancestors of PATH, nearest first, ending with ROOT."""
-    while path != ROOT:
-        path = parent(path)
-        yield path
 
 
 @dataclass(frozen=True, slots=True)

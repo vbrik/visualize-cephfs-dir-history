@@ -13,24 +13,28 @@ from time import perf_counter
 
 import psycopg
 
-from dirhistory import __version__, db, watch
+from dirhistory import __version__, db, sets
 from dirhistory.db import Tree
 from dirhistory.history import (
     MAX_POINTS,
     MIN_BUCKET,
     RECENT,
     Resolution,
+    Series,
     TreeHistory,
     summarize,
 )
-from dirhistory.watch import MAX_WATCHED, TooManyWatched, Watched, WatchSet
+from dirhistory.sets import (
+    IMPLICIT,
+    MAX_DIRS,
+    DirSet,
+    SetDirs,
+    TooManyDirs,
+    with_implicit,
+)
 
-DEFAULT_THRESHOLD = "10GiB"
-DEFAULT_MAX_UNITS = 1000
 INDEX = "trees.json"
 
-_SIZE = re.compile(r"(\d+(?:\.\d+)?)\s*([kmgtp]i)b", re.IGNORECASE)
-_POWERS = {"k": 1, "m": 2, "g": 3, "t": 4, "p": 5}
 _DURATION = re.compile(r"(\d+)([smhdw])")
 _DURATION_UNITS = {
     "s": "seconds",
@@ -46,30 +50,16 @@ database: one tree-ID.json per tree and the index trees.json, replaced
 atomically. Run it periodically (e.g. hourly, from a systemd timer); the page
 in web/ reads the files.
 
-Charts stack the *own size* of *units*. A directory's own size is its rbytes
-minus its subdirectories' rbytes: the bytes of the files directly in it. A
-directory without sampled subdirectories (none, or at the tree's max depth)
-owns its whole rbytes. A unit is a directory whose own size changed by at
-least --threshold over the tree's history. Own sizes never overlap, so units
-never count the same bytes twice.
-
-The page's Watched view charts the whole size (rbytes) of the directories
-that the --watch file names for each tree, one card each. A tree's directories
-come in named watch sets, which the page shows one at a time.
+The sets file (--sets, required; an empty file is valid) names, per tree,
+sets of directories. Each tree also gets the implicit set "Top level", its
+top-level directories. The page's Stack view charts the rbytes of a set's
+directories as bands, and can split a directory into its subdirectories,
+down to the depth the set stores. Its Trends view shows one card per
+directory of a set.
 
 The database is only read. Prints each file written to stdout; notes go to
 stderr.
 """
-
-
-def parse_size(text: str) -> int:
-    """Return the bytes in TEXT: an integer, or a number with a binary unit
-    (KiB, MiB, GiB, TiB, PiB; any case). Raises ValueError otherwise."""
-    if text.isdigit():
-        return int(text)
-    if m := _SIZE.fullmatch(text.strip()):
-        return int(float(m[1]) * 1024 ** _POWERS[m[2][0].lower()])
-    raise ValueError(f"invalid size {text!r}: use bytes or a unit, e.g. 10GiB")
 
 
 def parse_duration(text: str) -> timedelta:
@@ -113,13 +103,18 @@ def iso(t: datetime) -> str:
     return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def tree_document(
-    tree: Tree, history: TreeHistory, threshold: int, generated: datetime
-) -> dict:
+def compact(series: Series) -> Series | int | None:
+    """Return the one value of SERIES if all its points are equal, else
+    SERIES. Most stored dirs never change, so this keeps files small."""
+    return series[0] if series and len(set(series)) == 1 else series
+
+
+def tree_document(tree: Tree, history: TreeHistory, generated: datetime) -> dict:
     """Return the JSON document of a tree file.
 
     Paths are os.fsdecode'd: bytes that are not UTF-8 become lone surrogates,
-    which JSON escapes (write_json keeps ensure_ascii).
+    which JSON escapes (write_json keeps ensure_ascii). A series that is the
+    same at every time point is one number (see compact).
     """
     return {
         "generated": iso(generated),
@@ -130,17 +125,13 @@ def tree_document(
             "cluster": tree.cluster_fsid,
             "max_depth": tree.max_depth,
         },
-        "threshold": threshold,
         "times": [iso(t) for t in history.times],
-        "rbytes": {os.fsdecode(p): s for p, s in history.rbytes.items()},
-        "units": {
-            os.fsdecode(p): {"own": u.own, "leaf": u.leaf}
-            for p, u in history.units.items()
-        },
-        "watched": [
-            {"name": w.name, "paths": [os.fsdecode(p) for p in w.paths]}
-            for w in history.watched
+        "rbytes": {os.fsdecode(p): compact(s) for p, s in history.rbytes.items()},
+        "sets": [
+            {"name": s.name, "paths": [os.fsdecode(p) for p in s.paths]}
+            for s in history.sets
         ],
+        "split": [os.fsdecode(p) for p in history.split],
     }
 
 
@@ -154,8 +145,7 @@ def index_entry(tree: Tree, history: TreeHistory, generated: datetime) -> dict:
         "file": f"tree-{tree.id}.json",
         "last_sample": iso(history.times[-1]),
         "generated": iso(generated),
-        "units": len(history.units),
-        "watched": [{"name": w.name, "dirs": len(w.paths)} for w in history.watched],
+        "sets": [{"name": s.name, "dirs": len(s.paths)} for s in history.sets],
     }
 
 
@@ -183,15 +173,14 @@ def display(path: bytes) -> str:
 def read_tree(
     conn,
     tree: Tree,
-    threshold: int,
-    limit: int,
     res: Resolution,
-    watch: Sequence[WatchSet] = (),
-    watch_limit: int = MAX_WATCHED,
+    dir_sets: Sequence[DirSet],
+    max_dirs: int,
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
     as of its latest sample, or None if it has no samples. Reads in one
-    transaction, i.e. one snapshot. WATCH and WATCH_LIMIT go to summarize."""
+    transaction, i.e. one snapshot. DIR_SETS and MAX_DIRS go to summarize
+    (which raises TooManyDirs)."""
     with conn.transaction():
         samples = db.samples(conn, tree.id)
         if not samples:
@@ -201,51 +190,52 @@ def read_tree(
         history = summarize(
             samples,
             changed,
-            db.sample_rows(conn, samples[0].id),
+            db.sample_paths(conn, samples[0].id),
             lambda paths: db.path_rows(conn, tree.id, paths),
-            threshold,
-            limit,
             res,
-            watch,
-            watch_limit,
+            dir_sets,
+            max_dirs,
         )
     return history, errors
 
 
-def watch_warnings(
-    tree: Tree, sets: Sequence[WatchSet], watched: Sequence[Watched]
+def set_warnings(
+    tree: Tree, dir_sets: Sequence[DirSet], found: Sequence[SetDirs]
 ) -> list[str]:
-    """Return a warning per pattern of TREE's watch SETS that matched no
-    directory (WATCHED, per set, counts each pattern's matches)."""
+    """Return a warning per pattern of TREE's DIR_SETS that matched no
+    directory (FOUND, per set, counts each pattern's matches). The implicit
+    set never warns: it is no one's mistake if a tree has no subdirectories."""
     return [
-        f"WARNING: tree {tree.id} ({display(tree.fs_path)}): watch set"
+        f"WARNING: tree {tree.id} ({display(tree.fs_path)}): set"
         f" {s.name!r}: pattern {p.text!r} matches no directory"
-        for s, w in zip(sets, watched, strict=True)
-        for p, n in zip(s.patterns, w.found, strict=True)
+        for s, f in zip(dir_sets, found, strict=True)
+        if s is not IMPLICIT
+        for (p, _), n in zip(s.patterns(), f.found, strict=True)
         if not n
     ]
 
 
 def tree_sets(
-    config: Mapping[bytes, Sequence[WatchSet]], all_trees: Sequence[Tree]
-) -> dict[int, Sequence[WatchSet]]:
-    """Return the watch sets by tree id: each section of CONFIG (by tree
-    root) goes to the tree of ALL_TREES with that fs_path.
+    config: Mapping[bytes, Sequence[DirSet]], all_trees: Sequence[Tree]
+) -> dict[int, list[DirSet]]:
+    """Return the sets by tree id, for every tree of ALL_TREES: each section
+    of CONFIG (by tree root) goes to the tree with that fs_path, and every
+    tree has the implicit set (sets.with_implicit).
 
     Raises ValueError for a section without a tree, or with several trees
     (tree roots are assumed unique, so they cannot be told apart).
     """
-    by_tree: dict[int, Sequence[WatchSet]] = {}
-    for root, sets in config.items():
+    by_tree: dict[int, list[DirSet]] = {t.id: with_implicit([]) for t in all_trees}
+    for root, dir_sets in config.items():
         ids = [t.id for t in all_trees if t.fs_path == root]
         if not ids:
-            raise ValueError(f"--watch: no tree has root {display(root)}")
+            raise ValueError(f"--sets: no tree has root {display(root)}")
         if len(ids) > 1:
             raise ValueError(
-                f"--watch: trees {', '.join(map(str, ids))} all have root"
+                f"--sets: trees {', '.join(map(str, ids))} all have root"
                 f" {display(root)}, so it cannot name one"
             )
-        by_tree[ids[0]] = sets
+        by_tree[ids[0]] = with_implicit(dir_sets)
     return by_tree
 
 
@@ -283,19 +273,21 @@ def parser() -> argparse.ArgumentParser:
         help="directory for the data files (default: %(default)s)",
     )
     p.add_argument(
-        "--threshold",
-        type=_size_arg,
-        default=DEFAULT_THRESHOLD,
-        metavar="SIZE",
-        help="own-size change that makes a directory a unit (default: %(default)s)",
+        "--sets",
+        type=Path,
+        required=True,
+        metavar="FILE",
+        help="TOML file of named sets of directories per tree:"
+        ' [tree."/tree/root".set."NAME"] dirs = [{ match = ["dir/*"], depth = N }];'
+        " see deploy/sets.toml.example",
     )
     p.add_argument(
-        "--max-units",
+        "--max-dirs",
         type=_positive_int,
+        default=MAX_DIRS,
         metavar="N",
-        default=DEFAULT_MAX_UNITS,
-        help="keep at most this many units per tree, largest change first"
-        " (default: %(default)s)",
+        help="fail if a tree's sets store more directories than this, counting"
+        " the ones depth adds (default: %(default)s)",
     )
     p.add_argument(
         "--recent",
@@ -319,24 +311,7 @@ def parser() -> argparse.ArgumentParser:
         default=format_duration(MIN_BUCKET),
         metavar="DURATION",
         help="finest time bucket; below 1h, rbytes propagation lag can make"
-        " ghost units (default: %(default)s)",
-    )
-    p.add_argument(
-        "--watch",
-        type=Path,
-        metavar="FILE",
-        help="TOML file of directories to chart in the page's Watched view,"
-        ' in named sets per tree: [tree."/tree/root".set."NAME"] watch ='
-        ' ["dir/*", ...], paths below the tree root whose components may hold'
-        " wildcards (*, ?, [...]); see deploy/watch.toml.example (default: none)",
-    )
-    p.add_argument(
-        "--max-watched",
-        type=_positive_int,
-        metavar="N",
-        default=MAX_WATCHED,
-        help="fail if a --watch set's patterns match more than this many dirs"
-        " (default: %(default)s)",
+        " one-point dips in own-files bands (default: %(default)s)",
     )
     p.add_argument(
         "--tree",
@@ -349,16 +324,6 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true", help="report per-tree stats")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
-
-
-def _size_arg(text: str) -> int:
-    try:
-        size = parse_size(text)
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(str(e)) from None
-    if size == 0:
-        raise argparse.ArgumentTypeError("must be more than 0")
-    return size
 
 
 def _duration_arg(text: str) -> timedelta:
@@ -394,27 +359,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
     try:
-        config = watch.load(args.watch) if args.watch else {}
-        return run(args, config)
+        return run(args, sets.load(args.sets))
     except (db.DbError, psycopg.Error, OSError, ValueError) as e:
         return _error(str(e).strip())
 
 
-def run(
-    args: argparse.Namespace,
-    config: Mapping[bytes, Sequence[WatchSet]] | None = None,
-) -> int:
-    """Write the data files ARGS ask for, watching CONFIG's sets (by tree
-    root, as watch.load returns them); return the exit status.
+def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> int:
+    """Write the data files ARGS ask for, with CONFIG's sets (by tree root,
+    as sets.load returns them); return the exit status.
 
     Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree,
-    a CONFIG section that names no single tree, or a watch set with more
-    watched dirs than --max-watched.
+    a CONFIG section that names no single tree, or a tree whose sets store
+    more directories than --max-dirs.
     """
     conn = db.connect(args.db)
     db.check_schema(conn)
     all_trees = db.trees(conn)
-    sets = tree_sets(config or {}, all_trees)
+    dir_sets = tree_sets(config, all_trees)
     chosen = select_trees(all_trees, args.tree)
     args.out.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(UTC)
@@ -422,22 +383,17 @@ def run(
     with conn:
         for tree in chosen:
             start = perf_counter()
-            watch_sets = sets.get(tree.id, ())
             try:
                 result = read_tree(
-                    conn,
-                    tree,
-                    args.threshold,
-                    args.max_units,
-                    resolution(args),
-                    watch_sets,
-                    args.max_watched,
+                    conn, tree, resolution(args), dir_sets[tree.id], args.max_dirs
                 )
-            except TooManyWatched as e:
+            except TooManyDirs as e:
+                per_set = ", ".join(f"{name}: {n}" for name, n in e.counts)
                 raise ValueError(
-                    f"tree {tree.id} ({display(tree.fs_path)}): watch set {e.name!r}"
-                    f" matches {e.found} directories, more than --max-watched"
-                    f" {e.limit}. Narrow its patterns or raise --max-watched."
+                    f"tree {tree.id} ({display(tree.fs_path)}): its sets store"
+                    f" {e.found} directories, more than --max-dirs {e.limit}"
+                    f" ({per_set}). Lower their depths, narrow their patterns or"
+                    " raise --max-dirs."
                 ) from None
             if result is None:
                 _note(
@@ -446,7 +402,7 @@ def run(
                 continue
             history, errors = result
             path = args.out / f"tree-{tree.id}.json"
-            write_json(path, tree_document(tree, history, args.threshold, generated))
+            write_json(path, tree_document(tree, history, generated))
             entries.append(index_entry(tree, history, generated))
             print(path)
             if errors:
@@ -455,14 +411,13 @@ def run(
                     " directories could not be read in its latest sample. Below them,"
                     " changes go unseen and sizes may be stale."
                 )
-            for warning in watch_warnings(tree, watch_sets, history.watched):
+            for warning in set_warnings(tree, dir_sets[tree.id], history.sets):
                 _note(warning)
             if args.verbose:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}):"
-                    f" {len(history.times)} points, {len(history.units)} units,"
-                    f" {sum(len(w.paths) for w in history.watched)} watched"
-                    f" in {_count(len(history.watched), 'set')},"
+                    f" {len(history.times)} points, {len(history.rbytes)} stored"
+                    f" dirs in {_count(len(history.sets), 'set')},"
                     f" {perf_counter() - start:.1f} s"
                 )
     index = args.out / INDEX
