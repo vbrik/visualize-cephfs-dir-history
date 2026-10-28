@@ -282,7 +282,7 @@ td { font-variant-numeric: tabular-nums; }
 .controls .seg button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
 .controls .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
 
-/* Watched view: trend cards, after the 2b mock */
+/* Trends view: trend cards, after the 2b mock */
 #watch-range { margin: 0 0 12px; }
 #watch-hidden { margin: -8px 0 12px; }
 .cards {

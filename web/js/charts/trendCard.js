@@ -1,4 +1,4 @@
-// View 2b: a watched dir's trend card sparkline, as plain SVG path data.
+// The Trends view: a set dir's trend card sparkline, as plain SVG path data.
 // One ECharts instance per card took 20 s to draw 3000 cards; paths drawn
 // in a fixed viewBox, stretched to the card (preserveAspectRatio="none",
 // non-scaling strokes), cost next to nothing and need no resize handling.
