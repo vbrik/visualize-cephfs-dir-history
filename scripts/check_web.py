@@ -379,7 +379,9 @@ def check_picks(page: Page, base: str) -> None:
     assert delta.get_attribute("data-order") == "up", "no reversed arrow"
     # The tooltip lists bands in the legend's order, at every point.
     for i in (0, 1):
-        assert tooltip_names(page, i) == ["Z", "A"], f"tooltip at {i}: {tooltip_names(page, i)}"
+        assert tooltip_names(page, i) == ["Z", "A"], (
+            f"tooltip at {i}: {tooltip_names(page, i)}"
+        )
     act(page, delta.click)
     assert "lsort=" not in state(page), state(page)
     assert bands(page) == ["A", "Z", caf, "Q"], f"chart order: {bands(page)}"
@@ -969,7 +971,9 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     act(page, lambda: page.select_option("#sort", "name"))
     # Z/y is unchanged (flat), so it comes after the others even by name.
     names = cards(page)
-    assert names[0] == "A" and names[2] == "Z/y" and len(names) == 3, f"by name: {names}"
+    assert names[0] == "A" and names[2] == "Z/y" and len(names) == 3, (
+        f"by name: {names}"
+    )
     act(page, lambda: page.select_option("#sort", "size"))
     assert "sort=size" in state(page), f"sort not in the URL: {state(page)}"
     act(page, page.reload)

@@ -9,8 +9,11 @@ import { escapeHtml, formatBytes, formatDelta } from "../model.js";
  * colors: {bands: Map key -> color, surface, ink, muted, grid}. range: [a, b]
  * point indexes; the tooltip shows each value's change since point a.
  * format: a value as text (default model.formatBytes), for the axis and tooltip.
+ * order: MODEL's bands in the tooltip's row order (default: stack order, top
+ * first), e.g. the legend's, so each row's place does not depend on the
+ * hovered point.
  */
-export function stackedAreaOption(data, model, { colors, range, format = formatBytes }) {
+export function stackedAreaOption(data, model, { colors, range, format = formatBytes, order }) {
   const times = data.times.map((t) => Date.parse(t));
   const layers = model.bands.map((b) => ({
     id: b.key,
@@ -18,6 +21,8 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
     values: b.values,
     color: colors.bands.get(b.key),
   }));
+  const layerOf = new Map(layers.map((l) => [l.id, l]));
+  const rowOrder = order ? order.map((b) => layerOf.get(b.key)) : layers.toReversed();
 
   return {
     animation: false,
@@ -44,7 +49,7 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
       textStyle: { color: colors.ink },
       confine: true,
       // params is empty when no band is drawn (all hidden or unticked).
-      formatter: (params) => (params.length ? tooltip(params[0].dataIndex, layers, data, range, format) : ""),
+      formatter: (params) => (params.length ? tooltip(params[0].dataIndex, layers, rowOrder, data, range, format) : ""),
     },
     dataZoom: [
       { type: "slider", bottom: 16, height: 24, labelFormatter: "", borderColor: colors.grid },
@@ -69,13 +74,13 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
 // Most bands the tooltip lists; the rest share one row.
 const TOOLTIP_ROWS = 30;
 
-function tooltip(i, layers, data, [a], format) {
+/** The tooltip at point I: the largest LAYERS there, in ROWORDER (the
+ * same layers, reordered); the rest summed in one row; and the total. */
+function tooltip(i, layers, rowOrder, data, [a], format) {
   const when = new Date(data.times[i]).toLocaleString();
-  // The largest at point I, in stack order (top first).
   const listed = new Set(layers.toSorted((x, y) => y.values[i] - x.values[i]).slice(0, TOOLTIP_ROWS));
   const sum = (ls, j) => ls.reduce((s, l) => s + l.values[j], 0);
-  const rows = layers
-    .toReversed()
+  const rows = rowOrder
     .filter((l) => listed.has(l))
     .map((l) => row(l.color, l.name, l.values[i], l.values[i] - l.values[a], format));
   const others = layers.filter((l) => !listed.has(l));
