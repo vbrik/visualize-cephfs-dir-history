@@ -1,8 +1,15 @@
 # Watched directories view (design 2b) — design
 
+> **Superseded 2026-10-23** by
+> [Sets drive both views: Stack and Trends](2026-10-23-sets-stack-trends-design.md).
+> The watch file (`--watch`, `watch = [...]`) and `--max-watched` became
+> the sets file (`--sets`, `dirs = [{ match, depth }]`) and `--max-dirs`;
+> the Watched view is the Trends view, with one set shared with the Stack
+> view. The text below describes the design as first built.
+
 Status: draft for approval, 2026-10-22.
 *(Superseded 2026-10-23: the config file is per tree, with patterns relative
-to the tree root; see docs/design.md, Watched directories. The "Config file"
+to the tree root; see docs/design.md, Sets. The "Config file"
 and "Matching and order" sections below describe the original global list.)*
 Source: view "2b Small multiples" in `docs/Cephfs_Directory_Growth_design_example.html`
 (a bundled page; its template and logic decode from the `__bundler/template`
@@ -106,7 +113,7 @@ watch = [
   several patterns appears once, at its first pattern.
 - Cap: `--max-watched N` (default 100) per tree, applied after ordering. When
   it cuts dirs, a `WARNING:` names the tree and how many were dropped.
-  *(Superseded 2026-10-23: see docs/design.md, Watched directories. The default is
+  *(Superseded 2026-10-23: see docs/design.md, Sets. The default is
   5000, and more watched dirs is an `ERROR:`; nothing is cut.)*
 - `WARNING:` for a pattern that applies to at least one tree selected by
   `--tree` (all trees by default) but matches no dir in any of them, and for a

@@ -7,22 +7,21 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 |---|---|
 | tree | A CephFS directory sampled by trackdir to one `max_depth`; a row of `trackdir.tree`. One page view shows one tree. |
 | rbytes | CephFS recursive bytes: the size of a directory's whole subtree. Nested directories' rbytes overlap. |
-| own size | A directory's rbytes minus its direct subdirectories' rbytes: the bytes of the files directly in it. For a directory without sampled subdirectories (none, or at `max_depth`) it is its whole rbytes. Own sizes never overlap and add up to ROOT's rbytes. |
-| unit | A directory whose own size changed by at least the threshold over the tree's history. Units are what the charts stack. |
-| leaf unit | A unit without sampled subdirectories (none ever, or at `max_depth`), so its own size is its whole rbytes; labeled by its path. Other units are labeled `path (own files)`. |
-| threshold | The own-size change that makes a directory a unit (`dirhistory-generate --threshold`, default 10 GiB). |
+| set | A named list of dir groups of one tree, in its `[tree."/fs/path".set."NAME"]` section of the `--sets` file, plus the implicit **Top level** set (`*`, depth 0). Both views show one set at a time ("Set"). |
+| dir group | One entry of a set's `dirs`: `{ match = [patterns], depth = N }`. A pattern is relative to the tree root; wildcards match within one path component; `.` is the root; no `**`. |
+| set dir | A dir that a pattern of one of the set's groups matches. |
+| depth (of a set dir) | How many levels below the set dir the data file stores, so the page can split or drill into it: 0 = the dir only, 1 = also its subdirs, … The largest `depth` of any group, in any set, matching the dir; limited by the tree's `max_depth`. |
+| stored dir | A dir whose series the tree file holds: a set dir, or a dir within its depth below one. |
+| split dir | A stored dir whose subdirs are all stored (the file's `split` list). Only these can be split or drilled into. |
+| Depth (page) | How many levels below the set dirs (or the drilled-into dir) the Stack view splits; 0 = the dirs themselves. A dir not in `split` stays whole. |
+| Top (page) | How many bands the Stack view draws, the largest spans first (default and max 64). The rest are not drawn. |
+| band | One stacked area: a dir's rbytes, or an own-files band. |
+| own-files band | `X/ bytes`: in a split dir X, the bytes of the files directly in X: rbytes(X) − Σ rbytes(X's stored subdirs), at least 0. |
+| drill | Click a band of a split dir to show only what is inside it, split one level (`in=` and Depth 1 in the URL hash). |
+| hidden | A band removed from the chart at every Depth: a dir band takes the dir's whole subtree with it, an own-files band only the files directly in the dir. The total shrinks. |
 | time point | One chart x position: the last sample in a UTC time bucket. Recent history (`--recent`) has the finest buckets (`--min-bucket`, 1 h); older history coarser ones, to stay within `--max-points`. |
-| band | One stacked area: a unit, or a group of units. |
-| group | Units summed into their ancestor N levels below the shown directory ("Group by"). Clicking a group shows its units. |
-| Smaller units | The units not drawn as their own band, because of "Bands" or "Min peak". |
-| Rest of tree | The shown directory's bytes that are in no unit: rbytes minus the own sizes of all its units. Off by default. |
-| hidden | A unit, or all units of a group, removed from the chart entirely: their bytes are in no band, so the total shrinks. Hiding a unit's own files does not hide the units below it. |
-| peak | A band's largest value in the shown time range; bands are ranked by it. |
-| watch set | A named list of watch patterns of one tree, in its `[tree."/fs/path".set."NAME"]` section of the `--watch` file. The Watched view shows one set at a time ("Set"). |
-| watch pattern | A path pattern, relative to a tree's root, in one of that tree's watch sets, e.g. `IceCube/*/filtered`; wildcards match within one path component. A pattern applies only to its own tree. |
-| watched dir | A directory of a tree that a pattern of one of the tree's watch sets matches. |
-| trend card | One watched dir's card in the Watched view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
-| span | A trend card's largest minus smallest size in the shown range, absent counting as 0; the Watched view's default sort. |
+| trend card | One set dir's card in the Trends view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
+| span | A band's or card's largest minus smallest size in the shown range, absent counting as 0. The Stack view ranks bands by it (Top), and the Trends view sorts cards by it by default. |
+| peak | A band's or card's largest size in the shown range (the table's Peak column; the Trends *Peak* sort). |
 | unchanged | A trend card whose span is 0: constant, or absent throughout the shown range. Hidden unless *Show unchanged* is on. |
-| Units view / Watched view | The page's two views (`view=` in the URL hash): stacked units, or trend cards of a watch set's dirs. |
-| ghost unit | A directory that looks like a unit only because CephFS propagates rbytes upward with a delay, so its own size dips while a child has grown but it has not yet. See [design.md](design.md#propagation-lag). |
+| Stack view / Trends view | The page's two views (`view=stack`, the default, or `view=trends` in the URL hash): stacked bands of a set's dirs, or a trend card per set dir. |

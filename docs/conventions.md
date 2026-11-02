@@ -11,17 +11,20 @@
 - Sizes are integer bytes everywhere; the page formats them in IEC units
   (KiB … PiB), like `trackdir db summary`.
 - Times in JSON are UTC ISO 8601 to the second (`2026-10-21T19:19:45Z`).
-- `history.py` is pure (no database, no I/O) and holds the logic;
-  `db.py` only queries; `generate.py` wires them and writes files. Tests
-  target `history.py` and the pure parts of `generate.py` and need no
-  database.
+- `history.py` and `sets.py` are pure (no database; only `sets.load` reads
+  its file) and hold the logic; `db.py` only queries; `generate.py` wires
+  them and writes files. Tests target `history.py`, `sets.py` and the pure
+  parts of `generate.py` and need no database.
 - `dirhistory-generate` prints the files it wrote to stdout; notes,
   `WARNING:` and `ERROR:` messages go to stderr.
 - Data files are replaced atomically and world-readable (subject to umask).
 - The page has no build step: plain ES modules, ECharts vendored in
   `web/vendor/` at a pinned version. Directory names are untrusted: insert
   them with `textContent`, or `escapeHtml` in ECharts tooltip HTML.
-- `web/js/model.js` holds the page's pure data shaping; chart modules in
+- `web/js/model.js` holds the page's pure data shaping (`normalize` a tree
+  file, `stackBands` for the Stack view, `trendCards` and `sortCards` for the
+  Trends view; views are named `stack`, the default, and `trends` in the URL
+  hash and in code); chart modules in
   `web/js/charts/` turn its output into ECharts options, or SVG path data
   for the trend cards' sparklines (too many for an ECharts instance each);
   `main.js` owns state (the URL hash) and the DOM.

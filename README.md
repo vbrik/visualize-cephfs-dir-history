@@ -7,16 +7,17 @@ records in PostgreSQL from CephFS recursive statistics (`ceph.dir.rbytes`).
 
 - `dirhistory-generate` reads the trackdir database and writes JSON data
   files. Run it periodically.
-- `web/` is the page: a stacked area chart per tree, with grouping,
-  drill-down, hiding, filters, a zoomable time range and a table view.
-  Any static web server can serve it.
+- `web/` is the page, per tree, with two views of a **set** of directories:
+  *Stack*, a stacked area chart of the set's directories, split into their
+  subdirectories by Depth, with drill-down, hiding, a zoomable time range and
+  a table; and *Trends*, a card per directory with its size over time. Any
+  static web server can serve it.
 
-Charts stack the **own size** of **units**. A directory's own size is its
-rbytes minus its subdirectories' rbytes: the bytes of the files directly in
-it, or its whole rbytes if trackdir sampled no subdirectories of it (none, or
-it is at the tree's max depth). A unit is a directory whose own size changed
-by at least a threshold (default 10 GiB). Own sizes never overlap, so the
-bands add up and no growth is counted twice. See [docs/terms.md](docs/terms.md) for the terms and
+Sets are lists of directories you choose in a TOML file (`--sets`); every tree
+also has the set **Top level**, its top-level directories. Stack bands are the
+directories' rbytes, the size of the whole subtree; `dir/ bytes` is the
+files directly in a split directory. Bands add up, unless a set holds a
+directory and one of its own subdirectories: those bytes can count twice. See [docs/terms.md](docs/terms.md) for the terms and
 [docs/design.md](docs/design.md) for the design, the data format and the
 known risks.
 
@@ -40,11 +41,16 @@ known risks.
 
 Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
 The database is only read. See `dirhistory-generate --help` for the options:
-threshold, unit limit, watched directories, trees, output directory, and
-time resolution. `--watch FILE` names the directories of the page's Watched
-view, in named sets per tree, in a TOML file; see [deploy/watch.toml.example](deploy/watch.toml.example).
-By
-default the last 7 days keep hourly points (`--recent`, `--min-bucket`),
+sets file, directory limit, trees, output directory, and time resolution.
+
+`--sets FILE` is required; an empty file gives each tree only its Top level
+set. The file names, per tree, sets of directories (patterns relative to the
+tree root) and how many levels below each the page can split and drill; see
+[deploy/sets.toml.example](deploy/sets.toml.example). A tree whose sets
+store more than `--max-dirs` directories (20000) is an error, which catches
+a depth or pattern that stores far more than meant.
+
+By default the last 7 days keep hourly points (`--recent`, `--min-bucket`),
 and older history gets coarser points so a tree has at most 400
 (`--max-points`).
 
@@ -64,9 +70,10 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
        install -d -m 755 /etc/dirhistory
        install -o dirhistory -g dirhistory -m 600 /dev/null /etc/dirhistory/pgpass
        # then add a line to it: db.example.org:5432:trackdir:trackdir:PASSWORD
-       install -m 644 deploy/watch.toml.example /etc/dirhistory/watch.toml
-       # then edit it (an empty file watches nothing); the service passes
-       # --watch, and fails if it is missing
+       install -m 644 deploy/sets.toml.example /etc/dirhistory/sets.toml
+       # then edit it: a section naming no tree is an error, so replace the
+       # example's trees (an empty file gives each tree only "Top level");
+       # the service passes --sets, and fails if the file is missing
 
 3. Copy [deploy/dirhistory.service](deploy/dirhistory.service) and
    [deploy/dirhistory.timer](deploy/dirhistory.timer) to
@@ -80,16 +87,16 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 
 | Control | Effect |
 |---|---|
-| Tree | Which sampled tree to show. |
-| View | *Units*: the stacked chart of units (the rows below). *Watched*: a trend card per watched dir of a watch set (`--watch`), each on its own scale; click one to see its units. Shown when any tree has watched dirs. |
-| Set | Watched view: which of the tree's watch sets to show, with its number of dirs. Changing the tree shows its first set. |
-| Group by | Sum units into their ancestor N levels down; click a group (in the legend or the chart) to show its units, and the path above the chart to go back. |
-| Bands | How many bands to name (up to 8); the rest are *Smaller units*. |
-| Min peak | Bands whose peak in the shown range is smaller join *Smaller units* (e.g. `1TiB`). |
-| Rest of tree | Also draw the bytes in no unit. Usually far larger than the units. |
-| hide | Remove a band's bytes from the chart: a unit, or every unit of a group (shown as `dir/`). Click the chip to bring it back. |
-| Sort | Watched view: card order, largest first, in the shown range: *Span* (max − min), *Peak* (max), *Current size* (at the range's end), or *Name*. |
-| Show unchanged | Watched view: also show cards whose size did not change in the shown range; hidden by default, and counted above the cards. |
+| Tree | Which sampled tree to show. Changing it shows the tree's first set. |
+| View | *Stack*: the stacked chart of the set's directories. *Trends*: a card per set directory, each on its own scale; click one to open it in Stack. |
+| Set | Which of the tree's sets to show, with its number of directories: Top level, then the sets of the `--sets` file. |
+| Depth | Stack: split each directory this many levels into its subdirectories; the files directly in a split directory are the band `dir/ bytes`. The most is the levels the data file stores below the shown directories. |
+| Top | Stack: draw only this many bands (1–64, default 64), those whose size changed most in the shown range; the summary counts the rest. |
+| Band (legend or chart) | Stack: click a band of a directory that can be split to show only what is inside it, one level down; the path above the chart goes back. |
+| hide | Stack: remove a band's bytes from the chart, at every Depth: a directory's, with everything in it, or `dir/ bytes`, the files directly in it. Click the chip to bring it back. |
+| Reset | Stack: restore Depth, Top, drill-down and hiding. |
+| Sort | Trends: card order, largest first, in the shown range: *Span* (max − min), *Peak* (max), *Current size* (at the range's end), or *Name*. |
+| Show unchanged | Trends: also show cards whose size did not change in the shown range; hidden by default, and counted above the cards. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
 
 The URL keeps the view, except the zoomed time range, so it can be bookmarked
@@ -101,7 +108,8 @@ or shared.
     ruff format && ruff check
     python scripts/check_web.py     # headless Chrome checks of web/: fixture + web/data
 
-Conventions are in [docs/conventions.md](docs/conventions.md). To add a
+Conventions are in [docs/conventions.md](docs/conventions.md). The sets
+file's format and pattern matching are in `src/dirhistory/sets.py`. To add a
 view, add a chart module under `web/js/charts/` that builds an ECharts
 option (or, for many small charts, SVG path data, as `trendCard.js` does)
 from `model.js` output, as `stackedArea.js` does, and a switch in

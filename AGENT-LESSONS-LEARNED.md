@@ -1,10 +1,11 @@
 # Agent Lessons Learned
 
-- Before choosing a selection rule over CephFS own sizes (rbytes minus
-  children's rbytes), run it against the real database. Parents' rbytes lag
-  their children's within a sample, which makes false one-sample dips and
-  ghost units. Only directories with changed children can dip that way, so
-  smooth only those, or real one-point changes disappear too.
+- Before building on CephFS own sizes (rbytes minus children's rbytes), run
+  it against the real database. Parents' rbytes lag their children's within a
+  sample, which makes false one-sample dips (the Stack view's `X/ bytes`
+  bands show them, clamped at 0). Only directories with changed children can
+  dip that way, so smooth only those, or real one-point changes disappear
+  too.
 - `URLSearchParams` turns the lone surrogates of `os.fsdecode` into U+FFFD,
   so non-UTF-8 paths cannot round-trip through it. Carry paths in URLs as
   their raw bytes, percent-encoded (see `model.encodeValue`).
