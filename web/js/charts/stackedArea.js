@@ -3,8 +3,8 @@
 import { escapeHtml, formatBytes, formatDelta } from "../model.js";
 
 /**
- * Return the ECharts option for MODEL (from model.stackBands) on DATA's
- * times; the first band is the bottom layer.
+ * Return the ECharts option for MODEL ({bands}: those of model.stackBands
+ * to draw) on DATA's times; the first band is the bottom layer.
  *
  * colors: {bands: Map key -> color, surface, ink, muted, grid}. range: [a, b]
  * point indexes; the tooltip shows each value's change since point a.
@@ -42,7 +42,7 @@ export function stackedAreaOption(data, model, { colors, range }) {
       borderColor: colors.grid,
       textStyle: { color: colors.ink },
       confine: true,
-      // params is empty when no band is drawn (all hidden).
+      // params is empty when no band is drawn (all hidden or unticked).
       formatter: (params) => (params.length ? tooltip(params[0].dataIndex, layers, data, range) : ""),
     },
     dataZoom: [

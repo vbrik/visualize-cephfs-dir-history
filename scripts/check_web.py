@@ -244,8 +244,11 @@ def check_fixture(page: Page, base: str) -> None:
 def series(page: Page) -> dict[str, str]:
     """The Stack chart's series, bottom first, as {band key: color}."""
     return page.evaluate(
-        """() => Object.fromEntries(echarts.getInstanceByDom(document.getElementById("chart"))
-            .getOption().series.map((s) => [s.id, s.itemStyle.color]))"""
+        """() => {
+            const chart = echarts.getInstanceByDom(document.getElementById("chart"));
+            const series = chart.getOption().series;
+            return Object.fromEntries(series.map((s) => [s.id, s.itemStyle.color]));
+        }"""
     )
 
 
@@ -254,7 +257,10 @@ def tick(page: Page, name: str) -> None:
     regex NAME."""
     # has= is matched inside each row.
     drill = page.locator("button.link", has_text=re.compile(name))
-    act(page, lambda: page.locator("#legend li").filter(has=drill).locator("input").click())
+    act(
+        page,
+        lambda: page.locator("#legend li").filter(has=drill).locator("input").click(),
+    )
 
 
 def check_picks(page: Page, base: str) -> None:
@@ -262,7 +268,7 @@ def check_picks(page: Page, base: str) -> None:
     go(page, f"{base}#tree=1")
     # Keys stay in the page's strings: café's name is not UTF-8.
     colors = series(page)
-    assert len(colors) == 4 and list(colors)[0] == "A", f"series: {list(colors)}"
+    assert len(colors) == 4 and next(iter(colors)) == "A", f"series: {list(colors)}"
 
     # None draws nothing but keeps every row listed, unticked, and the
     # range: the empty chart's zoom slider must not change it.
@@ -294,7 +300,9 @@ def check_picks(page: Page, base: str) -> None:
     assert list(series(page)) == ["A", "Z"], "sorting changed the chart"
     act(page, page.reload)
     assert list(series(page)) == ["A", "Z"], "picks lost on reload"
-    assert bands(page)[-1] == "Z" and "lsort=delta" in state(page), "sort lost on reload"
+    assert bands(page)[-1] == "Z" and "lsort=delta" in state(page), (
+        "sort lost on reload"
+    )
     act(page, delta.click)
     assert bands(page)[0] == "Z", f"reversed: {bands(page)}"
     assert delta.get_attribute("data-order") == "up", "no reversed arrow"
@@ -333,11 +341,14 @@ def check_picks(page: Page, base: str) -> None:
     tick(page, "^caf")
     assert "pick=" not in state(page), f"ticking the last row kept picks: {state(page)}"
 
-    # Changing Depth (a new level) clears picks.
+    # A new level clears picks: changing Depth, a trend card's click-through.
     go(page, f"{base}#tree=1&pick=A")
     page.fill("#depth", "1")
     act(page, lambda: page.press("#depth", "Enter"))
     assert "depth=1" in state(page) and "pick=" not in state(page), state(page)
+    go(page, f"{base}#tree=1&pick=A&view=trends")
+    act(page, page.locator("#cards .trend-card").first.click)
+    assert "in=" in state(page) and "pick=" not in state(page), state(page)
 
 
 def check_model(page: Page, base: str) -> None:
@@ -382,9 +393,9 @@ def check_model(page: Page, base: str) -> None:
               // Picks are listed first, in rank order, even past Top.
               keepQ: keys({top: 2, keep: ["Q"]}),
               keepPastTop: keys({top: 1, keep: ["Q", "Z", "nope"]}),
-              legend: Object.fromEntries(["", "delta", "-delta", "size", "name", "-name",
-                "bogus"].map((by) => [by, m.sortLegend(run({}).bands, by, [0, 2])
-                  .map((b) => b.key)])),
+              legend: Object.fromEntries(
+                ["", "delta", "-delta", "size", "name", "-name", "bogus"].map((by) =>
+                  [by, m.sortLegend(run({}).bands, by, [0, 2]).map((b) => b.key)])),
               hideA: keys({depth: 1, hidden: ["A"]}),
               hideOwnA: keys({depth: 1, hidden: ["A/."]}),
               // Hidden bytes leave the bands above them too (Depth 0).

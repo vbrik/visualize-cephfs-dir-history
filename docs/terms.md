@@ -19,6 +19,8 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | own-files band | `X/ bytes`: in a split dir X, the bytes of the files directly in X: rbytes(X) − Σ rbytes(X's stored subdirs), at least 0. |
 | drill | Click a band of a split dir to show only what is inside it, split one level (`in=` and Depth 1 in the URL hash). |
 | hidden | A band removed from the chart at every Depth: a dir band takes the dir's whole subtree with it, an own-files band only the files directly in the dir. The total shrinks. |
+| listed / drawn | The Stack legend lists Top bands; of those, the ticked ones are drawn. |
+| pick | A legend band ticked while picking (`pick=` in the URL hash; *None* starts with none). Unlike hidden, an unticked band stays listed and its bytes stay in the bands above it at other Depths. |
 | time point | One chart x position: the last sample in a UTC time bucket. Recent history (`--recent`) has the finest buckets (`--min-bucket`, 1 h); older history coarser ones, to stay within `--max-points`. |
 | trend card | One set dir's card in the Trends view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
 | span | A band's or card's largest minus smallest size in the shown range, absent counting as 0. The Stack view ranks bands by it (Top), and the Trends view sorts cards by it by default. |

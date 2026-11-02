@@ -12,6 +12,12 @@
 - ECharts fires no click event on a line series' filled area. Hit-test with
   `chart.getZr().on("click")` and `convertFromPixel` instead. Dispatch
   `hideTip` before replacing series, or an open tooltip throws.
+- ECharts `setOption(..., { replaceMerge: ["series"] })` keeps a surviving
+  series at its old index, so the stack drifts from the model's order (and
+  from `layerAt` hit-testing) when bands reorder. Clear the series first.
+- An ECharts chart with no series has no axis extent: its dataZoom then
+  reports start/end values that collapse a followed range to one point.
+  Ignore its `datazoom` events while nothing is drawn.
 - When the Claude in Chrome extension is not connected, Playwright can drive
   the installed Chrome (`chromium.launch(executable_path=...)`) with no
   browser download.
