@@ -29,8 +29,9 @@
   for the trend cards' sparklines (too many for an ECharts instance each);
   `main.js` owns state (the URL hash) and the DOM.
 - Colors come from CSS custom properties in `web/style.css`. Series use the
-  64-slot categorical palette in fixed order; at most Top (<= 64) bands are
-  drawn, so it never cycles; keep a band's color while filters change.
+  64-slot categorical palette in fixed order; keep a band's color while
+  filters change. Top can exceed 64 (up to 512): a new band then takes the
+  least used slot, so colors repeat.
 - Python: ruff (`ruff format`, `ruff check`) with the settings in
   `pyproject.toml`. JS: 2-space indent, double quotes, as in the existing
   files.

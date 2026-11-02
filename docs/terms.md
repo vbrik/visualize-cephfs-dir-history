@@ -14,7 +14,7 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | stored dir | A dir whose series the tree file holds: a set dir, or a dir within its depth below one. |
 | split dir | A stored dir whose subdirs are all stored (the file's `split` list). Only these can be split or drilled into. |
 | Depth (page) | How many levels below the set dirs (or the drilled-into dir) the Stack view splits; 0 = the dirs themselves. A dir not in `split` stays whole. |
-| Top (page) | How many bands the Stack view draws, the largest spans first (default and max 64). The rest are not drawn. |
+| Top (page) | How many bands the Stack view lists (default 64, max 512): picks first, then the first in the legend's sort, by default the largest spans. The rest are not drawn. |
 | band | One stacked area: a dir's rbytes, or an own-files band. |
 | own-files band | `X/ bytes`: in a split dir X, the bytes of the files directly in X: rbytes(X) − Σ rbytes(X's stored subdirs), at least 0. |
 | drill | Click a band of a split dir to show only what is inside it, split one level (`in=` and Depth 1 in the URL hash). |

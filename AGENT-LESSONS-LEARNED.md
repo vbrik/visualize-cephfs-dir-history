@@ -35,6 +35,12 @@
   choosing per-item charts; plain SVG paths in a fixed viewBox
   (`preserveAspectRatio="none"`, `vector-effect: non-scaling-stroke`) drew
   them in 0.6 s even at 400 points each.
+- One stacked ECharts chart's `setOption` grows with its series: about
+  0.15 s for 64 line series of 267 points, 0.6 s for 512 (a whole Stack
+  re-render at Top 512: 0.6-2 s). Time a raised series cap on real data.
+- Colors kept in memory (`bandColors`'s slots) outlive a view: test a color
+  rule by changing state without a reload (assign `location.hash`), since
+  `page.goto` may reload and start fresh.
 - `page.wait_for_function` with a string predicate evals it, which the
   page's CSP (`default-src 'self'`, as check_web.py serves it) blocks; poll
   from Python instead.

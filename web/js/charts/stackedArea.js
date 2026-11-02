@@ -65,14 +65,25 @@ export function stackedAreaOption(data, model, { colors, range }) {
   };
 }
 
+// Most bands the tooltip lists; the rest share one row.
+const TOOLTIP_ROWS = 30;
+
 function tooltip(i, layers, data, [a]) {
   const when = new Date(data.times[i]).toLocaleString();
-  const rows = [...layers]
-    .reverse()
+  // The largest at point I, in stack order (top first).
+  const listed = new Set(layers.toSorted((x, y) => y.values[i] - x.values[i]).slice(0, TOOLTIP_ROWS));
+  const sum = (ls, j) => ls.reduce((s, l) => s + l.values[j], 0);
+  const rows = layers
+    .toReversed()
+    .filter((l) => listed.has(l))
     .map((l) => row(l.color, l.name, l.values[i], l.values[i] - l.values[a]));
-  const drawn = layers.reduce((s, l) => s + l.values[i], 0);
-  const drawnStart = layers.reduce((s, l) => s + l.values[a], 0);
-  rows.push(row(null, "Total shown", drawn, drawn - drawnStart));
+  const others = layers.filter((l) => !listed.has(l));
+  if (others.length) {
+    const value = sum(others, i);
+    rows.push(row(null, `${others.length} smaller bands`, value, value - sum(others, a)));
+  }
+  const drawn = sum(layers, i);
+  rows.push(row(null, "Total shown", drawn, drawn - sum(layers, a)));
   return `<div class="tt"><div class="tt-when">${escapeHtml(when)}</div>${rows.join("")}`
     + `<div class="tt-note">change since ${escapeHtml(new Date(data.times[a]).toLocaleString())}</div></div>`;
 }

@@ -125,10 +125,16 @@ views each show one set at a time.
   dirs, which are the set's, or the drilled-into dir's. A band reached from
   two roots, as when a set holds a dir and its own subdir, is drawn once.
 - Bands are ranked by span (max − min) over the zoomed range, so a dir that
-  shrank or was deleted stays visible. The first Top (default and max 64,
-  the palette's size) are drawn. The rest are not drawn and not summed
-  anywhere, and there is no "Other" band: the summary says how many are left
-  out, adding "(raise Top)" when Top is below 64. Hidden bands are not ranked.
+  shrank or was deleted stays visible. Top (default 64, the palette's size;
+  max 512) of them are listed, chosen in the legend's sort (`lsort`): by
+  default span, else the largest (`size`) or smallest (`-size`) at the
+  range's end, the most grown (`delta`) or shrunk (`-delta`), or the first
+  by name. Picks are listed first. The chosen bands stack in span order
+  whatever the sort. The rest are not drawn and not summed anywhere, and
+  there is no "Other" band: the summary says how many are left out, adding
+  "(raise Top)" when Top is below 512. Hidden bands are not ranked. Past 64
+  bands, colors repeat (see [conventions](conventions.md)), and the chart's
+  tooltip lists the 30 largest at the pointer and sums the rest in one row.
 - Drilling: clicking a band whose dir is in `split` (legend or chart) shows
   that dir split one level (`in=dir`, Depth 1). `in` is used only if the
   set's dirs reach it through `split`; otherwise the page shows the set.
@@ -145,7 +151,7 @@ views each show one set at a time.
   for comparing a few of the movers, which are always among the listed
   ones, so it works on the listed bands, not on all a level's thousands:
   unticking only stops drawing, nothing moves into its place, unlike hide.
-  Picks are listed even if a zoom ranks them past Top, and listed bands
+  Picks are listed even if a zoom or a sort ranks them past Top, and listed bands
   keep their colors when unticked. The chart, its click hit-testing, the
   summary's total and the table cover the ticked bands. Picks are one
   level's band keys, so changing the tree, set or Depth, or drilling,
@@ -153,8 +159,10 @@ views each show one set at a time.
 - The legend sorts by name, size at the range's end, or change over the
   range (`lsort=name|size|delta`, `-` before it reversed); its default is
   chart order, the top of the stack first, so rows line up with the bands.
-  Sorting reorders the legend only. Ticked bands come first, each group in
-  that order, so the few picked stay in view in a long list.
+  When more bands than Top are ranked, sorting also chooses which are listed
+  (see Top above); the chart's stacking stays in span order. Ticked bands
+  come first, each group in that order, so the few picked stay in view in a
+  long list.
 - View state is in the URL hash (`view`, `set`, `depth`, `top`, `in`, `hide`,
   `pick`, `lsort`, `sort`, `flat`), so a view can be bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not

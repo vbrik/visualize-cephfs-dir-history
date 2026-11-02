@@ -8,8 +8,10 @@ import { stackedAreaOption } from "./charts/stackedArea.js";
 import { HEIGHT, WIDTH, sparkPaths, sparkPointAt, sparkXs } from "./charts/trendCard.js";
 import {
   CARD_SORTS,
+  DEFAULT_TOP,
   LEGEND_SORTS,
   MAX_BANDS,
+  PALETTE_SIZE,
   ROOT,
   decodeValue,
   encodeValue,
@@ -36,12 +38,14 @@ const DEFAULTS = {
   view: "stack",
   set: null, // the tree's first set, "Top level"
   depth: 0,
-  top: MAX_BANDS,
+  top: DEFAULT_TOP,
   in: "", // the drilled-into dir; "": none, the set's dirs are shown
   hide: [],
   // The legend's ticked band keys; null: all are ticked (no picking).
   pick: null,
-  lsort: "", // the legend's order (see model.sortLegend); "": chart order
+  // The legend's order (see model.sortLegend), which also picks the bands
+  // Top keeps (see model.stackBands); "": chart order.
+  lsort: "",
   sort: "span",
   flat: false,
 };
@@ -186,7 +190,7 @@ function colors() {
   const css = getComputedStyle(document.documentElement);
   const v = (name) => css.getPropertyValue(name).trim();
   return {
-    palette: Array.from({ length: MAX_BANDS }, (_, i) => v(`--series-${i + 1}`)),
+    palette: Array.from({ length: PALETTE_SIZE }, (_, i) => v(`--series-${i + 1}`)),
     surface: v("--surface"),
     ink: v("--ink"),
     muted: v("--muted"),
@@ -197,13 +201,23 @@ function colors() {
 /** The loaded tree's set that S names, else its first ("Top level"). */
 const currentSet = (s) => data.sets.find((set) => set.name === s.set) ?? data.sets[0];
 
-/** Colors per band key: survivors keep their slot, newcomers take free ones. */
+/** Colors per band key: survivors keep their slot, newcomers take the least
+ * used (a free one while there is one; lowest first). While the bands fit
+ * the palette, a survivor whose slot an earlier one kept (both drawn when
+ * there were more) is a newcomer, so the colors stay distinct. */
 function bandColors(viewKey, bands, palette) {
   const old = slots.get(viewKey) ?? new Map();
   const next = new Map();
-  for (const b of bands) if (old.has(b.key)) next.set(b.key, old.get(b.key));
-  const free = palette.map((_, i) => i).filter((i) => ![...next.values()].includes(i));
-  for (const b of bands) if (!next.has(b.key)) next.set(b.key, free.shift());
+  const uses = palette.map(() => 0);
+  const take = (key, i) => {
+    next.set(key, i);
+    uses[i] += 1;
+  };
+  const fits = bands.length <= palette.length;
+  for (const b of bands) {
+    if (old.has(b.key) && !(fits && uses[old.get(b.key)])) take(b.key, old.get(b.key));
+  }
+  for (const b of bands) if (!next.has(b.key)) take(b.key, uses.indexOf(Math.min(...uses)));
   slots.set(viewKey, next);
   return new Map([...next].map(([k, i]) => [k, palette[i]]));
 }
@@ -238,7 +252,8 @@ function renderStack(s, set) {
   $("depth").value = depth;
 
   const keep = s.pick ?? [];
-  model = stackBands(data, { roots, base: inPath, depth, top: s.top, hidden: s.hide, range, keep });
+  const opts = { roots, base: inPath, depth, top: s.top, hidden: s.hide, range, keep, by: s.lsort };
+  model = stackBands(data, opts);
   drawn = s.pick === null ? model.bands : model.bands.filter((band) => keep.includes(band.key));
   const c = colors();
   // Keyed without Depth and Top, so bands keep their colors when those
@@ -345,7 +360,8 @@ function renderLegend(c, s) {
     const up = (by === "name") !== reversed;
     if (by === key) head.dataset.order = up ? "up" : "down";
     else delete head.dataset.order;
-    head.title = "Sort by this column; click again to reverse, a third time for chart order";
+    head.title = "Sort by this column, and draw the first Top in that order; "
+      + "click again to reverse, a third time for chart order";
   }
 }
 
@@ -631,7 +647,7 @@ $("set").addEventListener("change", (e) => writeState({ set: e.target.value, in:
 $("depth").addEventListener("change", (e) =>
   writeState({ depth: clampInt(e.target.value, 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth), ...NEW_LEVEL }),
 );
-$("top").addEventListener("change", (e) => writeState({ top: clampInt(e.target.value, 1, MAX_BANDS, MAX_BANDS) }));
+$("top").addEventListener("change", (e) => writeState({ top: clampInt(e.target.value, 1, MAX_BANDS, DEFAULTS.top) }));
 $("reset").addEventListener("click", () =>
   writeState(Object.fromEntries(STACK_KEYS.map((k) => [k, DEFAULTS[k]]))),
 );

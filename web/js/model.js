@@ -5,9 +5,11 @@
 
 export const ROOT = ".";
 
-// Most bands the Stack view draws (Top's max): the categorical palette's
-// slot count, so colors never repeat.
-export const MAX_BANDS = 64;
+// Most bands the Stack view draws (Top's max), and Top's default.
+export const MAX_BANDS = 512;
+export const DEFAULT_TOP = 64;
+// Slots of the categorical palette (--series-N); past that, colors repeat.
+export const PALETTE_SIZE = 64;
 
 /** Number of path components; ROOT is 0. */
 export function depth(path) {
@@ -129,7 +131,8 @@ export function normalize(raw) {
  * opts: roots (the dirs to show: a set's dirs, or the drilled-into dir),
  * base (labels are relative to it; null: the tree root), depth (levels to
  * split below each root), top (most bands returned), hidden (band keys; see
- * below), range ([first, last] point indexes).
+ * below), range ([first, last] point indexes), by (optional; a legend sort,
+ * see sortLegend: which bands TOP keeps).
  *
  * A dir less than DEPTH below its root and in data.split becomes an
  * own-files band (key `${dir}/.`: the files directly in it, its rbytes minus
@@ -151,12 +154,16 @@ export function normalize(raw) {
  *
  * The other bands rank by span (max − min) over the range, after those
  * subtractions, ties by key, so dirs that shrank or vanished stay visible.
- * TOP of them are returned, in rank order: those whose keys are in KEEP
- * (optional; the legend's picks) first, then the best ranked of the rest,
- * so a pick is never cut by zooming. Returns {bands, cut}: those bands, as
- * {key, dir, own, label, values, drillable}, and how many ranked past them.
+ * TOP of them are returned, in rank order. Which TOP: those whose keys are
+ * in KEEP (optional; the legend's picks) first, so a pick is never cut by
+ * zooming or sorting, then the first of the rest in BY's order, ties by
+ * rank. BY "" (the default) is rank; "size" keeps the largest at the
+ * range's end, "-size" the smallest, "delta" the most grown, "-delta" the
+ * most shrunk, "name" the first by label. Returns {bands, cut}: those
+ * bands, as {key, dir, own, label, values, drillable}, and how many of the
+ * others were left out.
  */
-export function stackBands(data, { roots, base, depth, top, hidden, range, keep = [] }) {
+export function stackBands(data, { roots, base, depth, top, hidden, range, keep = [], by = "" }) {
   const zeroed = (dir) => data.rbytes[dir].map((v) => v ?? 0);
   // The files directly in split dir DIR: its rbytes minus its subdirs', at least 0.
   const ownFiles = (dir) => {
@@ -207,18 +214,22 @@ export function stackBands(data, { roots, base, depth, top, hidden, range, keep 
     const shown = values.slice(a, b + 1);
     return Math.max(...shown) - Math.min(...shown);
   };
+  // Labeled before choosing: BY "name" sorts by label.
   const ranked = visible
     .map((band) => ({ band, span: span(band.values) }))
     .sort((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
-    .map(({ band }) => band);
-  const kept = ranked.filter((band) => keep.includes(band.key)).slice(0, top);
-  const rest = ranked.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
+    .map(({ band }) => ({
+      ...band,
+      label: bandLabel(data, band, base ?? ROOT),
+      drillable: !band.own && data.split.has(band.dir),
+    }));
+  const key = by.replace(/^-/, "");
+  // toSorted is stable, so ties stay in rank order.
+  const order = Object.hasOwn(LEGEND_SORTS, key) ? ranked.toSorted(legendOrder(key, by, range)) : ranked;
+  const kept = order.filter((band) => keep.includes(band.key)).slice(0, top);
+  const rest = order.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
   const chosen = new Set([...kept, ...rest]);
-  const bands = ranked.filter((band) => chosen.has(band)).map((band) => ({
-    ...band,
-    label: bandLabel(data, band, base ?? ROOT),
-    drillable: !band.own && data.split.has(band.dir),
-  }));
+  const bands = ranked.filter((band) => chosen.has(band));
   return { bands, cut: ranked.length - bands.length };
 }
 

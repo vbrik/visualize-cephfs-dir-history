@@ -100,9 +100,9 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | View | *Stack*: the stacked chart of the set's directories. *Trends*: a card per set directory, each on its own scale; click one to open it in Stack. |
 | Set | Which of the tree's sets to show, with its number of directories: Top level, then the sets of the `--sets` file. |
 | Depth | Stack: split each directory this many levels into its subdirectories; the files directly in a split directory are the band `dir/ bytes`. The most is the levels the data file stores below the shown directories. |
-| Top | Stack: draw only this many bands (1–64, default 64), those whose size changed most in the shown range; the summary counts the rest. |
+| Top | Stack: draw only this many bands (1–512, default 64): the first in the legend's sort, by default those whose size changed most in the shown range; the summary counts the rest. Past 64 bands, colors repeat. |
 | Legend tick boxes, None, All | Stack: draw only the ticked bands; *None* unticks all, to tick just the few to compare. Unticked bands stay listed, below the ticked ones, with their size and change; the chart's scale, the summary and the table follow the ticked ones. Changing Tree, Set or Depth, or drilling, ticks all again. |
-| Legend Dir, Size, Δ | Stack: sort the legend by name, by size at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first). The chart's stacking does not change. |
+| Legend Dir, Size, Δ | Stack: sort the legend by name, by size at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first). When there are more bands than Top, the sort also chooses which are drawn: e.g. Δ reversed draws the most shrunk. The chart's stacking does not change. |
 | Band (legend or chart) | Stack: click a band of a directory that can be split to show only what is inside it, one level down; the path above the chart goes back. |
 | hide | Stack: remove a band's bytes from the chart, at every Depth: a directory's, with everything in it, or `dir/ bytes`, the files directly in it. Click the chip to bring it back. |
 | Reset | Stack: restore Depth, Top, drill-down, hiding, ticks and the legend's order. |

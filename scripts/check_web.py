@@ -230,6 +230,18 @@ def check_fixture(page: Page, base: str) -> None:
         "#summary"
     )
 
+    # Top keeps the first bands in the legend's sort; they stack by span.
+    go(page, f"{base}#tree=1&top=2&lsort=-size")
+    assert bands(page) == ["Q", "Z"], f"top=2, -size: {bands(page)}"
+    assert list(series(page)) == ["Z", "Q"], f"stack not by span: {series(page)}"
+    assert "(raise Top)" in page.inner_text("#summary"), page.inner_text("#summary")
+
+    # Top's range: 512 is kept, more is clamped.
+    go(page, f"{base}#tree=1&top=512")
+    assert page.input_value("#top") == "512", page.input_value("#top")
+    go(page, f"{base}#tree=1&top=600")
+    assert page.input_value("#top") == "512", page.input_value("#top")
+
     # Reset restores the Stack view's state.
     go(page, f"{base}#tree=1&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size&sort=size")
     act(page, lambda: page.click("#reset"))
@@ -385,7 +397,7 @@ def check_model(page: Page, base: str) -> None:
             const rootValues = (hidden) => m.stackBands(rooted,
               {...opts, roots: ["."], hidden}).bands[0].values;
             return JSON.stringify({
-              n: m.MAX_BANDS,
+              n: [m.MAX_BANDS, m.DEFAULT_TOP, m.PALETTE_SIZE],
               rbytes: data.rbytes,
               children: [...data.children],
               d0: keys({}),
@@ -397,6 +409,11 @@ def check_model(page: Page, base: str) -> None:
               // Picks are listed first, in rank order, even past Top.
               keepQ: keys({top: 2, keep: ["Q"]}),
               keepPastTop: keys({top: 1, keep: ["Q", "Z", "nope"]}),
+              // Top keeps the first in the legend's sort, stacked by span.
+              byTop2: Object.fromEntries(
+                ["", "size", "-size", "-delta", "name", "-name", "bogus"].map((by) =>
+                  [by, keys({top: 2, by})])),
+              keepBy: keys({top: 2, by: "-size", keep: ["A"]}),
               legend: Object.fromEntries(
                 ["", "delta", "-delta", "size", "name", "-name", "bogus"].map((by) =>
                   [by, m.sortLegend(run({}).bands, by, [0, 2]).map((b) => b.key)])),
@@ -424,7 +441,9 @@ def check_model(page: Page, base: str) -> None:
         }"""
         )
     )
-    assert got["n"] == 64, f"MAX_BANDS: {got['n']}"
+    assert got["n"] == [512, 64, 64], (
+        f"MAX_BANDS, DEFAULT_TOP, PALETTE_SIZE: {got['n']}"
+    )
     rb = got["rbytes"]
     assert rb["A/c"] == [100 * gib] * 3 and rb["Q/r"] == [10 * gib] * 3, "scalars"
     assert rb["Z/y"][0] is None, "null not kept"
@@ -461,6 +480,20 @@ def check_model(page: Page, base: str) -> None:
     assert len(got["top2"]["keys"]) == 2 and got["top2"]["cut"] == 2, got["top2"]
     assert got["keepQ"] == {"keys": ["A", "Q"], "cut": 2}, f"keep Q: {got['keepQ']}"
     assert got["keepPastTop"] == {"keys": ["Z"], "cut": 3}, got["keepPastTop"]
+    by_top2 = {by: r["keys"] for by, r in got["byTop2"].items()}
+    assert by_top2 == {
+        "": ["A", caf],
+        "size": ["A", caf],
+        "-size": ["Z", "Q"],
+        "-delta": ["Z", "Q"],
+        "name": ["A", "Q"],
+        "-name": [caf, "Z"],
+        "bogus": ["A", caf],
+    }, f"Top by legend sort: {by_top2}"
+    assert all(r["cut"] == 2 for r in got["byTop2"].values()), got["byTop2"]
+    assert got["keepBy"] == {"keys": ["A", "Q"], "cut": 2}, (
+        f"pick kept: {got['keepBy']}"
+    )
 
     # Legend orders, over the range: change A +200, café +100, Q 0, Z -50
     # GiB; size A 700, café 200, Z 50, Q 40 GiB. Chart order is the top of
@@ -943,6 +976,46 @@ def check_click_between_points(page: Page, base: str) -> None:
     assert "depth=1" in state(page), f"chart drill not at Depth 1: {state(page)}"
 
 
+def check_many_bands(page: Page, base: str, tree: int) -> None:
+    """Top 512 at the deepest Depth: every band has a color, colors repeat
+    only past the palette, also after fewer bands replace many, and the
+    tooltip stays short."""
+    deepest = page.get_attribute("#depth", "max")
+    go(page, f"{base}#tree={tree}&depth={deepest}&top=512")
+    colors = list(series(page).values())
+    drawn = re.search(r" in (\d+) bands?", page.inner_text("#summary"))
+    assert drawn and int(drawn[1]) == len(colors) > 0, (
+        f"tree {tree}: {len(colors)} series, summary {page.inner_text('#summary')}"
+    )
+    assert len(colors) <= 512, f"tree {tree}: {len(colors)} bands drawn"
+    assert all(colors), f"tree {tree}: a band has no color"
+    assert len(set(colors)) == min(len(colors), 64), (
+        f"tree {tree}: {len(set(colors))} colors for {len(colors)} bands"
+    )
+    rows = page.evaluate(
+        """() => {
+            const chart = echarts.getInstanceByDom(document.getElementById("chart"));
+            const html = chart.getOption().tooltip[0].formatter([{dataIndex: 0}]);
+            return (html.match(/class="tt-row"/g) ?? []).length;
+        }"""
+    )
+    # 30 bands, one row for the rest, and the total.
+    assert rows <= min(len(colors), 30) + 2, f"tree {tree}: tooltip has {rows} rows"
+
+    # Without a reload (colors are kept in memory): the 64 most shrunk.
+    act(
+        page,
+        lambda: page.evaluate(
+            "location.hash = "
+            "location.hash.replace('top=512', 'top=64') + '&lsort=-delta'"
+        ),
+    )
+    colors = list(series(page).values())
+    assert len(set(colors)) == len(colors) <= 64, (
+        f"tree {tree}: {len(set(colors))} colors for {len(colors)} bands after Top 512"
+    )
+
+
 def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     """Generic checks of one tree of real data."""
     go(page, f"{base}#tree={tree}")
@@ -980,6 +1053,7 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         act(page, page.locator("#legend input.pick").first.click)
         assert len(series(page)) == 1, f"tree {tree}: picking drew {len(series(page))}"
         assert len(bands(page)) == n, f"tree {tree}: picking changed the list"
+        check_many_bands(page, base, tree)
 
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
     sets = next(t["sets"] for t in entries if t["id"] == tree)
