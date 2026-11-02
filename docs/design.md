@@ -81,7 +81,9 @@ single-point spike.
 
 Measured on a real database, over 2 days of hourly points, the largest dip
 in any own-files band is 0.25 GiB; 8.6 GiB was seen earlier at finer
-sampling.
+sampling. Over 11 days (272 hourly points, 4 trees, 20 215 split dirs), the
+largest was 0.40 GiB below 0, and 217 entries below 1 in an `X/ entries`
+band; dips hit fewer points for rentries (244) than for rbytes (679).
 
 ### Time resolution
 
@@ -266,7 +268,9 @@ Most stored dirs never change, so one number instead of a list keeps files
 small: on a real database 2 866 of the 2 995 series of the largest Top level
 set are one number, and its file is 0.3 MB; a 10 678-dir set measured 99.5 %
 unchanged. Then paths are most of a file: of a 205 MB rbytes-only file of
-1.9 M stored dirs, 143 MB were path keys.
+1.9 M stored dirs, 143 MB were path keys. Pairing rentries with rbytes per
+path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
+13 % to 41 % larger than rbytes alone; the largest is 6.1 MB.
 
 ## Risks and limitations
 
@@ -283,8 +287,8 @@ unchanged. Then paths are most of a file: of a 205 MB rbytes-only file of
   `X/ entries` can dip for a point when a child's value is ahead of its
   parent's (see
   [Propagation lag](#propagation-lag)), and can lift the band into Top. Seen:
-  ≤ 0.25 GiB at 1 h points, 8.6 GiB at finer sampling. The page clamps
-  at 0 and does not smooth.
+  ≤ 0.40 GiB and ≤ 217 entries at 1 h points, 8.6 GiB at finer sampling.
+  The page clamps at 0 and does not smooth.
 - **Bands past Top, or filtered out, are not drawn.** The chart's total and
   the table cover the drawn bands only; the summary says how many are left
   out. By default (Min 1 GiB, unchanged filtered) a big constant dir is
