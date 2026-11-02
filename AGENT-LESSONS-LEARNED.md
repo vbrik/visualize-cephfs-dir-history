@@ -55,3 +55,9 @@
   whether the server accepts a new connection within 10 s
   (`?connect_timeout=10`). An overloaded server looked like a hang in the
   code.
+- More than one agent session may share this working tree. Before
+  committing, run `git status` and stage files by name; never
+  `git commit -a`, which sweeps another session's uncommitted edits into
+  your commit. Before offering to rewrite a commit, check
+  `git branch -r --contains <commit>`: if it is pushed, add a follow-up
+  commit instead.
