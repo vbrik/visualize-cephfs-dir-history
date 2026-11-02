@@ -327,18 +327,24 @@ export const LEGEND_SORTS = {
  * BANDS (from stackBands, bottom first) in legend order for sort BY over
  * RANGE: "" is chart order, the top of the stack first; a LEGEND_SORTS key
  * is that column's order, and "-" before it reverses it. Ties keep chart
- * order. Labels compare by UTF-16 code unit.
+ * order. Labels compare by UTF-16 code unit. Bands in FIRST (optional; the
+ * ticked ones) come before the rest, each group in that order.
  */
-export function sortLegend(bands, by, range) {
+export function sortLegend(bands, by, range, first = bands) {
   const top = bands.toReversed();
   const key = by.replace(/^-/, "");
-  if (!Object.hasOwn(LEGEND_SORTS, key)) return top;
+  const sorted = Object.hasOwn(LEGEND_SORTS, key) ? top.toSorted(legendOrder(key, by, range)) : top;
+  return [...sorted.filter((band) => first.includes(band)), ...sorted.filter((band) => !first.includes(band))];
+}
+
+/** The comparator of legend column KEY, reversed if BY starts with "-". */
+function legendOrder(key, by, range) {
   const value = LEGEND_SORTS[key];
   const cmp = value
     ? (x, y) => value(y, range) - value(x, range)
     : (x, y) => (x.label < y.label ? -1 : x.label > y.label ? 1 : 0);
   const sign = by.startsWith("-") ? -1 : 1;
-  return top.toSorted((x, y) => sign * cmp(x, y));
+  return (x, y) => sign * cmp(x, y);
 }
 
 /**

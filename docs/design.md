@@ -153,7 +153,8 @@ views each show one set at a time.
 - The legend sorts by name, size at the range's end, or change over the
   range (`lsort=name|size|delta`, `-` before it reversed); its default is
   chart order, the top of the stack first, so rows line up with the bands.
-  Sorting reorders the legend only.
+  Sorting reorders the legend only. Ticked bands come first, each group in
+  that order, so the few picked stay in view in a long list.
 - View state is in the URL hash (`view`, `set`, `depth`, `top`, `in`, `hide`,
   `pick`, `lsort`, `sort`, `flat`), so a view can be bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not

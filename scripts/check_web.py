@@ -283,10 +283,13 @@ def check_picks(page: Page, base: str) -> None:
     assert "0 B in 0 of 4 listed bands" in summary, summary
     assert page.locator("#table-body tr").count() == 0, "table lists undrawn bands"
 
-    # Ticking draws just those, in stack order, with their colors.
+    # Ticking draws just those, in stack order, with their colors; ticked
+    # rows head the legend. (Playwright shows café's name with U+FFFD.)
+    caf = "caf\ufffd"
     tick(page, "^Z$")
     tick(page, "^A$")
     assert series(page) == {"A": colors["A"], "Z": colors["Z"]}, series(page)
+    assert bands(page) == ["Z", "A", "Q", caf], f"ticked not first: {bands(page)}"
     summary = page.inner_text("#summary")
     assert "750 GiB in 2 of 4 listed bands" in summary, summary
     assert page.locator("#table-body tr").count() == 2, "table not of drawn bands"
@@ -295,19 +298,20 @@ def check_picks(page: Page, base: str) -> None:
     # header shows the order; a third click is chart order again.
     delta = page.locator("#legend-head .sort[data-sort='delta']")
     act(page, delta.click)
-    assert bands(page)[0] == "A" and bands(page)[-1] == "Z", f"by change: {bands(page)}"
+    assert bands(page) == ["A", "Z", caf, "Q"], f"by change: {bands(page)}"
     assert delta.get_attribute("data-order") == "down", "no sort arrow"
     assert list(series(page)) == ["A", "Z"], "sorting changed the chart"
     act(page, page.reload)
     assert list(series(page)) == ["A", "Z"], "picks lost on reload"
-    assert bands(page)[-1] == "Z" and "lsort=delta" in state(page), (
+    assert bands(page) == ["A", "Z", caf, "Q"] and "lsort=delta" in state(page), (
         "sort lost on reload"
     )
     act(page, delta.click)
-    assert bands(page)[0] == "Z", f"reversed: {bands(page)}"
+    assert bands(page) == ["Z", "A", "Q", caf], f"reversed: {bands(page)}"
     assert delta.get_attribute("data-order") == "up", "no reversed arrow"
     act(page, delta.click)
-    assert "lsort=" not in state(page) and bands(page)[0] == "Q", bands(page)
+    assert "lsort=" not in state(page), state(page)
+    assert bands(page) == ["Z", "A", "Q", caf], f"chart order: {bands(page)}"
     assert delta.get_attribute("data-order") is None, "arrow left in chart order"
 
     # A chart click finds the band among those drawn: 3/4 of the way to the
@@ -396,6 +400,12 @@ def check_model(page: Page, base: str) -> None:
               legend: Object.fromEntries(
                 ["", "delta", "-delta", "size", "name", "-name", "bogus"].map((by) =>
                   [by, m.sortLegend(run({}).bands, by, [0, 2]).map((b) => b.key)])),
+              // Ticked bands first (Z, Q), each group in the sort's order.
+              legendFirst: ["", "delta"].map((by) => {
+                const bands = run({}).bands;
+                const first = bands.filter((b) => ["Z", "Q"].includes(b.key));
+                return m.sortLegend(bands, by, [0, 2], first).map((b) => b.key);
+              }),
               hideA: keys({depth: 1, hidden: ["A"]}),
               hideOwnA: keys({depth: 1, hidden: ["A/."]}),
               // Hidden bytes leave the bands above them too (Depth 0).
@@ -465,6 +475,9 @@ def check_model(page: Page, base: str) -> None:
         "-name": [caf, "Z", "Q", "A"],
         "bogus": chart,
     }, f"legend orders: {got['legend']}"
+    assert got["legendFirst"] == [["Q", "Z", caf, "A"], ["Q", "Z", "A", caf]], (
+        f"ticked first: {got['legendFirst']}"
+    )
     assert not {"A/.", "A/b", "A/c"} & set(got["hideA"]["keys"]), got["hideA"]
     assert "Q" in got["hideA"]["keys"], f"hiding A hid Q: {got['hideA']}"
     assert set(got["hideOwnA"]["keys"]) == want - {"A/."}, got["hideOwnA"]

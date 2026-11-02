@@ -312,12 +312,12 @@ function renderCrumbs(set, inPath) {
 /** Show the bands inside DIR, one level down. */
 const drill = (dir) => writeState({ in: dir, depth: 1, ...NEW_LEVEL });
 
-/** The legend: the listed bands in S.lsort order, each with its tick box,
- * swatch, name (a drill button if drillable), size and change over the
- * range, and hide button; and the sort state of its header. */
+/** The legend: the listed bands in S.lsort order, ticked ones first, each
+ * with its tick box, swatch, name (a drill button if drillable), size and
+ * change over the range, and hide button; and its header's sort state. */
 function renderLegend(c, s) {
   const [a, b] = range;
-  const items = sortLegend(model.bands, s.lsort, range).map((band) => {
+  const items = sortLegend(model.bands, s.lsort, range, drawn).map((band) => {
     const li = document.createElement("li");
     const on = drawn.includes(band);
     li.classList.toggle("off", !on);
