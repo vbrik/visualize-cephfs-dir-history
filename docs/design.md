@@ -232,7 +232,10 @@ views each show one set at a time.
   cards whose peak in the range is under Min GiB (`min`, default 1; Min
   entries, `minent`, default 1000; so a dir
   absent throughout needs `min=0` too), and the rest sort by span (max − min) by default, so the movers come first; also
-  by peak, current size or name (`sort=`). Sort keys and the unchanged test
+  by peak, current size or name (`sort=`). Every sort groups the cards by
+  their change's sign first: growing, then shrinking, then ending where they
+  started, since span alone mixes a dir that grew 5 TiB with one that shrank
+  5 TiB. Sort keys and the unchanged test
   count absent as 0, like a card's change, so a dir created or deleted in
   the range has changed. Called span, not change, because a card's change is
   end − start.

@@ -29,6 +29,7 @@ import {
   sortCards,
   sortLegend,
   stackBands,
+  trend,
   trendCards,
 } from "./model.js";
 
@@ -331,7 +332,9 @@ function renderStack(s, set) {
   // replaceMerge keeps a surviving series at its old index, so clear them
   // first: the stack must be in DRAWN's order, as layerAt assumes.
   chart.setOption({ series: [] }, { replaceMerge: ["series"] });
-  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range, format }), {
+  // The tooltip lists bands in the legend's order.
+  const order = sortLegend(drawn, s.lsort, range);
+  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range, format, order }), {
     replaceMerge: ["series"],
   });
   zoomTo(chart);
@@ -552,7 +555,7 @@ function renderTrends(s, set) {
   for (const card of cards) {
     const el = cardEls.get(card.path);
     cardOf.set(el, card);
-    el.className = `trend-card ${card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat"}`;
+    el.className = `trend-card ${trend(card)}`;
     const name = el.querySelector(".name");
     name.textContent = card.path === ROOT ? data.tree.fs_path : card.path;
     name.title = absolute(card.path);

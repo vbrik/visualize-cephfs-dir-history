@@ -385,12 +385,22 @@ export const CARD_SORTS = {
   name: ["Name", null],
 };
 
-/** CARDS ordered by sort key BY (see CARD_SORTS); ties by path. Paths
- * compare by UTF-16 code unit, i.e. by byte for ASCII names. */
+/** CARD's trend over its range, by the sign of its change: "grow",
+ * "shrink" or "flat" (ends where it started, or absent throughout). */
+export const trend = (card) => (card.change > 0 ? "grow" : card.change < 0 ? "shrink" : "flat");
+
+// The Trends view's card groups, in order: every sort keeps them apart.
+const TREND_ORDER = ["grow", "shrink", "flat"];
+
+/** CARDS grouped by trend (growing, shrinking, then flat), each group
+ * ordered by sort key BY (see CARD_SORTS); ties by path. Paths compare by
+ * UTF-16 code unit, i.e. by byte for ASCII names. */
 export function sortCards(cards, by) {
   const byPath = (x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0);
+  const byGroup = (x, y) => TREND_ORDER.indexOf(trend(x)) - TREND_ORDER.indexOf(trend(y));
   const key = CARD_SORTS[by][1];
-  return cards.toSorted(key ? (x, y) => key(y) - key(x) || byPath(x, y) : byPath);
+  const within = key ? (x, y) => key(y) - key(x) || byPath(x, y) : byPath;
+  return cards.toSorted((x, y) => byGroup(x, y) || within(x, y));
 }
 
 // Legend columns: sort key -> a band's value over range [a, b]. Values sort

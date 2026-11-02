@@ -114,7 +114,7 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Min GiB, Min entries | Both views, each its own, and per metric: hide bands (Stack) or cards (Trends) whose largest value in the shown range is under this many GiB (default 1) or entries (default 1000); 0 shows all. Ticked bands are never hidden. The summary (Stack) or the line above the cards (Trends) counts what was filtered out. |
 | Show unchanged | Both views, each its own: also show bands or cards whose value did not change in the shown range; off by default. |
 | Reset | Stack: restore Depth, Top, Min GiB and Min entries, Show unchanged, drill-down, hiding, ticks and the legend's order. |
-| Sort | Trends: card order, largest first, in the shown range: *Span* (max − min), *Peak* (max), *Current size* (at the range's end), or *Name*. |
+| Sort | Trends: card order in the shown range, growing dirs first, then shrinking, then those that end where they started; within each, largest first by *Span* (max − min), *Peak* (max) or *Current size* (at the range's end), or by *Name*. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
 
 The URL keeps the view, except the zoomed time range, so it can be bookmarked
