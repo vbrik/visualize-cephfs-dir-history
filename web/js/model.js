@@ -135,8 +135,9 @@ export function normalize(raw) {
  * own-files band (key `${dir}/.`: the files directly in it, its rbytes minus
  * its subdirs', at least 0) plus the bands of its stored subdirs, likewise;
  * any other dir is one band of its rbytes (key: the dir). Absent counts as
- * 0. A band reached from two roots (a set holding a dir and its subdir)
- * appears once.
+ * 0. Bands with the same key appear once (ECharts series ids must be
+ * unique). That does not make a set holding a dir and its subdir safe: the
+ * subdir's bytes are counted in both.
  *
  * HIDDEN holds band keys, and hiding removes the key's bytes at every
  * Depth: a dir key, the dir's subtree; an own-files key `X/.`, the files

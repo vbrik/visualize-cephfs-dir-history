@@ -1,8 +1,8 @@
 /* Tokens. Page colors follow the warm design reference; series colors are
    a 64-slot categorical palette in light and dark steps. Slots 1-8 are the
    original hand-validated set; 9-64 keep their lightness/chroma band and
-   are ordered so that neighbors stay distinct (adjacent pairs pass the
-   dataviz validator in both themes). Trend cards color by
+   are ordered so that neighbors stay distinct (those adjacent pairs pass
+   the dataviz validator in both themes). Trend cards color by
    direction (growth, shrinkage, no change): a warm/cool pair validated for
    color-vision deficiency against --page, plus fills behind them. The
    mock's sage failed that check beside terracotta. */
@@ -208,7 +208,6 @@ header p { margin: 0 0 16px; max-width: 70ch; }
   padding: 4px 8px;
 }
 .controls input[type="number"] { width: 4.5em; }
-.controls input[aria-invalid="true"] { border-color: var(--error); }
 .controls button { cursor: pointer; }
 
 .card {
@@ -283,8 +282,8 @@ td { font-variant-numeric: tabular-nums; }
 .controls .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
 
 /* Trends view: trend cards, after the 2b mock */
-#watch-range { margin: 0 0 12px; }
-#watch-hidden { margin: -8px 0 12px; }
+#trends-range { margin: 0 0 12px; }
+#trends-hidden { margin: -8px 0 12px; }
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
@@ -339,7 +338,7 @@ td { font-variant-numeric: tabular-nums; }
   box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
 }
 .trend-card .scale { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.watch-slider {
+.trends-slider {
   position: sticky;
   bottom: 0;
   height: 48px;

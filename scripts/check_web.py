@@ -180,6 +180,33 @@ def check_fixture(page: Page, base: str) -> None:
     assert "hide=" not in state(page), f"chips did not unhide: {state(page)}"
     assert any(b.startswith("caf") for b in bands(page)), "chips did not bring caf back"
 
+    # Drilling into a non-UTF-8 dir survives a reload: crumbs and bands come
+    # back. Names are compared in the page (lone surrogates).
+    def drilled_caf() -> list[object]:
+        return page.evaluate(
+            """() => {
+                const labels = [...document.querySelectorAll("#legend .label")]
+                  .map((e) => e.textContent)
+                  .sort();
+                const crumbs = document.getElementById("crumbs").textContent;
+                const dir = "caf\\uDCE9";
+                const want = [`${dir}/ bytes`, "x"].sort();
+                return [
+                  crumbs === `Set Top level / ${dir}`,
+                  JSON.stringify(labels) === JSON.stringify(want),
+                ];
+            }"""
+        )
+
+    go(page, f"{base}#tree=1")
+    legend_caf = page.locator("#legend button.link", has_text="caf")
+    act(page, lambda: legend_caf.click())
+    assert drilled_caf() == [True, True], f"drill into caf: {bands(page)}"
+    act(page, page.reload)
+    assert drilled_caf() == [True, True], (
+        f"drill into caf lost on reload: {bands(page)}"
+    )
+
     # A hide made at Depth 1 still holds at Depth 0: the band above it and
     # the total shrink (A 700 -> 350 GiB, total 990 -> 640 GiB).
     go(page, f"{base}#tree=1")
@@ -475,22 +502,22 @@ def check_trends(page: Page, base: str) -> None:
 
     # A slider drag renders once, on release: per-move renders of 100 cards
     # over 400 points take seconds.
-    before = page.inner_text("#watch-range")
-    box = page.locator("#watch-slider").bounding_box()
+    before = page.inner_text("#trends-range")
+    box = page.locator("#trends-slider").bounding_box()
     y = box["y"] + box["height"] - 24
     page.mouse.move(box["x"] + 25, y)
     page.mouse.down()
     page.mouse.move(box["x"] + box["width"] * 0.7, y, steps=5)
     page.wait_for_timeout(SETTLE_MS)
-    assert page.inner_text("#watch-range") == before, "rendered during the drag"
+    assert page.inner_text("#trends-range") == before, "rendered during the drag"
     page.mouse.up()
     page.wait_for_timeout(SETTLE_MS)
-    assert page.inner_text("#watch-range") != before, "no render on release"
+    assert page.inner_text("#trends-range") != before, "no render on release"
     go(page, f"{base}#tree=1&view=trends&set=Mixed")
 
     # Zooming here is the Stack view's range too.
     times = json.loads((FIXTURE / "tree-1.json").read_text())["times"]
-    act(page, lambda: zoom(page, "watch-slider", times[1], times[2]))
+    act(page, lambda: zoom(page, "trends-slider", times[1], times[2]))
     assert "+100 GiB" in a.inner_text(), f"zoomed change of A: {a.inner_text()}"
     act(page, page.reload)
     assert len(cards(page)) == 3, "view lost on reload"
@@ -520,7 +547,7 @@ def check_trends(page: Page, base: str) -> None:
 
     # The Stack view shows a range zoomed in the Trends view.
     go(page, f"{base}#tree=1&view=trends")
-    act(page, lambda: zoom(page, "watch-slider", times[1], times[2]))
+    act(page, lambda: zoom(page, "trends-slider", times[1], times[2]))
     act(page, lambda: page.click("#view button[data-view=stack]"))
     start, end = page.evaluate(
         "(ts) => ts.map((t) => new Date(t).toLocaleString())", [times[1], times[2]]
@@ -567,7 +594,7 @@ def check_sets(page: Page, base: str) -> None:
             "No directories match this set's patterns."
         ), f"{view}: no empty-set note"
         assert page.is_visible("#stack-empty"), f"{view}: empty-set note hidden"
-    assert cards(page) == [] and page.is_hidden("#watch-range"), "range for Empty"
+    assert cards(page) == [] and page.is_hidden("#trends-range"), "range for Empty"
     act(page, lambda: page.click("#view button[data-view=stack]"))
     assert page.is_hidden("#chart"), "empty chart shown"
     assert page.is_hidden("#legend"), "legend shown for an empty set"
@@ -595,14 +622,14 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     go(page, f"{base}#tree=1&view=trends&set=Mixed")
     assert len(cards(page)) == 2, f"unchanged card shown: {cards(page)}"
-    hidden = page.inner_text("#watch-hidden")
+    hidden = page.inner_text("#trends-hidden")
     assert hidden == "1 directory unchanged in this range is hidden.", hidden
 
     act(page, lambda: page.check("#flat"))
     assert "flat=1" in state(page) and "Z/y" in cards(page), (
         "Show unchanged did nothing"
     )
-    assert page.is_hidden("#watch-hidden"), "hidden count shown with none hidden"
+    assert page.is_hidden("#trends-hidden"), "hidden count shown with none hidden"
 
     act(page, lambda: page.select_option("#sort", "name"))
     names = cards(page)
@@ -621,7 +648,7 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     tree["rbytes"][caf] = 2**30
     page.goto(f"{base}#tree=1&view=trends&set=Mixed")
     act(page, page.reload)  # a hash change alone keeps the loaded file
-    text = page.inner_text("#watch-hidden")
+    text = page.inner_text("#trends-hidden")
     assert cards(page) == [] and "Show unchanged" in text, f"all hidden: {text}"
     go(page, f"{base}#tree=1&view=trends&sort=size&flat=1")
 
@@ -653,7 +680,7 @@ def check_absent_in_range(page: Page, base: str) -> None:
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     times = tree["times"]
     go(page, f"{base}#tree=1&view=trends&set=Mixed&flat=1")
-    act(page, lambda: zoom(page, "watch-slider", times[1], times[2]))
+    act(page, lambda: zoom(page, "trends-slider", times[1], times[2]))
     text = card(page, "Z/y").inner_text()
     assert "absent in this range" in text, f"absent card: {text}"
 
@@ -812,7 +839,8 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         act(page, lambda name=w["name"]: page.select_option("#set", name))
         shown = page.locator("#cards .trend-card").count()
         hidden = page.eval_on_selector(
-            "#watch-hidden", "e => e.hidden ? 0 : parseInt(e.textContent.match(/\\d+/))"
+            "#trends-hidden",
+            "e => e.hidden ? 0 : parseInt(e.textContent.match(/\\d+/))",
         )
         act(page, lambda: page.check("#flat"))
         n = page.locator("#cards .trend-card").count()
@@ -829,15 +857,15 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     act(page, lambda: page.select_option("#set", first))
 
     # Drag the slider's left handle a third of the way; cards follow.
-    before = page.inner_text("#watch-range")
-    box = page.locator("#watch-slider").bounding_box()
+    before = page.inner_text("#trends-range")
+    box = page.locator("#trends-slider").bounding_box()
     y = box["y"] + box["height"] - 24
     page.mouse.move(box["x"] + 25, y)
     page.mouse.down()
     page.mouse.move(box["x"] + box["width"] / 3, y, steps=10)
     page.mouse.up()
     page.wait_for_timeout(SETTLE_MS)
-    assert page.inner_text("#watch-range") != before, f"tree {tree}: drag did nothing"
+    assert page.inner_text("#trends-range") != before, f"tree {tree}: drag did nothing"
 
     other = next((t["id"] for t in entries if t["id"] != tree), None)
     if other is not None:

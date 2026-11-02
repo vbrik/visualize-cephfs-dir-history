@@ -369,11 +369,11 @@ function renderTrends(s, set) {
   const cards = sortCards(s.flat ? all : all.filter((card) => !unchanged(card)), s.sort);
   const hidden = all.length - cards.length;
   hideSparkTip();
-  $("watch-range").textContent = all.length
+  $("trends-range").textContent = all.length
     ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
     : "";
-  $("watch-hidden").hidden = hidden === 0;
-  $("watch-hidden").textContent = cards.length === 0
+  $("trends-hidden").hidden = hidden === 0;
+  $("trends-hidden").textContent = cards.length === 0
     ? `All ${hidden} directories are unchanged in this range; check Show unchanged to see them.`
     : hidden === 1
       ? "1 directory unchanged in this range is hidden."
@@ -402,7 +402,7 @@ function renderTrends(s, set) {
   }
 
   if (!slider) {
-    slider = echarts.init($("watch-slider"), null, { renderer: "canvas" });
+    slider = echarts.init($("trends-slider"), null, { renderer: "canvas" });
     slider.on("datazoom", () => followZoom(slider));
   }
   slider.resize();
