@@ -17,7 +17,8 @@ Sets are lists of directories you choose in a TOML file (`--sets`); every tree
 also has the set **Top level**, its top-level directories. Stack bands are the
 directories' rbytes, the size of the whole subtree; `dir/ bytes` is the
 files directly in a split directory. Bands add up, unless a set holds a
-directory and one of its own subdirectories: those bytes can count twice. See [docs/terms.md](docs/terms.md) for the terms and
+directory and one of its own subdirectories: those bytes can count twice.
+See [docs/terms.md](docs/terms.md) for the terms and
 [docs/design.md](docs/design.md) for the design, the data format and the
 known risks.
 
@@ -36,15 +37,16 @@ known risks.
 ## Generate and view
 
     export TRACKDIR_DB=postgresql://trackdir@db.example.org/trackdir
-    dirhistory-generate -v                    # writes web/data/
+    touch sets.toml                           # or copy deploy/sets.toml.example and edit
+    dirhistory-generate --sets sets.toml -v   # writes web/data/
     python -m http.server -d web 8000         # then open http://localhost:8000/
 
 Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
 The database is only read. See `dirhistory-generate --help` for the options:
 sets file, directory limit, trees, output directory, and time resolution.
 
-`--sets FILE` is required; an empty file gives each tree only its Top level
-set. The file names, per tree, sets of directories (patterns relative to the
+`--sets FILE` is required; an empty file (as above) gives each tree only its
+Top level set. The file names, per tree, sets of directories (patterns relative to the
 tree root) and how many levels below each the page can split and drill; see
 [deploy/sets.toml.example](deploy/sets.toml.example). A tree whose sets
 store more than `--max-dirs` directories (20000) is an error, which catches
