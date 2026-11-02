@@ -12,7 +12,8 @@ Serves web/ on a free local port with two data sets:
 - web/data (if present), the real data written by dirhistory-generate: for
   every tree, in light and dark mode, the Stack view at Depth 0 and 1,
   drilling into the first drillable band, hiding a band, reloading from
-  the URL hash and unhiding it; then each set's Trends cards.
+  the URL hash and unhiding it, ticking one band after None; then each
+  set's Trends cards.
 
 Pages are served with the Content-Security-Policy of
 deploy/nginx.conf.example, so anything it blocks is a console error.
@@ -230,14 +231,113 @@ def check_fixture(page: Page, base: str) -> None:
     )
 
     # Reset restores the Stack view's state.
-    go(page, f"{base}#tree=1&depth=1&top=2&in=A&hide=Z&sort=size")
+    go(page, f"{base}#tree=1&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size&sort=size")
     act(page, lambda: page.click("#reset"))
-    for key in ("depth=", "top=", "in=", "hide="):
+    for key in ("depth=", "top=", "in=", "hide=", "pick=", "lsort="):
         assert key not in state(page), f"Reset kept {key}: {state(page)}"
     assert "sort=size" in state(page), f"Reset changed the Trends view: {state(page)}"
     assert page.input_value("#depth") == "0" and page.input_value("#top") == "64", (
         "Reset did not restore the fields"
     )
+
+
+def series(page: Page) -> dict[str, str]:
+    """The Stack chart's series, bottom first, as {band key: color}."""
+    return page.evaluate(
+        """() => Object.fromEntries(echarts.getInstanceByDom(document.getElementById("chart"))
+            .getOption().series.map((s) => [s.id, s.itemStyle.color]))"""
+    )
+
+
+def tick(page: Page, name: str) -> None:
+    """Click the tick box of the legend row whose drill button matches
+    regex NAME."""
+    # has= is matched inside each row.
+    drill = page.locator("button.link", has_text=re.compile(name))
+    act(page, lambda: page.locator("#legend li").filter(has=drill).locator("input").click())
+
+
+def check_picks(page: Page, base: str) -> None:
+    """The legend's tick boxes, None and All, and its column sorts."""
+    go(page, f"{base}#tree=1")
+    # Keys stay in the page's strings: café's name is not UTF-8.
+    colors = series(page)
+    assert len(colors) == 4 and list(colors)[0] == "A", f"series: {list(colors)}"
+
+    # None draws nothing but keeps every row listed, unticked, and the
+    # range: the empty chart's zoom slider must not change it.
+    shown = page.inner_text("#table-range")
+    act(page, lambda: page.click("#pick-none"))
+    assert page.inner_text("#table-range") == shown, "None changed the range"
+    assert state(page).endswith("&pick="), f"None: {state(page)}"
+    assert series(page) == {}, f"None drew {series(page)}"
+    assert len(bands(page)) == 4, f"None changed the list: {bands(page)}"
+    assert page.locator("#legend input.pick:checked").count() == 0, "rows still ticked"
+    summary = page.inner_text("#summary")
+    assert "0 B in 0 of 4 listed bands" in summary, summary
+    assert page.locator("#table-body tr").count() == 0, "table lists undrawn bands"
+
+    # Ticking draws just those, in stack order, with their colors.
+    tick(page, "^Z$")
+    tick(page, "^A$")
+    assert series(page) == {"A": colors["A"], "Z": colors["Z"]}, series(page)
+    summary = page.inner_text("#summary")
+    assert "750 GiB in 2 of 4 listed bands" in summary, summary
+    assert page.locator("#table-body tr").count() == 2, "table not of drawn bands"
+
+    # Sorting reorders the legend, not the chart, and survives a reload; the
+    # header shows the order; a third click is chart order again.
+    delta = page.locator("#legend-head .sort[data-sort='delta']")
+    act(page, delta.click)
+    assert bands(page)[0] == "A" and bands(page)[-1] == "Z", f"by change: {bands(page)}"
+    assert delta.get_attribute("data-order") == "down", "no sort arrow"
+    assert list(series(page)) == ["A", "Z"], "sorting changed the chart"
+    act(page, page.reload)
+    assert list(series(page)) == ["A", "Z"], "picks lost on reload"
+    assert bands(page)[-1] == "Z" and "lsort=delta" in state(page), "sort lost on reload"
+    act(page, delta.click)
+    assert bands(page)[0] == "Z", f"reversed: {bands(page)}"
+    assert delta.get_attribute("data-order") == "up", "no reversed arrow"
+    act(page, delta.click)
+    assert "lsort=" not in state(page) and bands(page)[0] == "Q", bands(page)
+    assert delta.get_attribute("data-order") is None, "arrow left in chart order"
+
+    # A chart click finds the band among those drawn: 3/4 of the way to the
+    # last point, 700 GiB is in Z (on A), not in café (unticked, between).
+    x, y = page.evaluate(
+        """(bytes) => {
+            const el = document.getElementById("chart");
+            const chart = echarts.getInstanceByDom(el);
+            const ms = (Date.parse("2026-10-01T01:00:00Z")
+              + 3 * Date.parse("2026-10-01T02:00:00Z")) / 4;
+            const [x, y] = chart.convertToPixel("grid", [ms, bytes]);
+            const box = el.getBoundingClientRect();
+            return [box.left + x, box.top + y];
+        }""",
+        700 * 2**30,
+    )
+    act(page, lambda: page.mouse.click(x, y))
+    assert "in=Z" in state(page), f"chart click among picks: {state(page)}"
+    assert "pick=" not in state(page), f"drilling kept picks: {state(page)}"
+
+    # Hiding a picked band drops its pick; All, or ticking the last
+    # unticked row, ends picking.
+    go(page, f"{base}#tree=1&pick=A&pick=Z")
+    z_link = page.locator("button.link", has_text=re.compile("^Z$"))
+    hide_z = page.locator("#legend li").filter(has=z_link).locator("button.hide")
+    act(page, hide_z.click)
+    assert "pick=A" in state(page) and "pick=Z" not in state(page), state(page)
+    act(page, lambda: page.click("#pick-all"))
+    assert "pick=" not in state(page), f"All: {state(page)}"
+    go(page, f"{base}#tree=1&pick=A&pick=Z&pick=Q")
+    tick(page, "^caf")
+    assert "pick=" not in state(page), f"ticking the last row kept picks: {state(page)}"
+
+    # Changing Depth (a new level) clears picks.
+    go(page, f"{base}#tree=1&pick=A")
+    page.fill("#depth", "1")
+    act(page, lambda: page.press("#depth", "Enter"))
+    assert "depth=1" in state(page) and "pick=" not in state(page), state(page)
 
 
 def check_model(page: Page, base: str) -> None:
@@ -279,6 +379,12 @@ def check_model(page: Page, base: str) -> None:
               bands1: info(run({depth: 1}).bands),
               inA: info(run({roots: ["A"], base: "A", depth: 1}).bands),
               top2: keys({top: 2}),
+              // Picks are listed first, in rank order, even past Top.
+              keepQ: keys({top: 2, keep: ["Q"]}),
+              keepPastTop: keys({top: 1, keep: ["Q", "Z", "nope"]}),
+              legend: Object.fromEntries(["", "delta", "-delta", "size", "name", "-name",
+                "bogus"].map((by) => [by, m.sortLegend(run({}).bands, by, [0, 2])
+                  .map((b) => b.key)])),
               hideA: keys({depth: 1, hidden: ["A"]}),
               hideOwnA: keys({depth: 1, hidden: ["A/."]}),
               // Hidden bytes leave the bands above them too (Depth 0).
@@ -332,6 +438,22 @@ def check_model(page: Page, base: str) -> None:
 
     # Top, and hiding a dir (its subtree) or only its own files.
     assert len(got["top2"]["keys"]) == 2 and got["top2"]["cut"] == 2, got["top2"]
+    assert got["keepQ"] == {"keys": ["A", "Q"], "cut": 2}, f"keep Q: {got['keepQ']}"
+    assert got["keepPastTop"] == {"keys": ["Z"], "cut": 3}, got["keepPastTop"]
+
+    # Legend orders, over the range: change A +200, café +100, Q 0, Z -50
+    # GiB; size A 700, café 200, Z 50, Q 40 GiB. Chart order is the top of
+    # the stack first; an unknown sort is chart order.
+    chart = ["Q", "Z", caf, "A"]
+    assert got["legend"] == {
+        "": chart,
+        "delta": ["A", caf, "Q", "Z"],
+        "-delta": ["Z", "Q", caf, "A"],
+        "size": ["A", caf, "Z", "Q"],
+        "name": ["A", "Q", "Z", caf],
+        "-name": [caf, "Z", "Q", "A"],
+        "bogus": chart,
+    }, f"legend orders: {got['legend']}"
     assert not {"A/.", "A/b", "A/c"} & set(got["hideA"]["keys"]), got["hideA"]
     assert "Q" in got["hideA"]["keys"], f"hiding A hid Q: {got['hideA']}"
     assert set(got["hideOwnA"]["keys"]) == want - {"A/."}, got["hideOwnA"]
@@ -827,6 +949,13 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         assert page.locator("#hidden-list button").count() == 1, "hide not restored"
         act(page, page.locator("#hidden-list button").first.click)
         assert "hide=" not in state(page), f"tree {tree}: unhiding failed"
+    if n:
+        # None, then tick the legend's first row: one band drawn of n.
+        go(page, f"{base}#tree={tree}")
+        act(page, lambda: page.click("#pick-none"))
+        act(page, page.locator("#legend input.pick").first.click)
+        assert len(series(page)) == 1, f"tree {tree}: picking drew {len(series(page))}"
+        assert len(bands(page)) == n, f"tree {tree}: picking changed the list"
 
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
     sets = next(t["sets"] for t in entries if t["id"] == tree)
@@ -919,6 +1048,7 @@ def main() -> int:
             check_refresh_after_regeneration,
             check_refresh_keeps_zoom,
             check_click_between_points,
+            check_picks,
         ):
             run_checks(
                 browser, "light", lambda pg, c=check: c(pg, url(fixture)), problems

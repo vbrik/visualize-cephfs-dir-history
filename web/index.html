@@ -48,7 +48,22 @@
      <p id="summary" class="muted"></p>
      <div class="chart-row">
        <div id="chart" class="chart" role="img"></div>
-       <ul id="legend" class="legend" aria-label="Legend"></ul>
+       <div class="legend-pane">
+        <div class="legend-tools">Draw
+          <button id="pick-none" class="link" type="button" title="Untick every band; then tick the ones to draw">None</button>
+          <button id="pick-all" class="link" type="button" title="Tick every band">All</button>
+        </div>
+        <div class="legend-box">
+         <div id="legend-head" class="legend-row legend-head">
+           <span></span><span></span>
+           <button type="button" class="sort" data-sort="name">Dir</button>
+           <button type="button" class="sort" data-sort="size">Size</button>
+           <button type="button" class="sort" data-sort="delta">Δ</button>
+           <span></span>
+         </div>
+         <ul id="legend" class="legend" aria-label="Legend"></ul>
+        </div>
+       </div>
      </div>
      <p id="hidden" class="chips" hidden>Hidden: <span id="hidden-list"></span></p>
      <details>

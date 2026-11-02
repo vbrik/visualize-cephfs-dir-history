@@ -8,6 +8,7 @@ import { stackedAreaOption } from "./charts/stackedArea.js";
 import { HEIGHT, WIDTH, sparkPaths, sparkPointAt, sparkXs } from "./charts/trendCard.js";
 import {
   CARD_SORTS,
+  LEGEND_SORTS,
   MAX_BANDS,
   ROOT,
   decodeValue,
@@ -22,6 +23,7 @@ import {
   relative,
   setDirOf,
   sortCards,
+  sortLegend,
   stackBands,
   trendCards,
   unchanged,
@@ -37,11 +39,16 @@ const DEFAULTS = {
   top: MAX_BANDS,
   in: "", // the drilled-into dir; "": none, the set's dirs are shown
   hide: [],
+  // The legend's ticked band keys; null: all are ticked (no picking).
+  pick: null,
+  lsort: "", // the legend's order (see model.sortLegend); "": chart order
   sort: "span",
   flat: false,
 };
 // The Stack view's state keys, which its Reset restores.
-const STACK_KEYS = ["depth", "top", "in", "hide"];
+const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort"];
+// Picks are band keys of one level's legend: changing level clears them.
+const NEW_LEVEL = { pick: null };
 const SVG = "http://www.w3.org/2000/svg";
 
 const $ = (id) => document.getElementById(id);
@@ -49,7 +56,8 @@ const chart = echarts.init($("chart"), null, { renderer: "canvas" });
 let index = [];
 let data = null; // the current tree file
 let range = null; // [a, b] point indexes shown by the zoom slider
-let model = null; // the bands drawn, from model.stackBands
+let model = null; // the bands listed in the legend, from model.stackBands
+let drawn = []; // those of them drawn: the ticked ones
 const slots = new Map(); // view key -> Map(band key -> palette slot)
 // The Trends view's slider, made when it is first shown: ECharts sizes a
 // chart from its element, which is 0×0 while hidden.
@@ -72,6 +80,9 @@ function readState() {
     top: clampInt(p.get("top"), 1, MAX_BANDS, DEFAULTS.top),
     in: p.get("in") ?? DEFAULTS.in,
     hide: p.getAll("hide"),
+    // "pick=" alone: picking, with nothing ticked.
+    pick: p.has("pick") ? p.getAll("pick").filter((k) => k !== "") : null,
+    lsort: Object.hasOwn(LEGEND_SORTS, (p.get("lsort") ?? "").replace(/^-/, "")) ? p.get("lsort") : "",
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
     flat: p.get("flat") === "1",
   };
@@ -86,6 +97,8 @@ function writeState(changes) {
   if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
   if (s.in) p.push(["in", s.in]);
   for (const h of s.hide) p.push(["hide", h]);
+  if (s.pick !== null) for (const k of s.pick.length ? s.pick : [""]) p.push(["pick", k]);
+  if (s.lsort) p.push(["lsort", s.lsort]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
   if (s.flat) p.push(["flat", "1"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
@@ -214,6 +227,7 @@ function renderStack(s, set) {
   $("stack-body").hidden = set.paths.length === 0;
   if (!set.paths.length) {
     model = null;
+    drawn = [];
     return;
   }
   chart.resize(); // it may have been hidden, and so 0×0
@@ -223,18 +237,26 @@ function renderStack(s, set) {
   $("depth").max = levels;
   $("depth").value = depth;
 
-  model = stackBands(data, { roots, base: inPath, depth, top: s.top, hidden: s.hide, range });
+  const keep = s.pick ?? [];
+  model = stackBands(data, { roots, base: inPath, depth, top: s.top, hidden: s.hide, range, keep });
+  drawn = s.pick === null ? model.bands : model.bands.filter((band) => keep.includes(band.key));
   const c = colors();
-  // Keyed without Depth and Top, so bands keep their colors when those change.
+  // Keyed without Depth and Top, so bands keep their colors when those
+  // change; over the listed bands, so a band keeps its color when unticked.
   c.bands = bandColors(`${data.tree.id}|${set.name}|${inPath}`, model.bands, c.palette);
 
   // A tooltip left open over series that are being replaced would throw.
   chart.dispatchAction({ type: "hideTip" });
-  chart.setOption(stackedAreaOption(data, model, { colors: c, range }), { replaceMerge: ["series"] });
+  // replaceMerge keeps a surviving series at its old index, so clear them
+  // first: the stack must be in DRAWN's order, as layerAt assumes.
+  chart.setOption({ series: [] }, { replaceMerge: ["series"] });
+  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range }), {
+    replaceMerge: ["series"],
+  });
   zoomTo(chart);
 
-  renderLegend(model, c, s);
-  renderTable(model);
+  renderLegend(c, s);
+  renderTable();
   renderChips(s.hide);
   renderSummary(s, set, inPath);
 }
@@ -270,7 +292,9 @@ function renderControls(s) {
 /** Crumbs: the set, then (when drilled) the set dir holding INPATH, as one
  * crumb, and each component below it. */
 function renderCrumbs(set, inPath) {
-  const crumbs = [button(`Set ${set.name}`, () => writeState({ in: "", depth: 0 }), inPath === null)];
+  const crumbs = [
+    button(`Set ${set.name}`, () => writeState({ in: "", depth: 0, ...NEW_LEVEL }), inPath === null),
+  ];
   if (inPath !== null) {
     const top = setDirOf(set.paths, inPath);
     const below = relative(inPath, top);
@@ -286,25 +310,66 @@ function renderCrumbs(set, inPath) {
 }
 
 /** Show the bands inside DIR, one level down. */
-const drill = (dir) => writeState({ in: dir, depth: 1 });
+const drill = (dir) => writeState({ in: dir, depth: 1, ...NEW_LEVEL });
 
-function renderLegend(model, c, s) {
-  const [, b] = range;
-  const items = model.bands.map((band) => {
+/** The legend: the listed bands in S.lsort order, each with its tick box,
+ * swatch, name (a drill button if drillable), size and change over the
+ * range, and hide button; and the sort state of its header. */
+function renderLegend(c, s) {
+  const [a, b] = range;
+  const items = sortLegend(model.bands, s.lsort, range).map((band) => {
     const li = document.createElement("li");
+    const on = drawn.includes(band);
+    li.classList.toggle("off", !on);
+    const tick = document.createElement("input");
+    tick.type = "checkbox";
+    tick.className = "pick";
+    tick.checked = on;
+    tick.setAttribute("aria-label", `Draw ${band.label}`);
+    tick.addEventListener("change", () => pick(band.key, tick.checked, s));
     const name = band.drillable ? button(band.label, () => drill(band.dir)) : text(band.label);
     name.classList.add("label");
     if (band.drillable) name.title = `Split ${absolute(band.dir)} into its subdirectories`;
-    li.append(swatch(c.bands.get(band.key)), name, value(band.values[b]), hideButton(band, s));
+    const delta = text(formatDelta(band.values[b] - band.values[a]));
+    delta.className = "delta";
+    li.append(tick, swatch(c.bands.get(band.key)), name, value(band.values[b]), delta, hideButton(band, s));
     return li;
   });
-  $("legend").replaceChildren(...items.reverse());
+  $("legend").replaceChildren(...items);
+
+  const key = s.lsort.replace(/^-/, "");
+  const reversed = s.lsort.startsWith("-");
+  for (const head of $("legend-head").querySelectorAll(".sort")) {
+    const by = head.dataset.sort;
+    // Names sort A to Z, values largest first; "up" is the arrow, A to Z or smallest first.
+    const up = (by === "name") !== reversed;
+    if (by === key) head.dataset.order = up ? "up" : "down";
+    else delete head.dataset.order;
+    head.title = "Sort by this column; click again to reverse, a third time for chart order";
+  }
 }
 
-function renderTable(model) {
+/** Tick (ON) or untick band KEY: picking starts from all listed bands, and
+ * ends when all are ticked again. */
+function pick(key, on, s) {
+  const listed = model.bands.map((band) => band.key);
+  const was = (s.pick ?? listed).filter((k) => listed.includes(k));
+  const next = on ? [...new Set([...was, key])] : was.filter((k) => k !== key);
+  writeState({ pick: listed.every((k) => next.includes(k)) ? null : next });
+}
+
+/** The legend's next order after a click on column BY's header: its own
+ * order, then reversed, then chart order. */
+function nextLegendSort(current, by) {
+  if (current === by) return `-${by}`;
+  if (current === `-${by}`) return "";
+  return by;
+}
+
+function renderTable() {
   const [a, b] = range;
   $("table-body").replaceChildren(
-    ...model.bands.map(({ label, values }) => {
+    ...drawn.map(({ label, values }) => {
       const tr = document.createElement("tr");
       for (const cell of [
         label,
@@ -349,14 +414,15 @@ function absolute(path) {
 
 function renderSummary(s, set, inPath) {
   const b = range[1];
-  const total = model.bands.reduce((sum, band) => sum + band.values[b], 0);
-  const n = model.bands.length;
+  const total = drawn.reduce((sum, band) => sum + band.values[b], 0);
+  const n = drawn.length;
   const k = set.paths.length;
   const where = inPath === null ? set.name : absolute(inPath);
   // At Top's max, raising it cannot help; hiding bands or drilling in can.
   const cut = model.cut ? `, ${model.cut} more not shown${s.top < MAX_BANDS ? " (raise Top)" : ""}` : "";
+  const of = drawn.length < model.bands.length ? ` of ${model.bands.length} listed` : "";
   $("summary").textContent =
-    `${where}: ${formatBytes(total)} in ${n} band${n === 1 ? "" : "s"}${cut}; `
+    `${where}: ${formatBytes(total)} in ${n}${of} band${n === 1 && !of ? "" : "s"}${cut}; `
     + `set ${set.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
   $("chart").setAttribute("aria-label", `Stacked area of directory sizes in ${where}; values are in the table below.`);
 }
@@ -436,7 +502,8 @@ function newCard(path) {
   spark.append(svg("path", "fill"), svg("path", "line"), cursor);
   el.append(head, spark, Object.assign(text(""), { className: "scale" }));
   // The Stack view inside the card's dir, split one level if it can be.
-  const open = () => writeState({ view: "stack", in: path, depth: data.split.has(path) ? 1 : 0 });
+  const open = () =>
+    writeState({ view: "stack", in: path, depth: data.split.has(path) ? 1 : 0, ...NEW_LEVEL });
   el.addEventListener("click", open);
   el.addEventListener("keydown", (e) => e.key === "Enter" && open());
   cardEls.set(path, el);
@@ -542,7 +609,9 @@ function value(bytes) {
 
 /** A button that hides BAND: its key is its hide-list key (see model.stackBands). */
 function hideButton(band, s) {
-  const b = button("hide", () => writeState({ hide: [...s.hide, band.key] }));
+  const b = button("hide", () =>
+    writeState({ hide: [...s.hide, band.key], pick: s.pick?.filter((k) => k !== band.key) ?? null }),
+  );
   b.className = "hide";
   b.title = band.own
     ? `Remove the files directly in ${absolute(band.dir)}`
@@ -556,16 +625,21 @@ function hideButton(band, s) {
 $("controls").addEventListener("submit", (e) => e.preventDefault());
 // Set names, dirs and hides belong to a tree; a dir drilled into, to a set.
 $("tree").addEventListener("change", (e) =>
-  writeState({ tree: Number(e.target.value), in: "", hide: [], set: null }),
+  writeState({ tree: Number(e.target.value), in: "", hide: [], set: null, ...NEW_LEVEL }),
 );
-$("set").addEventListener("change", (e) => writeState({ set: e.target.value, in: "" }));
+$("set").addEventListener("change", (e) => writeState({ set: e.target.value, in: "", ...NEW_LEVEL }));
 $("depth").addEventListener("change", (e) =>
-  writeState({ depth: clampInt(e.target.value, 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth) }),
+  writeState({ depth: clampInt(e.target.value, 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth), ...NEW_LEVEL }),
 );
 $("top").addEventListener("change", (e) => writeState({ top: clampInt(e.target.value, 1, MAX_BANDS, MAX_BANDS) }));
 $("reset").addEventListener("click", () =>
   writeState(Object.fromEntries(STACK_KEYS.map((k) => [k, DEFAULTS[k]]))),
 );
+$("pick-none").addEventListener("click", () => writeState({ pick: [] }));
+$("pick-all").addEventListener("click", () => writeState({ pick: null }));
+for (const head of $("legend-head").querySelectorAll(".sort")) {
+  head.addEventListener("click", () => writeState({ lsort: nextLegendSort(readState().lsort, head.dataset.sort) }));
+}
 $("sort").addEventListener("change", (e) => writeState({ sort: e.target.value }));
 $("flat").addEventListener("change", (e) => writeState({ flat: e.target.checked }));
 $("cards").addEventListener("pointermove", showSparkTip);
@@ -577,10 +651,12 @@ addEventListener("scroll", hideSparkTip, { passive: true });
 chart.getZr().on("click", (e) => {
   if (!model || !chart.containPixel("grid", [e.offsetX, e.offsetY])) return;
   const [ms, bytes] = chart.convertFromPixel("grid", [e.offsetX, e.offsetY]);
-  const band = model.bands[layerAt(model.bands.map((b) => b.values), data.times, ms, bytes)];
+  const band = drawn[layerAt(drawn.map((b) => b.values), data.times, ms, bytes)];
   if (band?.drillable) drill(band.dir);
 });
-chart.on("datazoom", () => followZoom(chart));
+// With no band drawn the chart has no time extent, and its slider reports
+// nonsense; the range stays as it was.
+chart.on("datazoom", () => drawn.length && followZoom(chart));
 for (const b of $("view").querySelectorAll("button")) {
   b.addEventListener("click", () => writeState({ view: b.dataset.view }));
 }

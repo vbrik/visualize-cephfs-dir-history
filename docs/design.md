@@ -140,8 +140,22 @@ views each show one set at a time.
   hide removes only the files directly in that dir. Otherwise a hide made at
   one Depth would leak back in at another while its chip still says it is
   hidden. Changing the tree clears hides.
+- Picking: the legend's tick boxes choose which listed bands are drawn
+  (`pick=key`, repeated; `pick=` alone: none ticked; no `pick`: all). It is
+  for comparing a few of the movers, which are always among the listed
+  ones, so it works on the listed bands, not on all a level's thousands:
+  unticking only stops drawing, nothing moves into its place, unlike hide.
+  Picks are listed even if a zoom ranks them past Top, and listed bands
+  keep their colors when unticked. The chart, its click hit-testing, the
+  summary's total and the table cover the ticked bands. Picks are one
+  level's band keys, so changing the tree, set or Depth, or drilling,
+  clears them; hiding a band drops its pick.
+- The legend sorts by name, size at the range's end, or change over the
+  range (`lsort=name|size|delta`, `-` before it reversed); its default is
+  chart order, the top of the stack first, so rows line up with the bands.
+  Sorting reorders the legend only.
 - View state is in the URL hash (`view`, `set`, `depth`, `top`, `in`, `hide`,
-  `sort`, `flat`), so a view can be bookmarked or shared. Hash values carry
+  `pick`, `lsort`, `sort`, `flat`), so a view can be bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not
   UTF-8 survive (`model.encodeValue`). Keys and views of older pages are
   ignored.
@@ -173,8 +187,8 @@ views each show one set at a time.
   SVG takes 0.6 s and 0.2 s with 400 points (`--max-points`). The slider
   still applies a drag on release, since cards reorder and come and go
   with the range.
-- Reset restores the Stack view's controls (Depth, Top, drilling, hides)
-  only; it is hidden in the Trends view.
+- Reset restores the Stack view's controls (Depth, Top, drilling, hides,
+  picks, the legend's order) only; it is hidden in the Trends view.
 
 ## Data files
 

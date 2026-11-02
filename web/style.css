@@ -224,26 +224,39 @@ header p { margin: 0 0 16px; max-width: 70ch; }
 .chart-row { display: flex; gap: 16px; flex-wrap: wrap; }
 .chart { flex: 1 1 560px; min-width: 0; height: 440px; }
 
-.legend {
-  flex: 0 1 380px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 440px;
-  overflow-y: auto;
-  font-size: 13px;
-}
-.legend li {
+/* The legend: tools above a scroll box whose sticky header row shares the
+   rows' fixed column widths: tick, swatch, name, size, change, hide. */
+.legend-pane { flex: 0 1 460px; min-width: 0; font-size: 13px; }
+.legend-tools { display: flex; gap: 10px; align-items: baseline; color: var(--ink-2); padding: 0 0 4px; }
+.legend-box { max-height: 420px; overflow-y: auto; }
+.legend { list-style: none; margin: 0; padding: 0; }
+.legend-row, .legend li {
   display: grid;
-  grid-template-columns: 12px 1fr auto auto;
+  grid-template-columns: 14px 12px 1fr 5.5em 6em 3.2em;
   gap: 8px;
   align-items: center;
   padding: 3px 0;
   border-bottom: 1px solid var(--grid);
 }
-.legend li > :nth-child(2) { overflow-wrap: anywhere; text-align: left; }
+.legend-head { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.legend-head .sort {
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: right;
+}
+.legend-head .sort[data-sort="name"] { text-align: left; }
+.legend-head .sort[data-order="up"]::after { content: " ▲"; }
+.legend-head .sort[data-order="down"]::after { content: " ▼"; }
+.legend li > .label { overflow-wrap: anywhere; text-align: left; }
+.legend input { margin: 0; }
+.legend li.off > :not(input):not(.hide) { opacity: 0.45; }
 .swatch { width: 12px; height: 12px; border-radius: 3px; }
-.value { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.value, .delta { font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; }
 
 button.link {
   font: inherit;

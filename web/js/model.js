@@ -151,10 +151,12 @@ export function normalize(raw) {
  *
  * The other bands rank by span (max − min) over the range, after those
  * subtractions, ties by key, so dirs that shrank or vanished stay visible.
- * Returns {bands, cut}: the first TOP, as {key, dir, own, label, values,
- * drillable}, and how many ranked past them.
+ * TOP of them are returned, in rank order: those whose keys are in KEEP
+ * (optional; the legend's picks) first, then the best ranked of the rest,
+ * so a pick is never cut by zooming. Returns {bands, cut}: those bands, as
+ * {key, dir, own, label, values, drillable}, and how many ranked past them.
  */
-export function stackBands(data, { roots, base, depth, top, hidden, range }) {
+export function stackBands(data, { roots, base, depth, top, hidden, range, keep = [] }) {
   const zeroed = (dir) => data.rbytes[dir].map((v) => v ?? 0);
   // The files directly in split dir DIR: its rbytes minus its subdirs', at least 0.
   const ownFiles = (dir) => {
@@ -209,7 +211,10 @@ export function stackBands(data, { roots, base, depth, top, hidden, range }) {
     .map((band) => ({ band, span: span(band.values) }))
     .sort((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
     .map(({ band }) => band);
-  const bands = ranked.slice(0, top).map((band) => ({
+  const kept = ranked.filter((band) => keep.includes(band.key)).slice(0, top);
+  const rest = ranked.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
+  const chosen = new Set([...kept, ...rest]);
+  const bands = ranked.filter((band) => chosen.has(band)).map((band) => ({
     ...band,
     label: bandLabel(data, band, base ?? ROOT),
     drillable: !band.own && data.split.has(band.dir),
@@ -308,6 +313,32 @@ export function sortCards(cards, by) {
   const byPath = (x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0);
   const key = CARD_SORTS[by][1];
   return cards.toSorted(key ? (x, y) => key(y) - key(x) || byPath(x, y) : byPath);
+}
+
+// Legend columns: sort key -> a band's value over range [a, b]. Values sort
+// largest first; "name" sorts by label, A to Z.
+export const LEGEND_SORTS = {
+  name: null,
+  size: (band, [, b]) => band.values[b],
+  delta: (band, [a, b]) => band.values[b] - band.values[a],
+};
+
+/**
+ * BANDS (from stackBands, bottom first) in legend order for sort BY over
+ * RANGE: "" is chart order, the top of the stack first; a LEGEND_SORTS key
+ * is that column's order, and "-" before it reverses it. Ties keep chart
+ * order. Labels compare by UTF-16 code unit.
+ */
+export function sortLegend(bands, by, range) {
+  const top = bands.toReversed();
+  const key = by.replace(/^-/, "");
+  if (!Object.hasOwn(LEGEND_SORTS, key)) return top;
+  const value = LEGEND_SORTS[key];
+  const cmp = value
+    ? (x, y) => value(y, range) - value(x, range)
+    : (x, y) => (x.label < y.label ? -1 : x.label > y.label ? 1 : 0);
+  const sign = by.startsWith("-") ? -1 : 1;
+  return top.toSorted((x, y) => sign * cmp(x, y));
 }
 
 /**
