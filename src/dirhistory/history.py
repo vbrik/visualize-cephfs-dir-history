@@ -12,7 +12,15 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from dirhistory.sets import MAX_DIRS, DirSet, Matcher, SetDirs, TooManyDirs, select
+from dirhistory.sets import (
+    MAX_DIRS,
+    DirSet,
+    Matcher,
+    SetDirs,
+    TooManyDirs,
+    busiest,
+    select,
+)
 
 ROOT = b"."
 
@@ -160,7 +168,7 @@ def summarize(
     stored = matcher.stored()
     if len(stored) > max_dirs:
         counts = list(zip((s.name for s in sets), matcher.counts(), strict=True))
-        raise TooManyDirs(len(stored), max_dirs, counts)
+        raise TooManyDirs(len(stored), max_dirs, counts, busiest(stored))
     matches = matcher.matches()
     rbytes = _replay(samples, points, fetch(set(stored)))
     split = {parent(p) for p in stored if p != ROOT and stored.get(parent(p), -1) >= 1}

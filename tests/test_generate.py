@@ -9,6 +9,7 @@ import pytest
 from dirhistory import generate
 from dirhistory.db import Tree
 from dirhistory.generate import (
+    busiest_hint,
     compact,
     format_duration,
     index_entry,
@@ -455,3 +456,41 @@ def test_run_fails_when_stored_dirs_exceed_the_cap(monkeypatch, tmp_path, capsys
     )
     assert not (out / "tree-1.json").exists()
     assert generate.main([*argv, "--max-dirs", "2"]) == 0
+
+
+def test_busiest_hint_groups_siblings_under_their_parent():
+    hint = busiest_hint(
+        {
+            1: [(b"a", 1300), (b"b", 20)],
+            3: [(b"a/big/x", 400), (b"a/p/1", 300), (b"b/q/r", 250), (b"a/p/2", 200)],
+        }
+    )
+    assert hint == (
+        "Directories with the most stored subdirectories, by depth:\n"
+        "  depth 1:\n"
+        "    1300  a\n"
+        "      20  b\n"
+        "  depth 3:\n"
+        "     400  a/big/x\n"
+        "          a/p/\n"
+        "     300    1\n"
+        "     200    2\n"
+        "     250  b/q/r"
+    )
+
+
+def test_busiest_hint_shows_non_utf8_names_escaped():
+    assert busiest_hint({2: [(CAFE, 5)]}).endswith("5  caf\\xe9/x")
+
+
+def test_too_many_dirs_error_names_the_busiest_dirs(monkeypatch, tmp_path, capsys):
+    exp = Tree(1, "c", None, b"/exp", 2)
+    _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"a/x", 3), (b"b", 4)]})
+    sets = _write(
+        tmp_path, '[tree."/exp".set.B]\ndirs = [{ match = ["*"], depth = 1 }]\n'
+    )
+    argv = ["--db", "x", "--out", str(tmp_path / "d"), "--sets", str(sets)]
+    assert generate.main([*argv, "--max-dirs", "2"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: tree 1 (/exp): its sets store 3 directories")
+    assert err.endswith("raise --max-dirs.\n" + busiest_hint({1: [(b"a", 1)]}) + "\n")

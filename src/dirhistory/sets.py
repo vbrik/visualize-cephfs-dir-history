@@ -21,9 +21,11 @@ trees: two trees with the same path (on different clusters or filesystems)
 cannot be told apart.
 """
 
+import heapq
 import os
 import tomllib
-from collections.abc import Sequence
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -33,6 +35,8 @@ IMPLICIT_NAME = "Top level"
 # Default most stored dirs per tree; more is an error. It guards a per-tree
 # file against a depth or pattern that stores far more than meant.
 MAX_DIRS = 100_000
+# Dirs per depth that TooManyDirs names as the busiest, to show what to cut.
+BUSIEST_TOP = 10
 
 # Path components, as bytes.
 type Parts = tuple[bytes, ...]
@@ -288,11 +292,38 @@ def select(name: str, matches: list[list[bytes]]) -> SetDirs:
     return SetDirs(name, ordered, [len(found) for found in matches])
 
 
+type Busiest = dict[int, list[tuple[bytes, int]]]
+
+
+def busiest(stored: Iterable[bytes], top: int = BUSIEST_TOP) -> Busiest:
+    """Return, by depth below the tree root (ascending), the TOP dirs with the
+    most STORED paths below them as (path, count), most first, ties by path.
+
+    A dir counts whether it is stored itself or only an ancestor of stored
+    paths (as under a pattern like `a/*`); dirs with none below are left out.
+    """
+    below: Counter[bytes] = Counter()
+    for path in stored:
+        parts = _components(path)
+        for k in range(1, len(parts)):
+            below[b"/".join(parts[:k])] += 1
+    by_depth: defaultdict[int, list[tuple[bytes, int]]] = defaultdict(list)
+    for path, n in below.items():
+        by_depth[path.count(b"/") + 1].append((path, n))
+    return {
+        depth: heapq.nsmallest(top, dirs, key=lambda d: (-d[1], d[0]))
+        for depth, dirs in sorted(by_depth.items())
+    }
+
+
 class TooManyDirs(ValueError):
     """More distinct stored dirs (FOUND) than the cap (LIMIT). COUNTS are the
-    dirs each set covers, as (set name, count)."""
+    dirs each set covers, as (set name, count); BUSIEST, what busiest returns
+    for the stored dirs."""
 
-    def __init__(self, found: int, limit: int, counts: list[tuple[str, int]]):
+    def __init__(
+        self, found: int, limit: int, counts: list[tuple[str, int]], busiest: Busiest
+    ):
         per_set = ", ".join(f"{name!r} {n}" for name, n in counts)
         super().__init__(
             f"{found} directories to store, more than {limit}; per set: {per_set}"
@@ -300,3 +331,4 @@ class TooManyDirs(ValueError):
         self.found = found
         self.limit = limit
         self.counts = counts
+        self.busiest = busiest

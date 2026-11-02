@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import tempfile
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,14 +21,17 @@ from dirhistory.history import (
     MAX_POINTS,
     MIN_BUCKET,
     RECENT,
+    ROOT,
     Resolution,
     Series,
     TreeHistory,
+    parent,
     summarize,
 )
 from dirhistory.sets import (
     IMPLICIT,
     MAX_DIRS,
+    Busiest,
     DirSet,
     SetDirs,
     TooManyDirs,
@@ -198,6 +202,31 @@ def read_tree(
             max_dirs,
         )
     return history, errors
+
+
+def busiest_hint(by_depth: Busiest) -> str:
+    """Return the dirs of BY_DEPTH (sets.busiest) as lines for a terminal.
+
+    Siblings among a depth's dirs print under their parent, at the rank of
+    the first of them, so a run of same-sized siblings reads as one.
+    """
+    width = max(len(str(n)) for dirs in by_depth.values() for _, n in dirs)
+    lines = ["Directories with the most stored subdirectories, by depth:"]
+    for depth, dirs in by_depth.items():
+        lines.append(f"  depth {depth}:")
+        siblings: defaultdict[bytes, list[tuple[bytes, int]]] = defaultdict(list)
+        for path, n in dirs:
+            siblings[parent(path)].append((path, n))
+        for up, group in siblings.items():
+            if up == ROOT or len(group) == 1:
+                lines += [f"    {n:>{width}}  {display(path)}" for path, n in group]
+                continue
+            lines.append(f"    {'':>{width}}  {display(up)}/")
+            lines += [
+                f"    {n:>{width}}    {display(path.rpartition(b'/')[2])}"
+                for path, n in group
+            ]
+    return "\n".join(lines)
 
 
 def set_warnings(
@@ -384,6 +413,7 @@ def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> i
                     f" {e.found} directories, more than --max-dirs {e.limit}"
                     f" ({per_set}). Lower their depths, narrow their patterns or"
                     " raise --max-dirs."
+                    + (f"\n{busiest_hint(e.busiest)}" if e.busiest else "")
                 ) from None
             if result is None:
                 _note(

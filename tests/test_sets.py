@@ -9,6 +9,7 @@ from dirhistory.sets import (
     Matcher,
     SetDirs,
     TooManyDirs,
+    busiest,
     load,
     parse_pattern,
     select,
@@ -128,10 +129,24 @@ def test_select_keeps_config_order_and_first_occurrence():
 
 
 def test_too_many_dirs_names_the_sets_and_counts():
-    e = TooManyDirs(30, 20, [("Top level", 10), ("Users", 25)])
+    e = TooManyDirs(30, 20, [("Top level", 10), ("Users", 25)], {})
     assert (e.found, e.limit, e.counts) == (30, 20, [("Top level", 10), ("Users", 25)])
     assert "30" in str(e) and "20" in str(e)
     assert "'Users' 25" in str(e)
+
+
+def test_busiest_ranks_dirs_by_stored_subdirs_per_depth():
+    stored = [b"a", b"a/x", b"a/x/1", b"a/x/2", b"a/y", b"b", b"b/z", b"c"]
+    assert busiest(stored, top=2) == {1: [(b"a", 4), (b"b", 1)], 2: [(b"a/x", 2)]}
+
+
+def test_busiest_breaks_ties_by_path_and_skips_the_root():
+    stored = [b".", b"b", b"b/1", b"a", b"a/1", b"c", b"c/1"]
+    assert busiest(stored, top=2) == {1: [(b"a", 1), (b"b", 1)]}
+
+
+def test_busiest_counts_under_ancestors_that_are_not_stored():
+    assert busiest([b"a/x", b"a/x/1"], top=10) == {1: [(b"a", 2)], 2: [(b"a/x", 1)]}
 
 
 def test_with_implicit_comes_first():

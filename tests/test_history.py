@@ -292,6 +292,13 @@ def test_too_many_stored_dirs_raises_before_fetching():
     assert (e.value.found, e.value.counts) == (3, [("ok", 1), ("Users", 3)])
 
 
+def test_too_many_stored_dirs_names_the_busiest_dirs():
+    first = [ROOT, b"a", b"a/x", b"a/y", b"b"]
+    with pytest.raises(TooManyDirs) as e:
+        summarize(samples(1), set(), first, list, sets=[ds("s", ("*", 1))], max_dirs=2)
+    assert e.value.busiest == {1: [(b"a", 2)]}
+
+
 def test_stored_count_is_distinct_paths_across_sets():
     rows = [(1, ROOT, 9, False), (1, b"a", 1, False), (1, b"b", 1, False)]
     h = run(rows, sets=[ds("s", ("a", 0)), ds("t", ("a", 0), ("b", 0))], cap=2)
