@@ -2,7 +2,10 @@
    a 64-slot categorical palette in light and dark steps. Slots 1-8 are the
    original hand-validated set; 9-64 keep their lightness/chroma band and
    are ordered so that neighbors stay distinct (those adjacent pairs pass
-   the dataviz validator in both themes). Trend cards color by
+   the dataviz validator in both themes). Slots above OKLCH chroma 0.18
+   then had their excess chroma cut to 30% at the same lightness and hue
+   (0.225 became 0.193), so no band glares beside its neighbors; slots 7
+   and 8 (light) are among them. Trend cards color by
    direction (growth, shrinkage, no change): a warm/cool pair validated for
    color-vision deficiency against --page, plus fills behind them. The
    mock's sage failed that check beside terracotta. */
@@ -22,50 +25,50 @@
   --series-4: #eda100;
   --series-5: #e87ba4;
   --series-6: #008300;
-  --series-7: #6250d6;
-  --series-8: #e34948;
-  --series-9: #ad1ca7;
+  --series-7: #6253d0;
+  --series-8: #e04d4b;
+  --series-9: #a5339f;
   --series-10: #806504;
   --series-11: #215d99;
   --series-12: #b1303c;
-  --series-13: #9d5efc;
+  --series-13: #9a67ed;
   --series-14: #709d20;
   --series-15: #80497e;
-  --series-16: #014fdd;
+  --series-16: #1955cc;
   --series-17: #067553;
   --series-18: #7b77cb;
-  --series-19: #c00874;
+  --series-19: #b82773;
   --series-20: #bc7b48;
   --series-21: #259cb5;
   --series-22: #8440af;
   --series-23: #486304;
-  --series-24: #6474ff;
+  --series-24: #6677f5;
   --series-25: #964609;
   --series-26: #c461b8;
   --series-27: #92913e;
   --series-28: #5b5295;
-  --series-29: #db0853;
-  --series-30: #b84cdf;
+  --series-29: #cf3158;
+  --series-30: #b259d3;
   --series-31: #c26869;
   --series-32: #3c59c0;
   --series-33: #a13879;
   --series-34: #5a8c4f;
   --series-35: #a66fd4;
-  --series-36: #dd1806;
+  --series-36: #d13727;
   --series-37: #5286c0;
-  --series-38: #229e17;
-  --series-39: #e040b1;
+  --series-38: #2d9d24;
+  --series-39: #d651ac;
   --series-40: #c04815;
-  --series-41: #8434d1;
+  --series-41: #8042c3;
   --series-42: #94475a;
-  --series-43: #0f79fd;
+  --series-43: #297cef;
   --series-44: #ad75ae;
   --series-45: #078f42;
   --series-46: #7f60d7;
-  --series-47: #ee378c;
+  --series-47: #e24c8c;
   --series-48: #6e7a02;
   --series-49: #bb618b;
-  --series-50: #6f56f4;
+  --series-50: #6f5fe3;
   --series-51: #179788;
   --series-52: #845cab;
   --series-53: #b4821b;
@@ -75,9 +78,9 @@
   --series-57: #056426;
   --series-58: #9c419b;
   --series-59: #9e6214;
-  --series-60: #d04acf;
+  --series-60: #c858c6;
   --series-61: #a84b3e;
-  --series-62: #474ae3;
+  --series-62: #4952d2;
   --series-63: #ca4e95;
   --series-64: #5b7cdf;
   --grow: #b2622d;
@@ -107,48 +110,48 @@
     --series-6: #008300;
     --series-7: #9085e9;
     --series-8: #e66767;
-    --series-9: #b425ae;
+    --series-9: #ac39a6;
     --series-10: #886d13;
     --series-11: #316ba9;
     --series-12: #bb3a45;
-    --series-13: #9454f2;
+    --series-13: #915ee3;
     --series-14: #66920b;
     --series-15: #8c548a;
-    --series-16: #135deb;
+    --series-16: #2662da;
     --series-17: #1c805d;
     --series-18: #7571c4;
-    --series-19: #c7187a;
+    --series-19: #bf2f79;
     --series-20: #b0713d;
     --series-21: #0f91aa;
     --series-22: #8d49b9;
     --series-23: #57731e;
-    --series-24: #5d6bf6;
+    --series-24: #5f6eec;
     --series-25: #a3521c;
     --series-26: #b856ad;
     --series-27: #888633;
     --series-28: #685fa3;
-    --series-29: #db0853;
-    --series-30: #b043d6;
+    --series-29: #cf3158;
+    --series-30: #aa50ca;
     --series-31: #b96062;
     --series-32: #4564cc;
     --series-33: #ab4181;
     --series-34: #57894c;
     --series-35: #9b64c8;
-    --series-36: #dd1806;
+    --series-36: #d13727;
     --series-37: #4c80ba;
-    --series-38: #179809;
-    --series-39: #d432a6;
+    --series-38: #25971c;
+    --series-39: #ca45a1;
     --series-40: #c24a17;
-    --series-41: #8b3dda;
+    --series-41: #874acc;
     --series-42: #9f5164;
-    --series-43: #0374f7;
+    --series-43: #2377e9;
     --series-44: #a26ba3;
     --series-45: #078f42;
     --series-46: #7e5fd6;
-    --series-47: #e12881;
+    --series-47: #d64081;
     --series-48: #717d0a;
     --series-49: #b45b85;
-    --series-50: #6f56f4;
+    --series-50: #6f5fe3;
     --series-51: #049182;
     --series-52: #875fae;
     --series-53: #a87801;
@@ -158,9 +161,9 @@
     --series-57: #247738;
     --series-58: #a247a1;
     --series-59: #a16519;
-    --series-60: #c43dc4;
+    --series-60: #bc4dbb;
     --series-61: #af5144;
-    --series-62: #4e55ee;
+    --series-62: #515cdd;
     --series-63: #c3478f;
     --series-64: #5676d9;
     --grow: #c96a33;
