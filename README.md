@@ -84,6 +84,13 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 4. Serve `/opt/dirhistory/web` with any web server; see
    [deploy/nginx.conf.example](deploy/nginx.conf.example). Put access
    control in front of it: directory names and sizes are internal data.
+5. Upgrading an install that passes `--watch`: edit `ExecStart` to pass
+   `--sets` (and `systemctl daemon-reload`), and convert the file: a
+   `watch = [...]` list becomes a set's
+   `dirs = [{ match = [...], depth = 0 }]` (the generator's error shows the
+   form). Then run the service once for all trees (no `--tree`). Until it
+   succeeds, the new page cannot read the old data files, and a `--tree N`
+   run leaves the other trees' old files.
 
 ## Using the page
 

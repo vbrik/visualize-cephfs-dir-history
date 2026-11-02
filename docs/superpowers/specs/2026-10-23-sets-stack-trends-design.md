@@ -1,6 +1,6 @@
 # Sets drive both views: Stack and Trends — design
 
-Status: draft for approval, 2026-10-23. Supersedes the unit-based Units view
+Status: implemented (drafted 2026-10-23). Supersedes the unit-based Units view
 (docs/design.md, "Stack own sizes, not rbytes", "Units: significant own-size
 change", "Propagation lag") and the watch file
 (`2026-10-22-watched-dirs-design.md`, "Config file").

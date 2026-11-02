@@ -25,11 +25,19 @@
 # groups, in one set or several, is stored to the largest depth, and the page
 # can drill that far in every set. All sets of a tree share one data file,
 # so a tree may store at most --max-dirs (default 20000) directories.
+#
+# Keep a set's directories disjoint: a directory and one of its subdirectories
+# in the same set are both drawn, so the subdirectory counts twice. Put an
+# enclosing directory, such as ".", in a set of its own.
 
 [tree."/data/projects".set."Projects"]
 dirs = [
-  { match = ["*", "."], depth = 1 },       # every project (new ones too) and the
-                                           # tree root, 1 level down
+  { match = ["*"], depth = 1 },            # every project (new ones too), 1 level down
+]
+
+[tree."/data/projects".set."Whole tree"]
+dirs = [
+  { match = ["."], depth = 1 },            # the tree root, as one band
 ]
 
 [tree."/data/projects".set."Raw data"]
