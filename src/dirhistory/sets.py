@@ -32,7 +32,7 @@ IMPLICIT_NAME = "Top level"
 
 # Default most stored dirs per tree; more is an error. It guards a per-tree
 # file against a depth or pattern that stores far more than meant.
-MAX_DIRS = 20_000
+MAX_DIRS = 100_000
 
 # Path components, as bytes.
 type Parts = tuple[bytes, ...]

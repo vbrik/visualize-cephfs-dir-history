@@ -49,12 +49,13 @@ sets file, directory limit, trees, output directory, and time resolution.
 Top level set. The file names, per tree, sets of directories (patterns relative to the
 tree root) and how many levels below each the page can split and drill; see
 [deploy/sets.toml.example](deploy/sets.toml.example). A tree whose sets
-store more than `--max-dirs` directories (20000) is an error, which catches
+store more than `--max-dirs` directories (100000) is an error, which catches
 a depth or pattern that stores far more than meant.
 
-By default the last 7 days keep hourly points (`--recent`, `--min-bucket`),
-and older history gets coarser points so a tree has at most 400
-(`--max-points`).
+A tree has at most 5000 time points (`--max-points`). By default the whole
+history gets one bucket width, the finest of 1h, 6h, 1d, 2d or 1w that fits:
+hourly for about 7 months, then 6-hourly to about 3.4 years, then daily.
+`--recent` keeps that much recent history hourly instead.
 
 The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 

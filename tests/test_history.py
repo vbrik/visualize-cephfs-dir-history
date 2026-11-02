@@ -64,15 +64,15 @@ def test_choose_points_collapses_samples_within_an_hour():
 
 def test_choose_points_widens_buckets_for_long_histories():
     s = samples(24 * 60, timedelta(hours=1))  # 60 days of hourly samples
-    points = choose_points(s, Resolution(recent=timedelta(0)))
-    assert len(points) == 60 * 4  # 6-hour buckets: hourly would exceed MAX_POINTS
+    points = choose_points(s, Resolution(max_points=400))
+    assert len(points) == 60 * 4  # 6-hour buckets: hourly would exceed 400
     assert points[-1] == s[-1]
 
 
 def test_choose_points_keeps_recent_history_at_the_finest_buckets():
     s = samples(24 * 60, timedelta(hours=1))  # 60 days of hourly samples
-    points = choose_points(s, Resolution(recent=timedelta(days=7)))
-    assert len(points) <= MAX_POINTS
+    points = choose_points(s, Resolution(recent=timedelta(days=7), max_points=400))
+    assert len(points) <= 400
     assert points[-1] == s[-1]
     recent = [p for p in points if p.started > s[-1].started - timedelta(days=7)]
     assert len(recent) == 7 * 24
@@ -81,28 +81,36 @@ def test_choose_points_keeps_recent_history_at_the_finest_buckets():
     assert gaps == {timedelta(hours=6)}  # 53 days at 6 h + 168 recent = 380 points
 
 
-def test_choose_points_honors_max_points_and_min_bucket():
-    s = samples(48, timedelta(minutes=5))  # 4 hours
-    assert len(choose_points(s, Resolution(min_bucket=timedelta(minutes=15)))) == 16
-    res = Resolution(recent=timedelta(0), max_points=2)
+def test_choose_points_honors_max_points():
+    res = Resolution(max_points=2)
     assert len(choose_points(samples(48, timedelta(hours=1)), res)) == 2
 
 
 def test_choose_points_coarsens_past_weekly_buckets_to_fit():
     s = samples(3, timedelta(weeks=1))
-    points = choose_points(s, Resolution(recent=timedelta(0), max_points=2))
+    points = choose_points(s, Resolution(max_points=2))
     assert len(points) == 2  # 2-week buckets
     assert points[-1] == s[-1]
 
 
 def test_choose_points_stays_within_max_points_for_any_history():
     s = samples(8 * 365, timedelta(days=1))  # 8 years: weekly buckets need 417
-    points = choose_points(s)
-    assert len(points) <= MAX_POINTS
+    res = Resolution(recent=timedelta(days=7), max_points=400)
+    points = choose_points(s, res)
+    assert len(points) <= 400
     assert points[-1] == s[-1]
     older = [p for p in points if p.started <= s[-1].started - timedelta(days=7)]
     gaps = {b.started - a.started for a, b in pairwise(older[:-1])}
     assert gaps == {timedelta(weeks=2)}  # the smallest multiple of 1 w that fits
+
+
+def test_choose_points_by_default_samples_years_uniformly_within_max_points():
+    s = samples(4 * 365 * 24, timedelta(hours=1))  # 4 years of hourly samples
+    points = choose_points(s)
+    assert len(points) <= MAX_POINTS
+    assert points[-1] == s[-1]
+    gaps = {b.started - a.started for a, b in pairwise(points[:-1])}
+    assert gaps == {timedelta(days=1)}  # 6-hour buckets would need 5841
 
 
 def test_resolution_reports_points_needed_by_recent_window():

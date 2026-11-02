@@ -49,9 +49,9 @@ negative if the child is large; the page clamps it at 0. Only own-files
 bands are affected, and a dip can lift one into the Top by a single-point
 spike.
 
-- Time points are the last sample per UTC bucket of at least 1 hour by
-  default (`--min-bucket`), not every 5-minute sample, so far fewer lagging
-  samples are used.
+- Time points are the last sample per UTC bucket of at least 1 hour (fixed:
+  `MIN_BUCKET`), not every 5-minute sample, so far fewer lagging samples are
+  used.
 - No smoothing: it would also drop a real change lasting one point.
 
 Measured on a real database, over 2 days of hourly points, the largest dip
@@ -60,14 +60,15 @@ sampling.
 
 ### Time resolution
 
-A tree has at most `--max-points` time points (400), so files and charts
-stay small however long the history grows. History within `--recent` (7
-days) of the latest sample keeps the finest buckets (`--min-bucket`, 1 h),
-so recent changes stay visible when zoomed in. Older history gets the finest
-of 1 h, 6 h, 1 d, 2 d or 1 w that fits the remaining points, or, once even
-1 w does not (after about 4.5 years at the defaults), the smallest multiple
-of 1 w that does. The generator refuses a `--recent` that alone needs
-`--max-points`.
+A tree has at most `--max-points` time points (5000), so files and charts
+stay bounded however long the history grows; years of history must fit, at
+a coarse resolution. History within `--recent` of the latest sample keeps
+1 h buckets; by default `--recent` is 0, so the whole history shares one
+width. History older than that gets the finest of 1 h, 6 h, 1 d, 2 d or 1 w
+that fits the remaining points: at the defaults 1 h up to about 7 months,
+6 h up to about 3.4 years, 1 d up to about 13.7 years. Once even 1 w does
+not fit, it gets the smallest multiple of 1 w that does. The generator
+refuses a `--recent` that alone needs `--max-points`.
 
 ### Sets
 
@@ -104,7 +105,7 @@ views each show one set at a time.
   never crosses `/` and next year's dir joins without an edit. No `**`: use
   `depth` to go deeper, since a recursive pattern could store thousands of
   dirs by accident.
-- More than `--max-dirs` (20000) stored dirs in a tree is an error naming
+- More than `--max-dirs` (100000) stored dirs in a tree is an error naming
   the sets and their counts. The cap is per tree, since all its sets share one
   file, and checked before any history is fetched. It catches accidents
   only; see the risk "Large depth makes large files".
@@ -206,7 +207,7 @@ views each show one set at a time.
   end − start.
 - Sparklines are plain SVG paths, not ECharts: one ECharts instance per
   card took 20 s for 3000 cards of 28 points and 8.5 s per range change;
-  SVG takes 0.6 s and 0.2 s with 400 points (`--max-points`). The slider
+  SVG takes 0.6 s and 0.2 s with 400 points. The slider
   still applies a drag on release, since cards reorder and come and go
   with the range.
 - Reset restores the Stack view's controls (Depth, Top, drilling, hides,

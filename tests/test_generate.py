@@ -197,8 +197,7 @@ def test_parse_duration_rejects(text):
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--recent", "30d"],  # 721 hourly points > 400
-        ["--min-bucket", "0"],
+        ["--recent", "30d", "--max-points", "400"],  # 721 hourly points > 400
         ["--max-points", "1"],
     ],
 )
@@ -217,12 +216,10 @@ def test_resolution_options_reach_summarize():
             "2d",
             "--max-points",
             "100",
-            "--min-bucket",
-            "6h",
         ]
     )
     assert generate.resolution(args) == Resolution(
-        recent=timedelta(days=2), max_points=100, min_bucket=timedelta(hours=6)
+        recent=timedelta(days=2), max_points=100
     )
 
 

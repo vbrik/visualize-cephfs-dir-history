@@ -17,20 +17,21 @@ from dirhistory.sets import MAX_DIRS, DirSet, Matcher, SetDirs, TooManyDirs, sel
 ROOT = b"."
 
 # Defaults of Resolution.
-# At most this many time points per tree, so a chart stays readable.
-MAX_POINTS = 400
-# History this recent keeps the finest buckets, so recent changes stay
-# visible however long the history grows.
-RECENT = timedelta(days=7)
-# The finest bucket: an hour, not trackdir's typical 5-minute sampling
+# At most this many time points per tree, so its file and the page's render
+# time stay bounded however long the history grows: years fit at 6 h or 1 d.
+MAX_POINTS = 5000
+# History this recent keeps the finest buckets. 0: one bucket width for the
+# whole history.
+RECENT = timedelta(0)
+# The finest bucket, fixed: an hour, not trackdir's typical 5-minute sampling
 # interval. A parent's rbytes can lag its children's within a sample, which
 # shows as a one-point dip in the page's own-files band (the parent's rbytes
 # minus its subdirectories'). One sample per hour exposes far fewer lagging
 # samples.
 MIN_BUCKET = timedelta(hours=1)
 
-# Coarser bucket widths for older history, finest first.
-BUCKET_WIDTHS = tuple(timedelta(hours=h) for h in (1, 6, 24, 48, 7 * 24))
+# Bucket widths for history older than RECENT, finest first.
+BUCKET_WIDTHS = (MIN_BUCKET, *(timedelta(hours=h) for h in (6, 24, 48, 7 * 24)))
 
 # A dir_state row: (sample id, path, rbytes, deleted)
 type Row = tuple[int, bytes, int | None, bool]
@@ -72,18 +73,17 @@ class Resolution:
     """How finely time points sample a tree's history.
 
     History within RECENT of the latest sample gets MIN_BUCKET buckets.
-    Older history gets the finest width among MIN_BUCKET and the coarser
-    BUCKET_WIDTHS that keeps all points within MAX_POINTS, else the
-    smallest whole multiple of the coarsest of those that does.
+    Older history gets the finest of BUCKET_WIDTHS that keeps all points
+    within MAX_POINTS, else the smallest whole multiple of the coarsest
+    that does.
     """
 
     recent: timedelta = RECENT
     max_points: int = MAX_POINTS
-    min_bucket: timedelta = MIN_BUCKET
 
     def recent_points(self) -> int:
         """Return the most points the recent window can take."""
-        return self.recent // self.min_bucket + 1
+        return self.recent // MIN_BUCKET + 1
 
 
 DEFAULT_RESOLUTION = Resolution()
@@ -103,20 +103,16 @@ def choose_points(
         return []
     cutoff = samples[-1].started - resolution.recent
     older = [s for s in samples if s.started <= cutoff]
-    recent = _last_per_bucket(
-        [s for s in samples if s.started > cutoff], resolution.min_bucket
-    )
+    recent = _last_per_bucket([s for s in samples if s.started > cutoff], MIN_BUCKET)
     budget = max(resolution.max_points - len(recent), 1)
-    widths = [resolution.min_bucket]
-    widths += [w for w in BUCKET_WIDTHS if w > resolution.min_bucket]
-    for width in widths:
+    for width in BUCKET_WIDTHS:
         kept = _last_per_bucket(older, width)
         if len(kept) <= budget:
             return kept + recent
     # A span S meets at most S // width + 1 aligned buckets; whole multiples
     # of the coarsest width keep bucket edges stable as history grows.
     span = older[-1].started - older[0].started
-    width = (span // (budget * widths[-1]) + 1) * widths[-1]
+    width = (span // (budget * BUCKET_WIDTHS[-1]) + 1) * BUCKET_WIDTHS[-1]
     return _last_per_bucket(older, width) + recent
 
 

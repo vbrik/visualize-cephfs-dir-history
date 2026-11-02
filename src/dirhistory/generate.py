@@ -16,6 +16,7 @@ import psycopg
 from dirhistory import __version__, db, sets
 from dirhistory.db import Tree
 from dirhistory.history import (
+    BUCKET_WIDTHS,
     MAX_POINTS,
     MIN_BUCKET,
     RECENT,
@@ -83,7 +84,7 @@ def format_duration(d: timedelta) -> str:
 
 def resolution(args: argparse.Namespace) -> Resolution:
     """Return the time resolution ARGS ask for."""
-    return Resolution(args.recent, args.max_points, args.min_bucket)
+    return Resolution(args.recent, args.max_points)
 
 
 def select_trees(all_trees: Sequence[Tree], ids: Sequence[int]) -> list[Tree]:
@@ -294,24 +295,18 @@ def parser() -> argparse.ArgumentParser:
         type=_duration_arg,
         default=format_duration(RECENT),
         metavar="DURATION",
-        help="keep this much recent history at --min-bucket resolution"
-        " (default: %(default)s)",
+        help=f"keep this much recent history at {format_duration(MIN_BUCKET)}"
+        " resolution; older history gets coarser buckets to fit --max-points."
+        " 0: one resolution for the whole history (default: %(default)s)",
     )
     p.add_argument(
         "--max-points",
         type=_positive_int,
         default=MAX_POINTS,
         metavar="N",
-        help="at most this many time points per tree; older history gets"
-        " coarser buckets to fit (default: %(default)s)",
-    )
-    p.add_argument(
-        "--min-bucket",
-        type=_positive_duration_arg,
-        default=format_duration(MIN_BUCKET),
-        metavar="DURATION",
-        help="finest time bucket; below 1h, rbytes propagation lag can make"
-        " one-point dips in own-files bands (default: %(default)s)",
+        help="at most this many time points per tree; history gets the finest"
+        f" bucket of {', '.join(map(format_duration, BUCKET_WIDTHS))} (or a"
+        " multiple of the last) that fits (default: %(default)s)",
     )
     p.add_argument(
         "--tree",
@@ -333,12 +328,6 @@ def _duration_arg(text: str) -> timedelta:
         raise argparse.ArgumentTypeError(str(e)) from None
 
 
-def _positive_duration_arg(text: str) -> timedelta:
-    if (d := _duration_arg(text)) > timedelta(0):
-        return d
-    raise argparse.ArgumentTypeError("must be more than 0")
-
-
 def _positive_int(text: str) -> int:
     if text.isdigit() and int(text) > 0:
         return int(text)
@@ -351,10 +340,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     res = resolution(args)
     if res.recent_points() >= res.max_points:
         p.error(
-            f"--recent {format_duration(res.recent)} at --min-bucket"
-            f" {format_duration(res.min_bucket)} needs up to {res.recent_points()}"
-            f" points, but --max-points is {res.max_points}: leave room for older"
-            " history by raising --max-points or --min-bucket, or shortening --recent"
+            f"--recent {format_duration(res.recent)} at"
+            f" {format_duration(MIN_BUCKET)} needs up to"
+            f" {res.recent_points()} points, but --max-points is {res.max_points}:"
+            " leave room for older history by raising --max-points or shortening"
+            " --recent"
         )
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
