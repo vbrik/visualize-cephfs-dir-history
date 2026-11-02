@@ -15,12 +15,14 @@ import {
   ROOT,
   decodeValue,
   encodeValue,
+  filterReason,
   formatBytes,
   formatDelta,
   indexRange,
   layerAt,
   maxDepth,
   normalize,
+  passes,
   reachable,
   relative,
   setDirOf,
@@ -28,7 +30,6 @@ import {
   sortLegend,
   stackBands,
   trendCards,
-  unchanged,
 } from "./model.js";
 
 // How often to look for regenerated data files, in ms.
@@ -46,11 +47,17 @@ const DEFAULTS = {
   // The legend's order (see model.sortLegend), which also picks the bands
   // Top keeps (see model.stackBands); "": chart order.
   lsort: "",
+  // Each view's filters (see model.passes): Min size in GiB, and Show
+  // unchanged. Stack: smin, sflat; Trends: min, flat.
+  smin: 1,
+  sflat: false,
   sort: "span",
+  min: 1,
   flat: false,
 };
 // The Stack view's state keys, which its Reset restores.
-const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort"];
+const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort", "smin", "sflat"];
+const GIB = 2 ** 30;
 // Picks are band keys of one level's legend: changing level clears them.
 const NEW_LEVEL = { pick: null };
 const SVG = "http://www.w3.org/2000/svg";
@@ -87,7 +94,10 @@ function readState() {
     // "pick=" alone: picking, with nothing ticked.
     pick: p.has("pick") ? p.getAll("pick").filter((k) => k !== "") : null,
     lsort: Object.hasOwn(LEGEND_SORTS, (p.get("lsort") ?? "").replace(/^-/, "")) ? p.get("lsort") : "",
+    smin: gib(p.get("smin"), DEFAULTS.smin),
+    sflat: p.get("sflat") === "1",
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
+    min: gib(p.get("min"), DEFAULTS.min),
     flat: p.get("flat") === "1",
   };
 }
@@ -103,7 +113,10 @@ function writeState(changes) {
   for (const h of s.hide) p.push(["hide", h]);
   if (s.pick !== null) for (const k of s.pick.length ? s.pick : [""]) p.push(["pick", k]);
   if (s.lsort) p.push(["lsort", s.lsort]);
+  if (s.smin !== DEFAULTS.smin) p.push(["smin", s.smin]);
+  if (s.sflat) p.push(["sflat", "1"]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
+  if (s.min !== DEFAULTS.min) p.push(["min", s.min]);
   if (s.flat) p.push(["flat", "1"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
 }
@@ -129,6 +142,15 @@ function clampInt(text, lo, hi, fallback) {
   const n = Number.parseInt(text, 10);
   return Number.isNaN(n) ? fallback : Math.min(hi, Math.max(lo, n));
 }
+
+/** TEXT as a Min size in GiB: a finite number, at least 0; else FALLBACK. */
+function gib(text, fallback) {
+  const n = Number.parseFloat(text);
+  return Number.isFinite(n) ? Math.max(0, n) : fallback;
+}
+
+/** A view's filters (see model.passes) from its Min size (GiB) and Show unchanged. */
+const filters = (min, flat) => ({ min: min * GIB, flat });
 
 // --- data -------------------------------------------------------------------
 
@@ -252,7 +274,17 @@ function renderStack(s, set) {
   $("depth").value = depth;
 
   const keep = s.pick ?? [];
-  const opts = { roots, base: inPath, depth, top: s.top, hidden: s.hide, range, keep, by: s.lsort };
+  const opts = {
+    roots,
+    base: inPath,
+    depth,
+    top: s.top,
+    hidden: s.hide,
+    range,
+    keep,
+    by: s.lsort,
+    ...filters(s.smin, s.sflat),
+  };
   model = stackBands(data, opts);
   drawn = s.pick === null ? model.bands : model.bands.filter((band) => keep.includes(band.key));
   const c = colors();
@@ -295,6 +327,9 @@ function renderControls(s) {
   }
   sort.value = s.sort;
   $("flat").checked = s.flat;
+  $("min").value = s.min;
+  $("sflat").checked = s.sflat;
+  $("smin").value = s.smin;
   $("set").replaceChildren(
     ...(data?.sets ?? []).map((set) => {
       const n = set.paths.length;
@@ -436,30 +471,32 @@ function renderSummary(s, set, inPath) {
   const where = inPath === null ? set.name : absolute(inPath);
   // At Top's max, raising it cannot help; hiding bands or drilling in can.
   const cut = model.cut ? `, ${model.cut} more not shown${s.top < MAX_BANDS ? " (raise Top)" : ""}` : "";
+  const why = filterReason(filters(s.smin, s.sflat));
+  const filtered = model.filtered ? `, ${model.filtered} filtered out (${why})` : "";
   const of = drawn.length < model.bands.length ? ` of ${model.bands.length} listed` : "";
   $("summary").textContent =
-    `${where}: ${formatBytes(total)} in ${n}${of} band${n === 1 && !of ? "" : "s"}${cut}; `
+    `${where}: ${formatBytes(total)} in ${n}${of} band${n === 1 && !of ? "" : "s"}${cut}${filtered}; `
     + `set ${set.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
   $("chart").setAttribute("aria-label", `Stacked area of directory sizes in ${where}; values are in the table below.`);
 }
 
-/** The Trends view: the cards of SET's dirs, minus unchanged ones unless
- * S.flat. */
+/** The Trends view: the cards of SET's dirs that pass its filters (S.min,
+ * S.flat). */
 function renderTrends(s, set) {
   const [a, b] = range;
   const all = trendCards(data, set.paths, range);
-  const cards = sortCards(s.flat ? all : all.filter((card) => !unchanged(card)), s.sort);
+  const cards = sortCards(all.filter((card) => passes(card, filters(s.min, s.flat))), s.sort);
   const hidden = all.length - cards.length;
+  const why = filterReason(filters(s.min, s.flat));
+  const undo = [s.min > 0 && "lower Min GiB", !s.flat && "check Show unchanged"].filter(Boolean).join(" or ");
   hideSparkTip();
   $("trends-range").textContent = all.length
     ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
     : "";
   $("trends-hidden").hidden = hidden === 0;
   $("trends-hidden").textContent = cards.length === 0
-    ? `All ${hidden} directories are unchanged in this range; check Show unchanged to see them.`
-    : hidden === 1
-      ? "1 directory unchanged in this range is hidden."
-      : `${hidden} directories unchanged in this range are hidden.`;
+    ? `All ${hidden} directories are filtered out (${why}); ${undo} to see them.`
+    : `${hidden} director${hidden === 1 ? "y" : "ies"} filtered out (${why}).`;
 
   sparkX = sparkXs(data.times, range);
   const shown = new Set(all.map((card) => card.path));
@@ -658,6 +695,9 @@ for (const head of $("legend-head").querySelectorAll(".sort")) {
 }
 $("sort").addEventListener("change", (e) => writeState({ sort: e.target.value }));
 $("flat").addEventListener("change", (e) => writeState({ flat: e.target.checked }));
+$("min").addEventListener("change", (e) => writeState({ min: gib(e.target.value, DEFAULTS.min) }));
+$("sflat").addEventListener("change", (e) => writeState({ sflat: e.target.checked }));
+$("smin").addEventListener("change", (e) => writeState({ smin: gib(e.target.value, DEFAULTS.smin) }));
 $("cards").addEventListener("pointermove", showSparkTip);
 $("cards").addEventListener("pointerleave", hideSparkTip);
 addEventListener("scroll", hideSparkTip, { passive: true });

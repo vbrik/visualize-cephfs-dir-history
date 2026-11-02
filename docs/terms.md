@@ -25,5 +25,6 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | trend card | One set dir's card in the Trends view: its rbytes (whole size) over the shown range, the change, and a sparkline on the card's own scale. |
 | span | A band's or card's largest minus smallest size in the shown range, absent counting as 0. The Stack view ranks bands by it (Top), and the Trends view sorts cards by it by default. |
 | peak | A band's or card's largest size in the shown range (the table's Peak column; the Trends *Peak* sort). |
-| unchanged | A trend card whose span is 0: constant, or absent throughout the shown range. Hidden unless *Show unchanged* is on. |
+| unchanged | A band or trend card whose span is 0: constant, or absent throughout the shown range. Filtered out unless *Show unchanged* is on. |
+| filtered out | Left out of a view by its filters (Min GiB: peak under it; Show unchanged off: unchanged). Each view has its own (Stack `smin`, `sflat`; Trends `min`, `flat`). Unlike hidden, nothing is subtracted: a filtered band's bytes stay in the bands above it at other Depths. A ticked band is never filtered out. |
 | Stack view / Trends view | The page's two views (`view=stack`, the default, or `view=trends` in the URL hash): stacked bands of a set's dirs, or a trend card per set dir. |

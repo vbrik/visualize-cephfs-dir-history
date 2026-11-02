@@ -132,7 +132,8 @@ export function normalize(raw) {
  * base (labels are relative to it; null: the tree root), depth (levels to
  * split below each root), top (most bands returned), hidden (band keys; see
  * below), range ([first, last] point indexes), by (optional; a legend sort,
- * see sortLegend: which bands TOP keeps).
+ * see sortLegend: which bands TOP keeps), min and flat (optional filters,
+ * see passes; by default none).
  *
  * A dir less than DEPTH below its root and in data.split becomes an
  * own-files band (key `${dir}/.`: the files directly in it, its rbytes minus
@@ -152,18 +153,21 @@ export function normalize(raw) {
  * under another hidden dir key is skipped, so nothing is subtracted twice;
  * an unknown dir, or `X/.` for an X not in data.split, subtracts nothing.
  *
- * The other bands rank by span (max − min) over the range, after those
- * subtractions, ties by key, so dirs that shrank or vanished stay visible.
+ * Of the other bands, those that do not pass MIN and FLAT over the range
+ * (see passes), after those subtractions, are filtered out, except those
+ * in KEEP. The rest rank by span (max − min) over the range, ties by key,
+ * so dirs that shrank or vanished stay visible.
  * TOP of them are returned, in rank order. Which TOP: those whose keys are
  * in KEEP (optional; the legend's picks) first, so a pick is never cut by
  * zooming or sorting, then the first of the rest in BY's order, ties by
  * rank. BY "" (the default) is rank; "size" keeps the largest at the
  * range's end, "-size" the smallest, "delta" the most grown, "-delta" the
- * most shrunk, "name" the first by label. Returns {bands, cut}: those
- * bands, as {key, dir, own, label, values, drillable}, and how many of the
- * others were left out.
+ * most shrunk, "name" the first by label. Returns {bands, cut, filtered}:
+ * those bands, as {key, dir, own, label, values, drillable}, how many
+ * ranked bands were left out, and how many were filtered out.
  */
-export function stackBands(data, { roots, base, depth, top, hidden, range, keep = [], by = "" }) {
+export function stackBands(data, opts) {
+  const { roots, base, depth, top, hidden, range, keep = [], by = "", min = 0, flat = true } = opts;
   const zeroed = (dir) => data.rbytes[dir].map((v) => v ?? 0);
   // The files directly in split dir DIR: its rbytes minus its subdirs', at least 0.
   const ownFiles = (dir) => {
@@ -210,14 +214,15 @@ export function stackBands(data, { roots, base, depth, top, hidden, range, keep 
     });
 
   const [a, b] = range;
-  const span = (values) => {
-    const shown = values.slice(a, b + 1);
-    return Math.max(...shown) - Math.min(...shown);
-  };
+  const scored = visible.map((band) => {
+    const shown = band.values.slice(a, b + 1);
+    const peak = Math.max(...shown);
+    return { band, peak, span: peak - Math.min(...shown) };
+  });
+  const passing = scored.filter((x) => keep.includes(x.band.key) || passes(x, { min, flat }));
   // Labeled before choosing: BY "name" sorts by label.
-  const ranked = visible
-    .map((band) => ({ band, span: span(band.values) }))
-    .sort((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
+  const ranked = passing
+    .toSorted((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
     .map(({ band }) => ({
       ...band,
       label: bandLabel(data, band, base ?? ROOT),
@@ -230,7 +235,7 @@ export function stackBands(data, { roots, base, depth, top, hidden, range, keep 
   const rest = order.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
   const chosen = new Set([...kept, ...rest]);
   const bands = ranked.filter((band) => chosen.has(band));
-  return { bands, cut: ranked.length - bands.length };
+  return { bands, cut: ranked.length - bands.length, filtered: scored.length - passing.length };
 }
 
 /** BAND's label: its dir relative to BASE, where BASE itself (and ROOT) is
@@ -308,6 +313,20 @@ export function trendCards(data, paths, range) {
 
 /** Whether CARD's dir is unchanged in its range: constant, or absent throughout. */
 export const unchanged = (card) => card.span === 0;
+
+/** Whether a band or card X ({peak, span} over the shown range) passes a
+ * view's filters: a peak of at least MIN bytes, and a change unless FLAT
+ * (show unchanged). */
+export const passes = (x, { min, flat }) => x.peak >= min && (flat || !unchanged(x));
+
+/** Why a view's filters MIN (bytes) and FLAT drop things, e.g. "unchanged
+ * in this range, or under 1.00 GiB at peak"; "" if they drop nothing. */
+export function filterReason({ min, flat }) {
+  const why = [];
+  if (!flat) why.push("unchanged in this range");
+  if (min > 0) why.push(`under ${formatBytes(min)} at peak`);
+  return why.join(", or ");
+}
 
 // Card orders for the Trends view: sort key -> [label, card's value].
 // Values sort largest first; "name" sorts by path.

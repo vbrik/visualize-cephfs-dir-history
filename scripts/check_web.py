@@ -88,6 +88,11 @@ def state(page: Page) -> str:
     return page.evaluate("location.hash")
 
 
+def keys(page: Page) -> set[str]:
+    """The URL hash's keys (a substring test would find "in" in "smin")."""
+    return {pair.split("=")[0] for pair in state(page).lstrip("#").split("&")}
+
+
 def go(page: Page, where: str) -> None:
     """Load WHERE and let the page fetch and render."""
     page.goto(where)
@@ -130,11 +135,11 @@ def check_fixture(page: Page, base: str) -> None:
         assert page.is_hidden("#error"), f"{bad} broke the page"
         assert page.inner_text("#crumbs") == "Set Top level", f"{bad} not ignored"
         assert page.is_visible("#chart"), f"{bad}: Stack view not shown"
-    go(page, f"{base}#tree=1&depth=9")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&depth=9")
     assert page.input_value("#depth") == "1", "depth not clamped to the split levels"
 
     # The legend drills into a split dir at Depth 1.
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
     assert page.input_value("#depth") == "0", "Depth not 0 by default"
     act(page, lambda: link(page, "A").click())
     assert "in=A" in state(page) and "depth=1" in state(page), f"drill: {state(page)}"
@@ -156,7 +161,7 @@ def check_fixture(page: Page, base: str) -> None:
 
     # Names that are not UTF-8: hiding an own-files band and a dir band
     # survives the URL hash; chips bring them back.
-    go(page, f"{base}#tree=1&depth=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&depth=1")
     own = page.locator("#legend li").filter(has_text="caf").filter(has_text="/ bytes")
     act(page, lambda: own.locator("button.hide").click())
     assert not any(
@@ -199,7 +204,7 @@ def check_fixture(page: Page, base: str) -> None:
             }"""
         )
 
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
     legend_caf = page.locator("#legend button.link", has_text="caf")
     act(page, lambda: legend_caf.click())
     assert drilled_caf() == [True, True], f"drill into caf: {bands(page)}"
@@ -210,12 +215,12 @@ def check_fixture(page: Page, base: str) -> None:
 
     # A hide made at Depth 1 still holds at Depth 0: the band above it and
     # the total shrink (A 700 -> 350 GiB, total 990 -> 640 GiB).
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
     a_link = page.locator("button.link", has_text=re.compile("^A$"))
     a_value = page.locator("#legend li").filter(has=a_link).locator(".value")
     assert a_value.inner_text() == "700 GiB", f"A: {a_value.inner_text()}"
     assert "990 GiB" in page.inner_text("#summary"), page.inner_text("#summary")
-    go(page, f"{base}#tree=1&depth=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&depth=1")
     hide_b = page.locator("#legend li", has_text="A/b").locator("button.hide")
     act(page, hide_b.click)
     act(page, lambda: page.locator("#crumbs button").first.click())  # Depth 0
@@ -224,29 +229,52 @@ def check_fixture(page: Page, base: str) -> None:
     assert "640 GiB" in page.inner_text("#summary"), page.inner_text("#summary")
 
     # Bands past Top are counted.
-    go(page, f"{base}#tree=1&top=2")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&top=2")
     assert len(bands(page)) == 2, f"top=2: {bands(page)}"
     assert "2 more not shown" in page.inner_text("#summary"), page.inner_text(
         "#summary"
     )
 
     # Top keeps the first bands in the legend's sort; they stack by span.
-    go(page, f"{base}#tree=1&top=2&lsort=-size")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&top=2&lsort=-size")
     assert bands(page) == ["Q", "Z"], f"top=2, -size: {bands(page)}"
     assert list(series(page)) == ["Z", "Q"], f"stack not by span: {series(page)}"
     assert "(raise Top)" in page.inner_text("#summary"), page.inner_text("#summary")
 
+    # By default the Stack view filters out unchanged bands (Q) and those
+    # under 1 GiB at peak (café's own files, 0 B, at Depth 1); a ticked band
+    # is never filtered out. (Playwright shows café's name with U+FFFD.)
+    caf = "caf\ufffd"
+    go(page, f"{base}#tree=1")
+    assert bands(page) == ["Z", caf, "A"], f"default filters: {bands(page)}"
+    summary = page.inner_text("#summary")
+    want = "1 filtered out (unchanged in this range, or under 1.00 GiB at peak)"
+    assert want in summary, summary
+    act(page, lambda: page.check("#sflat"))
+    assert "sflat=1" in state(page) and "Q" in bands(page), state(page)
+    act(page, lambda: page.fill("#smin", "150"))
+    act(page, lambda: page.press("#smin", "Enter"))
+    assert bands(page) == [caf, "A"], f"smin=150: {bands(page)}"
+    assert "2 filtered out (under 150 GiB at peak)" in page.inner_text("#summary")
+    go(page, f"{base}#tree=1&depth=1")
+    assert f"{caf}/ bytes" not in bands(page), f"0 B band shown: {bands(page)}"
+    go(page, f"{base}#tree=1&pick=Q&pick=A")
+    assert "Q" in bands(page) and list(series(page)) == ["A", "Q"], series(page)
+
     # Top's range: 512 is kept, more is clamped.
-    go(page, f"{base}#tree=1&top=512")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&top=512")
     assert page.input_value("#top") == "512", page.input_value("#top")
-    go(page, f"{base}#tree=1&top=600")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&top=600")
     assert page.input_value("#top") == "512", page.input_value("#top")
 
     # Reset restores the Stack view's state.
-    go(page, f"{base}#tree=1&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size&sort=size")
+    go(
+        page,
+        f"{base}#tree=1&sflat=1&smin=0&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size&sort=size",
+    )
     act(page, lambda: page.click("#reset"))
-    for key in ("depth=", "top=", "in=", "hide=", "pick=", "lsort="):
-        assert key not in state(page), f"Reset kept {key}: {state(page)}"
+    stack_keys = {"depth", "top", "in", "hide", "pick", "lsort", "smin", "sflat"}
+    assert not keys(page) & stack_keys, f"Reset kept some: {state(page)}"
     assert "sort=size" in state(page), f"Reset changed the Trends view: {state(page)}"
     assert page.input_value("#depth") == "0" and page.input_value("#top") == "64", (
         "Reset did not restore the fields"
@@ -277,7 +305,7 @@ def tick(page: Page, name: str) -> None:
 
 def check_picks(page: Page, base: str) -> None:
     """The legend's tick boxes, None and All, and its column sorts."""
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
     # Keys stay in the page's strings: café's name is not UTF-8.
     colors = series(page)
     assert len(colors) == 4 and next(iter(colors)) == "A", f"series: {list(colors)}"
@@ -287,7 +315,7 @@ def check_picks(page: Page, base: str) -> None:
     shown = page.inner_text("#table-range")
     act(page, lambda: page.click("#pick-none"))
     assert page.inner_text("#table-range") == shown, "None changed the range"
-    assert state(page).endswith("&pick="), f"None: {state(page)}"
+    assert re.search(r"&pick=(&|$)", state(page)), f"None: {state(page)}"
     assert series(page) == {}, f"None drew {series(page)}"
     assert len(bands(page)) == 4, f"None changed the list: {bands(page)}"
     assert page.locator("#legend input.pick:checked").count() == 0, "rows still ticked"
@@ -346,25 +374,25 @@ def check_picks(page: Page, base: str) -> None:
 
     # Hiding a picked band drops its pick; All, or ticking the last
     # unticked row, ends picking.
-    go(page, f"{base}#tree=1&pick=A&pick=Z")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&pick=A&pick=Z")
     z_link = page.locator("button.link", has_text=re.compile("^Z$"))
     hide_z = page.locator("#legend li").filter(has=z_link).locator("button.hide")
     act(page, hide_z.click)
     assert "pick=A" in state(page) and "pick=Z" not in state(page), state(page)
     act(page, lambda: page.click("#pick-all"))
     assert "pick=" not in state(page), f"All: {state(page)}"
-    go(page, f"{base}#tree=1&pick=A&pick=Z&pick=Q")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&pick=A&pick=Z&pick=Q")
     tick(page, "^caf")
     assert "pick=" not in state(page), f"ticking the last row kept picks: {state(page)}"
 
     # A new level clears picks: changing Depth, a trend card's click-through.
-    go(page, f"{base}#tree=1&pick=A")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&pick=A")
     page.fill("#depth", "1")
     act(page, lambda: page.press("#depth", "Enter"))
     assert "depth=1" in state(page) and "pick=" not in state(page), state(page)
-    go(page, f"{base}#tree=1&pick=A&view=trends")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&pick=A&view=trends")
     act(page, page.locator("#cards .trend-card").first.click)
-    assert "in=" in state(page) and "pick=" not in state(page), state(page)
+    assert "in" in keys(page) and "pick" not in keys(page), state(page)
 
 
 def check_model(page: Page, base: str) -> None:
@@ -414,6 +442,16 @@ def check_model(page: Page, base: str) -> None:
                 ["", "size", "-size", "-delta", "name", "-name", "bogus"].map((by) =>
                   [by, keys({top: 2, by})])),
               keepBy: keys({top: 2, by: "-size", keep: ["A"]}),
+              // Filters: peak at least min bytes; changed unless flat.
+              unchanged: keys({flat: false}),
+              small: run({min: 150 * 2 ** 30, top: 1}),
+              keepSmall: keys({min: 150 * 2 ** 30, flat: false, keep: ["Q"]}),
+              passes: [[{peak: 5, span: 0}, {min: 5, flat: true}],
+                [{peak: 5, span: 0}, {min: 5, flat: false}],
+                [{peak: 4, span: 1}, {min: 5, flat: true}],
+              ].map(([x, f]) => m.passes(x, f)),
+              reasons: [{min: 0, flat: true}, {min: 2 ** 30, flat: false},
+                {min: 0, flat: false}].map(m.filterReason),
               legend: Object.fromEntries(
                 ["", "delta", "-delta", "size", "name", "-name", "bogus"].map((by) =>
                   [by, m.sortLegend(run({}).bands, by, [0, 2]).map((b) => b.key)])),
@@ -494,6 +532,19 @@ def check_model(page: Page, base: str) -> None:
     assert got["keepBy"] == {"keys": ["A", "Q"], "cut": 2}, (
         f"pick kept: {got['keepBy']}"
     )
+    # Filters (peaks A 700, café 200, Z 100, Q 40 GiB; Q unchanged), picks
+    # exempt. Filtered bands are counted apart from those past Top.
+    assert got["unchanged"] == {"keys": ["A", caf, "Z"], "cut": 0}, got["unchanged"]
+    small = got["small"]
+    assert [b["key"] for b in small["bands"]] == ["A"], f"min: {small}"
+    assert (small["cut"], small["filtered"]) == (1, 2), f"min counts: {small}"
+    assert got["keepSmall"]["keys"] == ["A", caf, "Q"], got["keepSmall"]
+    assert got["passes"] == [True, False, False], f"passes: {got['passes']}"
+    assert got["reasons"] == [
+        "",
+        "unchanged in this range, or under 1.00 GiB at peak",
+        "unchanged in this range",
+    ], f"filter reasons: {got['reasons']}"
 
     # Legend orders, over the range: change A +200, café +100, Q 0, Z -50
     # GiB; size A 700, café 200, Z 50, Q 40 GiB. Chart order is the top of
@@ -659,7 +710,7 @@ def check_trends(page: Page, base: str) -> None:
     # Largest span first: A 200 GiB, café 100 GiB, Z/y 80 GiB (absent = 0).
     assert names[0] == "A" and names[2] == "Z/y", f"card order: {names}"
     assert names[1].startswith("caf"), "non-UTF-8 set dir not shown"
-    for stack_only in ("#depth", "#top", "#reset", "#legend"):
+    for stack_only in ("#depth", "#top", "#smin", "#sflat", "#reset", "#legend"):
         assert page.is_hidden(stack_only), f"{stack_only} shown in the Trends view"
     assert page.is_visible("#set"), "Set hidden in the Trends view"
     a = card(page, "A")
@@ -733,7 +784,7 @@ def check_trends(page: Page, base: str) -> None:
     )
     shown = page.inner_text("#table-range")
     assert shown == f"{start} \u2013 {end}", f"range after switching: {shown}"
-    for trends_only in ("#sort", "#flat", "#cards"):
+    for trends_only in ("#sort", "#min", "#flat", "#cards"):
         assert page.is_hidden(trends_only), f"{trends_only} shown in the Stack view"
 
 
@@ -743,7 +794,7 @@ def check_sets(page: Page, base: str) -> None:
     def options() -> list[str]:
         return page.eval_on_selector_all("#set option", "os => os.map(o => o.text)")
 
-    go(page, f"{base}#tree=1&in=A&depth=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&in=A&depth=1")
     assert options() == [
         "Top level — 4 dirs",
         "Mixed — 3 dirs",
@@ -754,7 +805,7 @@ def check_sets(page: Page, base: str) -> None:
 
     # Changing the set clears the drilled-into dir; the set survives a reload.
     act(page, lambda: page.select_option("#set", "Mixed"))
-    assert "set=Mixed" in state(page) and "in=" not in state(page), state(page)
+    assert "set=Mixed" in state(page) and "in" not in keys(page), state(page)
     act(page, page.reload)
     assert page.input_value("#set") == "Mixed", "set lost on reload"
     names = sorted(bands(page))
@@ -762,13 +813,13 @@ def check_sets(page: Page, base: str) -> None:
     assert len(names) == 6, f"caf at Depth 1: {names}"
 
     # Partial: a stored subdir of an unsplit dir.
-    go(page, f"{base}#tree=1&set=Partial")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&set=Partial")
     assert bands(page) == ["Q/r"], f"Partial: {bands(page)}"
     assert page.get_attribute("#depth", "max") == "0", "Depth max for Partial"
 
     # A set matching nothing says so, in both views.
     for view in ("stack", "trends"):
-        go(page, f"{base}#tree=1&set=Empty&view={view}")
+        go(page, f"{base}#tree=1&sflat=1&smin=0&set=Empty&view={view}")
         assert page.inner_text("#stack-empty") == (
             "No directories match this set's patterns."
         ), f"{view}: no empty-set note"
@@ -781,7 +832,7 @@ def check_sets(page: Page, base: str) -> None:
     assert page.is_hidden("#stack-empty") and page.is_visible("#chart"), "note stuck"
 
     # An unknown set falls back to the first.
-    go(page, f"{base}#tree=1&view=trends&set=nope")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&view=trends&set=nope")
     assert page.input_value("#set") == "Top level", "unknown set not ignored"
     assert len(cards(page)) == 3, "unknown set shows no cards"
 
@@ -795,20 +846,36 @@ def check_sets(page: Page, base: str) -> None:
 
 
 def check_sort_and_unchanged(page: Page, base: str) -> None:
-    """Sorting cards, and hiding unchanged ones unless asked."""
+    """Sorting cards, and hiding unchanged and small ones unless asked."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["rbytes"]["Z/y"] = 2**30
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     go(page, f"{base}#tree=1&view=trends&set=Mixed")
     assert len(cards(page)) == 2, f"unchanged card shown: {cards(page)}"
     hidden = page.inner_text("#trends-hidden")
-    assert hidden == "1 directory unchanged in this range is hidden.", hidden
+    want = (
+        "1 directory filtered out (unchanged in this range, or under 1.00 GiB at peak)."
+    )
+    assert hidden == want, hidden
 
     act(page, lambda: page.check("#flat"))
     assert "flat=1" in state(page) and "Z/y" in cards(page), (
         "Show unchanged did nothing"
     )
     assert page.is_hidden("#trends-hidden"), "hidden count shown with none hidden"
+
+    # Min GiB compares each card's peak in the range (Z/y 1, café 200 GiB).
+    act(page, lambda: page.fill("#min", "1.5"))
+    act(page, lambda: page.press("#min", "Enter"))
+    assert "min=1.5" in state(page) and "Z/y" not in cards(page), cards(page)
+    hidden = page.inner_text("#trends-hidden")
+    assert hidden == "1 directory filtered out (under 1.50 GiB at peak).", hidden
+    act(page, lambda: page.fill("#min", "200"))
+    act(page, lambda: page.press("#min", "Enter"))
+    assert len(cards(page)) == 2, f"peak of 200 GiB filtered: {cards(page)}"
+    act(page, lambda: page.fill("#min", ""))
+    act(page, lambda: page.press("#min", "Enter"))
+    assert "min" not in keys(page) and "Z/y" in cards(page), state(page)
 
     act(page, lambda: page.select_option("#sort", "name"))
     names = cards(page)
@@ -829,12 +896,12 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     act(page, page.reload)  # a hash change alone keeps the loaded file
     text = page.inner_text("#trends-hidden")
     assert cards(page) == [] and "Show unchanged" in text, f"all hidden: {text}"
-    go(page, f"{base}#tree=1&view=trends&sort=size&flat=1")
+    go(page, f"{base}#tree=1&view=trends&sort=size&flat=1&min=2")
 
     # Reset is the Stack view's: it keeps the Trends view's state.
     act(page, lambda: page.click("#view button[data-view=stack]"))
     act(page, lambda: page.click("#reset"))
-    assert "sort=size" in state(page) and "flat=1" in state(page), state(page)
+    assert {"sort", "flat", "min"} <= keys(page), state(page)
 
 
 def check_trends_resize(page: Page, base: str) -> None:
@@ -852,13 +919,13 @@ def check_trends_resize(page: Page, base: str) -> None:
 
 
 def check_absent_in_range(page: Page, base: str) -> None:
-    """A dir absent over the shown range (an unchanged one, so shown only on
-    request) says so, not that it never existed."""
+    """A dir absent over the shown range (unchanged and under any Min, so
+    shown only on request) says so, not that it never existed."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["rbytes"]["Z/y"] = [2**30, None, None]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     times = tree["times"]
-    go(page, f"{base}#tree=1&view=trends&set=Mixed&flat=1")
+    go(page, f"{base}#tree=1&view=trends&set=Mixed&flat=1&min=0")
     act(page, lambda: zoom(page, "trends-slider", times[1], times[2]))
     text = card(page, "Z/y").inner_text()
     assert "absent in this range" in text, f"absent card: {text}"
@@ -958,7 +1025,7 @@ def check_click_between_points(page: Page, base: str) -> None:
     tree["sets"] = [{"name": "Top level", "paths": ["G", "H"]}]
     tree["split"] = ["G", "H"]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
     # A quarter of the way along, G's top is at 75 GiB; the nearest point's 100.
     x, y = page.evaluate(
         """([t0, t1, bytes]) => {
@@ -1035,7 +1102,7 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     drillable = page.locator("#legend button.link")
     if drillable.count():
         act(page, drillable.first.click)
-        assert "in=" in state(page), f"tree {tree}: drilling did not change the view"
+        assert "in" in keys(page), f"tree {tree}: drilling did not change the view"
         assert page.input_value("#depth") == "1", f"tree {tree}: drilled not at Depth 1"
         assert bands(page), f"tree {tree}: no bands after drilling"
     hide = page.locator("#legend button.hide")
@@ -1061,7 +1128,8 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     if shots:
         page.screenshot(path=shots / f"tree-{tree}-trends.png", full_page=True)
     for w in sets:
-        # Unchanged cards are hidden, and counted, unless asked for.
+        # Unchanged and small cards are filtered out, and counted, unless
+        # asked for.
         go(page, f"{base}#tree={tree}&view=trends")
         act(page, lambda name=w["name"]: page.select_option("#set", name))
         shown = page.locator("#cards .trend-card").count()
@@ -1070,6 +1138,8 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
             "e => e.hidden ? 0 : parseInt(e.textContent.match(/\\d+/))",
         )
         act(page, lambda: page.check("#flat"))
+        act(page, lambda: page.fill("#min", "0"))
+        act(page, lambda: page.press("#min", "Enter"))
         n = page.locator("#cards .trend-card").count()
         where = f"tree {tree}, set {w['name']!r}"
         assert n == w["dirs"], f"{where}: {n} cards, trees.json says {w['dirs']}"

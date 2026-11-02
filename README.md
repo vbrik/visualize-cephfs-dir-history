@@ -105,9 +105,10 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Legend Dir, Size, Δ | Stack: sort the legend by name, by size at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first). When there are more bands than Top, the sort also chooses which are drawn: e.g. Δ reversed draws the most shrunk. The chart's stacking does not change. |
 | Band (legend or chart) | Stack: click a band of a directory that can be split to show only what is inside it, one level down; the path above the chart goes back. |
 | hide | Stack: remove a band's bytes from the chart, at every Depth: a directory's, with everything in it, or `dir/ bytes`, the files directly in it. Click the chip to bring it back. |
-| Reset | Stack: restore Depth, Top, drill-down, hiding, ticks and the legend's order. |
+| Min GiB | Both views, each its own: hide bands (Stack) or cards (Trends) whose largest size in the shown range is under this many GiB (default 1; 0 shows all). Ticked bands are never hidden. The summary (Stack) or the line above the cards (Trends) counts what was filtered out. |
+| Show unchanged | Both views, each its own: also show bands or cards whose size did not change in the shown range; off by default. |
+| Reset | Stack: restore Depth, Top, Min GiB, Show unchanged, drill-down, hiding, ticks and the legend's order. |
 | Sort | Trends: card order, largest first, in the shown range: *Span* (max − min), *Peak* (max), *Current size* (at the range's end), or *Name*. |
-| Show unchanged | Trends: also show cards whose size did not change in the shown range; hidden by default, and counted above the cards. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
 
 The URL keeps the view, except the zoomed time range, so it can be bookmarked

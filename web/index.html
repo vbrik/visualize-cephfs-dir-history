@@ -33,8 +33,14 @@
     <label class="stack-only"
       title="Most bands to draw: the first in the legend's sort, by default the largest spans in the shown range">Top
       <input id="top" type="number" min="1" max="512" step="1" inputmode="numeric"></label>
+    <label class="stack-only" title="Hide bands whose largest size in the shown range is under this many GiB">Min GiB
+      <input id="smin" type="number" min="0" step="any" inputmode="decimal"></label>
+    <label class="check stack-only"
+      title="Also show bands whose size did not change in the shown range"><input id="sflat" type="checkbox"> Show unchanged</label>
     <button id="reset" class="stack-only" type="button">Reset</button>
     <label class="trends-only">Sort <select id="sort"></select></label>
+    <label class="trends-only" title="Hide directories whose largest size in the shown range is under this many GiB">Min GiB
+      <input id="min" type="number" min="0" step="any" inputmode="decimal"></label>
     <label class="check trends-only"
       title="Also show directories whose size did not change in the shown range"><input id="flat" type="checkbox"> Show unchanged</label>
   </form>

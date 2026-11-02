@@ -124,7 +124,14 @@ views each show one set at a time.
   subdirs stored; any other stays whole). Depth counts levels below the shown
   dirs, which are the set's, or the drilled-into dir's. A band reached from
   two roots, as when a set holds a dir and its own subdir, is drawn once.
-- Bands are ranked by span (max − min) over the zoomed range, so a dir that
+- Filters first: bands whose peak in the zoomed range is under Min GiB
+  (`smin`, default 1), or that are unchanged in it unless *Show unchanged*
+  (`sflat=1`), are filtered out, picks excepted; the summary counts them
+  and says why. Hundreds of a level's bands are tiny or constant, and
+  would otherwise take Top's slots under a size or name sort. Unlike hide,
+  filtering subtracts no bytes from the bands above: it only leaves bands
+  out.
+- The rest are ranked by span (max − min) over the zoomed range, so a dir that
   shrank or was deleted stays visible. Top (default 64, the palette's size;
   max 512) of them are listed, chosen in the legend's sort (`lsort`): by
   default span, else the largest (`size`) or smallest (`-size`) at the
@@ -164,7 +171,8 @@ views each show one set at a time.
   come first, each group in that order, so the few picked stay in view in a
   long list.
 - View state is in the URL hash (`view`, `set`, `depth`, `top`, `in`, `hide`,
-  `pick`, `lsort`, `sort`, `flat`), so a view can be bookmarked or shared. Hash values carry
+  `pick`, `lsort`, `smin`, `sflat`, `sort`, `min`, `flat`), so a view can be
+  bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not
   UTF-8 survive (`model.encodeValue`). Keys and views of older pages are
   ignored.
@@ -174,8 +182,10 @@ views each show one set at a time.
   chart: the Stack controls do not apply to it, so it hides them. It has its
   own slider, pinned to the window's bottom while the cards scroll; its
   shadow is the set's total. The zoomed range is shared, so switching views
-  keeps it. The Set control and `set=` are shared too; Sort, *Show
-  unchanged* and the range are shared by all sets.
+  keeps it. The Set control and `set=` are shared too; Sort, Min GiB, *Show
+  unchanged* and the range are shared by all sets. Min GiB and *Show
+  unchanged* are per view (Stack `smin`, `sflat`; Trends `min`, `flat`, its
+  older key): a threshold that suits a level's bands need not suit set dirs.
 - Trends cards are the current set's dirs, not their stored descendants. A
   card shows rbytes, the whole dir, not own size: it asks "how big is this",
   and set dirs may nest, since cards are never added up. A card's change and
@@ -185,8 +195,9 @@ views each show one set at a time.
   one level if it is in `split`, else at Depth 0.
 - A wildcard can match thousands of dirs (`/npx/user/*`), most of which
   never change. Cards unchanged in the shown range (constant, or absent
-  throughout) are hidden unless *Show unchanged* (`flat=1`) is on, and the
-  rest sort by span (max − min) by default, so the movers come first; also
+  throughout) are hidden unless *Show unchanged* (`flat=1`) is on, as are
+  cards whose peak in the range is under Min GiB (`min`, default 1; so a dir
+  absent throughout needs `min=0` too), and the rest sort by span (max − min) by default, so the movers come first; also
   by peak, current size or name (`sort=`). Sort keys and the unchanged test
   count absent as 0, like a card's change, so a dir created or deleted in
   the range has changed. Called span, not change, because a card's change is
@@ -239,8 +250,10 @@ unchanged.
   [Propagation lag](#propagation-lag)), and can lift the band into Top. Seen:
   ≤ 0.25 GiB at 1 h points, 8.6 GiB at finer sampling. The page clamps
   at 0 and does not smooth.
-- **Bands past Top are not drawn.** The chart's total and the table cover
-  the drawn bands only; the summary says how many are left out.
+- **Bands past Top, or filtered out, are not drawn.** The chart's total and
+  the table cover the drawn bands only; the summary says how many are left
+  out. By default (Min 1 GiB, unchanged filtered) a big constant dir is
+  missing from the stack and its total.
 - **Large depth makes large files.** A broad pattern with a large `depth`
   stores every dir below it, and every one that changes costs a number per
   time point; the page downloads the whole file. `--max-dirs` catches
