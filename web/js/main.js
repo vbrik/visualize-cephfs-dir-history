@@ -11,12 +11,12 @@ import {
   DEFAULT_TOP,
   LEGEND_SORTS,
   MAX_BANDS,
+  METRICS,
   PALETTE_SIZE,
   ROOT,
   decodeValue,
   encodeValue,
   filterReason,
-  formatBytes,
   formatDelta,
   indexRange,
   layerAt,
@@ -37,6 +37,7 @@ const REFRESH_MS = 10 * 60 * 1000;
 const DEFAULTS = {
   tree: null,
   view: "stack",
+  metric: "rbytes", // a model.METRICS key: what both views chart
   set: null, // the tree's first set, "Top level"
   depth: 0,
   top: DEFAULT_TOP,
@@ -47,17 +48,25 @@ const DEFAULTS = {
   // The legend's order (see model.sortLegend), which also picks the bands
   // Top keeps (see model.stackBands); "": chart order.
   lsort: "",
-  // Each view's filters (see model.passes): Min size in GiB, and Show
-  // unchanged. Stack: smin, sflat; Trends: min, flat.
+  // Each view's filters (see model.passes): Min per metric (see MINS), and
+  // Show unchanged. Stack: smin, sminent, sflat; Trends: min, minent, flat.
   smin: 1,
+  sminent: 1000,
   sflat: false,
   sort: "span",
   min: 1,
+  minent: 1000,
   flat: false,
 };
 // The Stack view's state keys, which its Reset restores.
-const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort", "smin", "sflat"];
+const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort", "smin", "sminent", "sflat"];
 const GIB = 2 ** 30;
+// Each metric's Min filters: its state keys in the Stack and Trends views,
+// the unit they are in, and that unit's name in the Min control's label.
+const MINS = {
+  rbytes: { stack: "smin", trends: "min", unit: GIB, label: "GiB" },
+  rentries: { stack: "sminent", trends: "minent", unit: 1, label: "entries" },
+};
 // Picks are band keys of one level's legend: changing level clears them.
 const NEW_LEVEL = { pick: null };
 const SVG = "http://www.w3.org/2000/svg";
@@ -66,6 +75,7 @@ const $ = (id) => document.getElementById(id);
 const chart = echarts.init($("chart"), null, { renderer: "canvas" });
 let index = [];
 let data = null; // the current tree file
+let metric = "rbytes"; // the shown metric: S.metric if DATA has it, set by render
 let range = null; // [a, b] point indexes shown by the zoom slider
 let model = null; // the bands listed in the legend, from model.stackBands
 let drawn = []; // those of them drawn: the ticked ones
@@ -85,6 +95,7 @@ function readState() {
   return {
     tree: p.has("tree") ? Number(p.get("tree")) : (index[0]?.id ?? null),
     view: p.get("view") === "trends" ? "trends" : "stack",
+    metric: Object.hasOwn(METRICS, p.get("metric")) ? p.get("metric") : DEFAULTS.metric,
     set: p.get("set") ?? DEFAULTS.set,
     // Clamped to the levels stored when rendering, which needs the data.
     depth: clampInt(p.get("depth"), 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth),
@@ -94,10 +105,12 @@ function readState() {
     // "pick=" alone: picking, with nothing ticked.
     pick: p.has("pick") ? p.getAll("pick").filter((k) => k !== "") : null,
     lsort: Object.hasOwn(LEGEND_SORTS, (p.get("lsort") ?? "").replace(/^-/, "")) ? p.get("lsort") : "",
-    smin: gib(p.get("smin"), DEFAULTS.smin),
+    smin: atLeast0(p.get("smin"), DEFAULTS.smin),
+    sminent: atLeast0(p.get("sminent"), DEFAULTS.sminent),
     sflat: p.get("sflat") === "1",
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
-    min: gib(p.get("min"), DEFAULTS.min),
+    min: atLeast0(p.get("min"), DEFAULTS.min),
+    minent: atLeast0(p.get("minent"), DEFAULTS.minent),
     flat: p.get("flat") === "1",
   };
 }
@@ -106,6 +119,7 @@ function writeState(changes) {
   const s = { ...readState(), ...changes };
   const p = [["tree", s.tree]];
   if (s.view !== DEFAULTS.view) p.push(["view", s.view]);
+  if (s.metric !== DEFAULTS.metric) p.push(["metric", s.metric]);
   if (s.set !== DEFAULTS.set) p.push(["set", s.set]);
   if (s.depth !== DEFAULTS.depth) p.push(["depth", s.depth]);
   if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
@@ -114,9 +128,11 @@ function writeState(changes) {
   if (s.pick !== null) for (const k of s.pick.length ? s.pick : [""]) p.push(["pick", k]);
   if (s.lsort) p.push(["lsort", s.lsort]);
   if (s.smin !== DEFAULTS.smin) p.push(["smin", s.smin]);
+  if (s.sminent !== DEFAULTS.sminent) p.push(["sminent", s.sminent]);
   if (s.sflat) p.push(["sflat", "1"]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
   if (s.min !== DEFAULTS.min) p.push(["min", s.min]);
+  if (s.minent !== DEFAULTS.minent) p.push(["minent", s.minent]);
   if (s.flat) p.push(["flat", "1"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
 }
@@ -143,14 +159,26 @@ function clampInt(text, lo, hi, fallback) {
   return Number.isNaN(n) ? fallback : Math.min(hi, Math.max(lo, n));
 }
 
-/** TEXT as a Min size in GiB: a finite number, at least 0; else FALLBACK. */
-function gib(text, fallback) {
+/** TEXT as a Min: a finite number, at least 0; else FALLBACK. */
+function atLeast0(text, fallback) {
   const n = Number.parseFloat(text);
   return Number.isFinite(n) ? Math.max(0, n) : fallback;
 }
 
-/** A view's filters (see model.passes) from its Min size (GiB) and Show unchanged. */
-const filters = (min, flat) => ({ min: min * GIB, flat });
+/** VIEW's ("stack" or "trends") Min state key for the shown metric. */
+const minKey = (view) => MINS[metric][view];
+
+/** VIEW's filters (see model.passes) in S, for the shown metric. */
+function filters(s, view) {
+  const flat = view === "stack" ? s.sflat : s.flat;
+  return { min: s[minKey(view)] * MINS[metric].unit, flat };
+}
+
+/** VALUE in the shown metric's format, e.g. "1.2 TiB" or "3.40 M"; amount
+ * adds its unit, e.g. "3.40 M entries". */
+const format = (value) => METRICS[metric].format(value);
+const amount = (value) => METRICS[metric].amount(value);
+const formatChange = (value) => formatDelta(value, METRICS[metric].format);
 
 // --- data -------------------------------------------------------------------
 
@@ -246,7 +274,10 @@ function bandColors(viewKey, bands, palette) {
 
 function render() {
   const s = readState();
+  // A file written before rentries existed has none until regenerated.
+  metric = data && !data[s.metric] ? DEFAULTS.metric : s.metric;
   document.body.dataset.view = s.view;
+  document.body.dataset.metric = metric;
   renderControls(s);
   if (!data) return;
   const set = currentSet(s);
@@ -275,6 +306,7 @@ function renderStack(s, set) {
 
   const keep = s.pick ?? [];
   const opts = {
+    metric,
     roots,
     base: inPath,
     depth,
@@ -283,7 +315,7 @@ function renderStack(s, set) {
     range,
     keep,
     by: s.lsort,
-    ...filters(s.smin, s.sflat),
+    ...filters(s, "stack"),
   };
   model = stackBands(data, opts);
   drawn = s.pick === null ? model.bands : model.bands.filter((band) => keep.includes(band.key));
@@ -299,7 +331,7 @@ function renderStack(s, set) {
   // replaceMerge keeps a surviving series at its old index, so clear them
   // first: the stack must be in DRAWN's order, as layerAt assumes.
   chart.setOption({ series: [] }, { replaceMerge: ["series"] });
-  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range }), {
+  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range, format }), {
     replaceMerge: ["series"],
   });
   zoomTo(chart);
@@ -313,6 +345,11 @@ function renderStack(s, set) {
 function renderControls(s) {
   for (const b of $("view").querySelectorAll("button")) {
     b.setAttribute("aria-pressed", b.dataset.view === s.view);
+  }
+  for (const b of $("metric").querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", b.dataset.metric === metric);
+    b.disabled = data !== null && !data[b.dataset.metric];
+    b.title = b.disabled ? "Not in this tree's data file: run dirhistory-generate" : "";
   }
   const tree = $("tree");
   tree.replaceChildren(
@@ -329,9 +366,10 @@ function renderControls(s) {
   }
   sort.value = s.sort;
   $("flat").checked = s.flat;
-  $("min").value = s.min;
+  $("min").value = s[minKey("trends")];
   $("sflat").checked = s.sflat;
-  $("smin").value = s.smin;
+  $("smin").value = s[minKey("stack")];
+  for (const label of document.querySelectorAll(".min-label")) label.textContent = `Min ${MINS[metric].label}`;
   $("set").replaceChildren(
     ...(data?.sets ?? []).map((set) => {
       const n = set.paths.length;
@@ -382,7 +420,7 @@ function renderLegend(c, s) {
     const name = band.drillable ? button(band.label, () => drill(band.dir)) : text(band.label);
     name.classList.add("label");
     if (band.drillable) name.title = `Split ${absolute(band.dir)} into its subdirectories`;
-    const delta = text(formatDelta(band.values[b] - band.values[a]));
+    const delta = text(formatChange(band.values[b] - band.values[a]));
     delta.className = "delta";
     li.append(tick, swatch(c.bands.get(band.key)), name, value(band.values[b]), delta, hideButton(band, s));
     return li;
@@ -426,10 +464,10 @@ function renderTable() {
       const tr = document.createElement("tr");
       for (const cell of [
         label,
-        formatBytes(values[a]),
-        formatBytes(values[b]),
-        formatDelta(values[b] - values[a]),
-        formatBytes(Math.max(...values.slice(a, b + 1))),
+        format(values[a]),
+        format(values[b]),
+        formatChange(values[b] - values[a]),
+        format(Math.max(...values.slice(a, b + 1))),
       ]) {
         const td = document.createElement("td");
         td.textContent = cell;
@@ -442,11 +480,12 @@ function renderTable() {
     `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`;
 }
 
-/** A hide-list key as a name: a dir's path, or `dir/ bytes` for a dir's own files. */
+/** A hide-list key as a name: a dir's path, or e.g. `dir/ bytes` for a dir's
+ * own files. */
 function hiddenName(key) {
   if (!key.endsWith("/.")) return key === ROOT ? data.tree.fs_path : key;
   const dir = key.slice(0, -2);
-  return `${dir === ROOT ? data.tree.fs_path : dir}/ bytes`;
+  return `${dir === ROOT ? data.tree.fs_path : dir}/ ${METRICS[metric].own}`;
 }
 
 function renderChips(hide) {
@@ -473,24 +512,30 @@ function renderSummary(s, set, inPath) {
   const where = inPath === null ? set.name : absolute(inPath);
   // At Top's max, raising it cannot help; hiding bands or drilling in can.
   const cut = model.cut ? `, ${model.cut} more not shown${s.top < MAX_BANDS ? " (raise Top)" : ""}` : "";
-  const why = filterReason(filters(s.smin, s.sflat));
+  const why = filterReason(filters(s, "stack"), amount);
   const filtered = model.filtered ? `, ${model.filtered} filtered out (${why})` : "";
   const of = drawn.length < model.bands.length ? ` of ${model.bands.length} listed` : "";
   $("summary").textContent =
-    `${where}: ${formatBytes(total)} in ${n}${of} band${n === 1 && !of ? "" : "s"}${cut}${filtered}; `
+    `${where}: ${amount(total)} in ${n}${of} band${n === 1 && !of ? "" : "s"}${cut}${filtered}; `
     + `set ${set.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
-  $("chart").setAttribute("aria-label", `Stacked area of directory sizes in ${where}; values are in the table below.`);
+  $("chart").setAttribute(
+    "aria-label",
+    `Stacked area of directory ${METRICS[metric].noun}s in ${where}; values are in the table below.`,
+  );
 }
 
-/** The Trends view: the cards of SET's dirs that pass its filters (S.min,
+/** The Trends view: the cards of SET's dirs that pass its filters (Min,
  * S.flat). */
 function renderTrends(s, set) {
   const [a, b] = range;
-  const all = trendCards(data, set.paths, range);
-  const cards = sortCards(all.filter((card) => passes(card, filters(s.min, s.flat))), s.sort);
+  const all = trendCards(data, set.paths, range, metric);
+  const filter = filters(s, "trends");
+  const cards = sortCards(all.filter((card) => passes(card, filter)), s.sort);
   const hidden = all.length - cards.length;
-  const why = filterReason(filters(s.min, s.flat));
-  const undo = [s.min > 0 && "lower Min GiB", !s.flat && "check Show unchanged"].filter(Boolean).join(" or ");
+  const why = filterReason(filter, amount);
+  const undo = [filter.min > 0 && `lower Min ${MINS[metric].label}`, !s.flat && "check Show unchanged"]
+    .filter(Boolean)
+    .join(" or ");
   hideSparkTip();
   $("trends-range").textContent = all.length
     ? `${new Date(data.times[a]).toLocaleString()} – ${new Date(data.times[b]).toLocaleString()}`
@@ -511,12 +556,12 @@ function renderTrends(s, set) {
     const name = el.querySelector(".name");
     name.textContent = card.path === ROOT ? data.tree.fs_path : card.path;
     name.title = absolute(card.path);
-    el.querySelector(".size").textContent = card.values[b] === null ? "absent" : formatBytes(card.end);
-    el.querySelector(".tag").textContent = formatDelta(card.change);
+    el.querySelector(".size").textContent = card.values[b] === null ? "absent" : format(card.end);
+    el.querySelector(".tag").textContent = formatChange(card.change);
     el.querySelector(".scale").textContent =
       card.lo === null
         ? "absent in this range"
-        : `scale ${formatBytes(card.lo)} – ${formatBytes(card.hi)}, span ${formatBytes(card.hi - card.lo)}`;
+        : `scale ${format(card.lo)} – ${format(card.hi)}, span ${format(card.hi - card.lo)}`;
     const { line, fill } = sparkPaths(sparkX, card, range);
     el.querySelector(".line").setAttribute("d", line);
     el.querySelector(".fill").setAttribute("d", fill);
@@ -533,10 +578,10 @@ function renderTrends(s, set) {
   zoomTo(slider);
 }
 
-/** SET's dirs' summed rbytes per point (absent as 0): the slider's shadow. */
+/** SET's dirs' summed values per point (absent as 0): the slider's shadow. */
 function setTotal(set) {
   const total = new Array(data.times.length).fill(0);
-  for (const path of set.paths) data.rbytes[path].forEach((v, i) => (total[i] += v ?? 0));
+  for (const path of set.paths) data[metric][path].forEach((v, i) => (total[i] += v ?? 0));
   return total;
 }
 
@@ -584,7 +629,7 @@ function showSparkTip(e) {
 
   const tip = $("spark-tip");
   tip.querySelector(".tt-when").textContent = new Date(data.times[i]).toLocaleString();
-  tip.querySelector("b").textContent = card.values[i] === null ? "absent" : formatBytes(card.values[i]);
+  tip.querySelector("b").textContent = card.values[i] === null ? "absent" : format(card.values[i]);
   tip.hidden = false;
   const left = box.left + (x / WIDTH) * box.width - tip.offsetWidth / 2;
   tip.style.left = `${Math.max(4, Math.min(innerWidth - tip.offsetWidth - 4, left))}px`;
@@ -656,8 +701,8 @@ function swatch(color) {
   return s;
 }
 
-function value(bytes) {
-  const v = text(formatBytes(bytes));
+function value(amount) {
+  const v = text(format(amount));
   v.className = "value";
   return v;
 }
@@ -697,9 +742,13 @@ for (const head of $("legend-head").querySelectorAll(".sort")) {
 }
 $("sort").addEventListener("change", (e) => writeState({ sort: e.target.value }));
 $("flat").addEventListener("change", (e) => writeState({ flat: e.target.checked }));
-$("min").addEventListener("change", (e) => writeState({ min: gib(e.target.value, DEFAULTS.min) }));
+for (const [id, view] of [["min", "trends"], ["smin", "stack"]]) {
+  $(id).addEventListener("change", (e) => {
+    const key = minKey(view);
+    writeState({ [key]: atLeast0(e.target.value, DEFAULTS[key]) });
+  });
+}
 $("sflat").addEventListener("change", (e) => writeState({ sflat: e.target.checked }));
-$("smin").addEventListener("change", (e) => writeState({ smin: gib(e.target.value, DEFAULTS.smin) }));
 $("cards").addEventListener("pointermove", showSparkTip);
 $("cards").addEventListener("pointerleave", hideSparkTip);
 addEventListener("scroll", hideSparkTip, { passive: true });
@@ -717,6 +766,9 @@ chart.getZr().on("click", (e) => {
 chart.on("datazoom", () => drawn.length && followZoom(chart));
 for (const b of $("view").querySelectorAll("button")) {
   b.addEventListener("click", () => writeState({ view: b.dataset.view }));
+}
+for (const b of $("metric").querySelectorAll("button")) {
+  b.addEventListener("click", () => writeState({ metric: b.dataset.metric }));
 }
 
 window.addEventListener("hashchange", () => update(false));

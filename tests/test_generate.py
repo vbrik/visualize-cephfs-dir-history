@@ -32,6 +32,7 @@ CAFE = b"caf\xe9/x"  # not UTF-8
 HISTORY = TreeHistory(
     [T1, T2],
     {ROOT: [100, 200], b"caf\xe9": [50, 50], CAFE: [10, None]},
+    {ROOT: [7, 9], b"caf\xe9": [4, 5], CAFE: [3, None]},
     [SetDirs("Café & co", [b"caf\xe9", ROOT], [2]), SetDirs("Empty", [], [])],
     [b"caf\xe9"],
 )
@@ -69,17 +70,19 @@ def test_tree_document_round_trip(tmp_path):
     }
     assert loaded["generated"] == "2026-10-21T20:00:00Z"
     assert loaded["times"] == ["2026-10-21T19:19:45Z", "2026-10-21T20:00:00Z"]
-    assert {os.fsencode(p): v for p, v in loaded["rbytes"].items()} == {
-        ROOT: [100, 200],
-        b"caf\xe9": 50,  # unchanged: one number
-        CAFE: [10, None],
+    assert loaded["metrics"] == ["rbytes", "rentries"]
+    assert {os.fsencode(p): v for p, v in loaded["series"].items()} == {
+        ROOT: [[100, 200], [7, 9]],
+        # rbytes unchanged (one number); rentries changed
+        b"caf\xe9": [50, [4, 5]],
+        CAFE: [[10, None], [3, None]],
     }
     assert loaded["sets"] == [
         {"name": "Café & co", "paths": ["caf\udce9", "."]},
         {"name": "Empty", "paths": []},
     ]
     assert loaded["split"] == ["caf\udce9"]
-    assert not {"threshold", "units", "watched"} & loaded.keys()
+    assert not {"rbytes", "threshold", "units", "watched"} & loaded.keys()
 
 
 def test_write_json_is_world_readable_and_leaves_no_temp_files(tmp_path):
@@ -312,7 +315,8 @@ class _TxConn(_Conn):
 
 
 def _fake_db(monkeypatch, trees):
-    """Serve TREES ({Tree: [(path, rbytes)] of one sample}) as the database."""
+    """Serve TREES ({Tree: [(path, rbytes)] of one sample}) as the database,
+    with rentries = rbytes // 2."""
     rows = {t.id: r for t, r in trees.items()}
     monkeypatch.setattr(generate.db, "connect", lambda dsn: _TxConn())
     monkeypatch.setattr(generate.db, "check_schema", lambda conn: None)
@@ -327,7 +331,7 @@ def _fake_db(monkeypatch, trees):
         generate.db,
         "path_rows",
         lambda conn, tid, paths: [
-            (tid, p, b, False) for p, b in rows[tid] if p in paths
+            (tid, p, b, b // 2, False) for p, b in rows[tid] if p in paths
         ],
     )
 
@@ -346,7 +350,7 @@ def test_run_writes_sets_split_and_compact_series(monkeypatch, tmp_path, capsys)
         {"name": "B", "paths": ["a"]},
     ]
     assert doc["split"] == ["a"]
-    assert doc["rbytes"] == {"a": 5, "a/x": 3, "b": 4}
+    assert doc["series"] == {"a": [5, 2], "a/x": [3, 1], "b": [4, 2]}
     assert "units" not in doc and "threshold" not in doc
     index = json.loads((tmp_path / "d" / "trees.json").read_text())
     assert index[0]["sets"] == [

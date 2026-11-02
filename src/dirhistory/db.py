@@ -119,7 +119,8 @@ def sample_paths(conn: psycopg.Connection, sample_id: int) -> Iterator[bytes]:
 def path_rows(
     conn: psycopg.Connection, tree_id: int, paths: Iterable[bytes]
 ) -> Iterator[Row]:
-    """Stream every row of PATHS in the tree, ordered by sample (started, id).
+    """Stream every row of PATHS in the tree, ordered by sample (started, id),
+    with rentries = rfiles + rsubdirs (NULL if either is).
 
     Needs an open transaction: it uses a server-side cursor, so memory does
     not grow with the length of the history.
@@ -127,11 +128,11 @@ def path_rows(
     with conn.cursor(name="path_rows") as cur:
         cur.itersize = STREAM_ROWS
         cur.execute(
-            "SELECT d.sample_id, d.path, d.rbytes, d.deleted"
+            "SELECT d.sample_id, d.path, d.rbytes, d.rfiles + d.rsubdirs, d.deleted"
             " FROM trackdir.dir_state d JOIN trackdir.sample s ON s.id = d.sample_id"
             " WHERE s.tree_id = %s AND d.path = ANY(%s)"
             " ORDER BY s.started, s.id",
             (tree_id, list(paths)),
         )
-        for sample_id, path, rbytes, deleted in cur:
-            yield sample_id, bytes(path), rbytes, deleted
+        for sample_id, path, rbytes, rentries, deleted in cur:
+            yield sample_id, bytes(path), rbytes, rentries, deleted

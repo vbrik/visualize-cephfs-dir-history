@@ -13,18 +13,26 @@
   <header>
     <h1>CephFS directory history</h1>
     <p class="muted stack-only">Which directories grow and shrink. Each band is a directory's
-      whole size (rbytes), or, as <code>dir/ bytes</code>, the files directly in a directory
-      that Depth splits. Bands add up unless the set holds a directory and its own
-      subdirectory.</p>
-    <p class="muted trends-only">Each card is a set directory's whole size (rbytes,
-      including its subdirectories) over the shown range. Each card has its own scale:
-      compare shapes, not heights.</p>
+      <span class="rbytes-only">whole size (rbytes), or, as <code>dir/ bytes</code>, the files
+      directly in</span><span class="rentries-only">whole count of files and directories
+      (rentries: rfiles + rsubdirs, itself included), or, as <code>dir/ entries</code>, the
+      files directly in, plus 1 for</span> a directory that Depth splits. Bands add up unless
+      the set holds a directory and its own subdirectory.</p>
+    <p class="muted trends-only">Each card is a set directory's whole
+      <span class="rbytes-only">size (rbytes, including its subdirectories)</span><span
+      class="rentries-only">count of files and directories (rentries: rfiles + rsubdirs,
+      itself included)</span> over the shown range. Each card has its own scale: compare
+      shapes, not heights.</p>
   </header>
 
   <form id="controls" class="controls">
     <label>Tree <select id="tree"></select></label>
     <div id="view" class="seg" role="group" aria-label="View">
       <button type="button" data-view="stack">Stack</button><button type="button" data-view="trends">Trends</button>
+    </div>
+    <div id="metric" class="seg" role="group" aria-label="Metric"
+      title="Chart directory sizes (rbytes) or counts of files and directories (rentries)">
+      <button type="button" data-metric="rbytes">Bytes</button><button type="button" data-metric="rentries">Entries</button>
     </div>
     <label>Set <select id="set"></select></label>
     <label class="stack-only"
@@ -33,14 +41,14 @@
     <label class="stack-only"
       title="Most bands to draw: the first in the legend's sort, by default the largest spans in the shown range">Top
       <input id="top" type="number" min="1" max="512" step="1" inputmode="numeric"></label>
-    <label class="stack-only" title="Hide bands whose largest size in the shown range is under this many GiB">Min GiB
-      <input id="smin" type="number" min="0" step="any" inputmode="decimal"></label>
+    <label class="stack-only" title="Hide bands whose largest value in the shown range is under this"><span
+      class="min-label">Min GiB</span> <input id="smin" type="number" min="0" step="any" inputmode="decimal"></label>
     <label class="check stack-only"
       title="Also show bands whose size did not change in the shown range"><input id="sflat" type="checkbox"> Show unchanged</label>
     <button id="reset" class="stack-only" type="button">Reset</button>
     <label class="trends-only">Sort <select id="sort"></select></label>
-    <label class="trends-only" title="Hide directories whose largest size in the shown range is under this many GiB">Min GiB
-      <input id="min" type="number" min="0" step="any" inputmode="decimal"></label>
+    <label class="trends-only" title="Hide directories whose largest value in the shown range is under this"><span
+      class="min-label">Min GiB</span> <input id="min" type="number" min="0" step="any" inputmode="decimal"></label>
     <label class="check trends-only"
       title="Also show directories whose size did not change in the shown range"><input id="flat" type="checkbox"> Show unchanged</label>
   </form>
@@ -64,7 +72,7 @@
          <div id="legend-head" class="legend-row legend-head">
            <span></span><span></span>
            <button type="button" class="sort" data-sort="name">Dir</button>
-           <button type="button" class="sort" data-sort="size">Size</button>
+           <button type="button" class="sort" data-sort="size"><span class="rbytes-only">Size</span><span class="rentries-only">Entries</span></button>
            <button type="button" class="sort" data-sort="delta">Δ</button>
            <span></span>
          </div>

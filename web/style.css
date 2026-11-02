@@ -181,6 +181,8 @@
 [hidden] { display: none !important; }
 body[data-view="trends"] .stack-only,
 body[data-view="stack"] .trends-only { display: none !important; }
+body:not([data-metric="rentries"]) .rentries-only,
+body[data-metric="rentries"] .rbytes-only { display: none !important; }
 
 body {
   margin: 0 auto;
@@ -298,6 +300,7 @@ td { font-variant-numeric: tabular-nums; }
 .controls .seg button:first-child { border-radius: 8px 0 0 8px; }
 .controls .seg button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
 .controls .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.controls .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Trends view: trend cards, after the 2b mock */
 #trends-range { margin: 0 0 12px; }

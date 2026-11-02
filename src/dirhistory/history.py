@@ -2,10 +2,11 @@
 
 Pure logic, no database: the caller supplies samples and dir_state rows.
 
-The series kept are the rbytes of the *stored* directories: those the tree's
-sets cover (sets.Matcher). The page derives the bands and cards it draws from
-them, including a directory's own-files size (its rbytes minus its stored
-subdirectories'), so no own sizes are computed here.
+The series kept are two metrics of the *stored* directories, those the
+tree's sets cover (sets.Matcher): rbytes, and rentries (rfiles + rsubdirs,
+so a directory counts itself). The page derives the bands and cards it draws
+from them, including a directory's own-files amount (its value minus its
+stored subdirectories'), so no own amounts are computed here.
 """
 
 from collections.abc import Callable, Iterable, Sequence
@@ -41,8 +42,9 @@ MIN_BUCKET = timedelta(hours=1)
 # Bucket widths for history older than RECENT, finest first.
 BUCKET_WIDTHS = (MIN_BUCKET, *(timedelta(hours=h) for h in (6, 24, 48, 7 * 24)))
 
-# A dir_state row: (sample id, path, rbytes, deleted)
-type Row = tuple[int, bytes, int | None, bool]
+# A dir_state row: (sample id, path, rbytes, rentries, deleted), where
+# rentries is rfiles + rsubdirs (None if either is NULL)
+type Row = tuple[int, bytes, int | None, int | None, bool]
 # A series value per chosen time point; None: absent or unknown.
 type Series = list[int | None]
 
@@ -58,7 +60,8 @@ class Sample:
 @dataclass(frozen=True, slots=True)
 class TreeHistory:
     """A tree's chosen time points, its sets' dirs (in config order), the
-    rbytes series of every stored dir, and the dirs to split.
+    rbytes and rentries series of every stored dir (the same keys), and the
+    dirs to split.
 
     split: the sorted dirs whose subdirectories are all stored, so the page
     can replace such a dir by them.
@@ -66,6 +69,7 @@ class TreeHistory:
 
     times: list[datetime]
     rbytes: dict[bytes, Series]
+    rentries: dict[bytes, Series]
     sets: list[SetDirs]
     split: list[bytes]
 
@@ -170,11 +174,13 @@ def summarize(
         counts = list(zip((s.name for s in sets), matcher.counts(), strict=True))
         raise TooManyDirs(len(stored), max_dirs, counts, busiest(stored))
     matches = matcher.matches()
-    rbytes = _replay(samples, points, fetch(set(stored)))
+    rbytes, rentries = _replay(samples, points, fetch(set(stored)))
     split = {parent(p) for p in stored if p != ROOT and stored.get(parent(p), -1) >= 1}
+    absent = [None] * len(points)
     return TreeHistory(
         [p.started for p in points],
-        {p: rbytes.get(p, [None] * len(points)) for p in sorted(stored)},
+        {p: rbytes.get(p, absent[:]) for p in sorted(stored)},
+        {p: rentries.get(p, absent[:]) for p in sorted(stored)},
         [select(s.name, m) for s, m in zip(sets, matches, strict=True)],
         sorted(split),
     )
@@ -182,32 +188,41 @@ def summarize(
 
 def _replay(
     samples: Sequence[Sample], points: Sequence[Sample], rows: Iterable[Row]
-) -> dict[bytes, Series]:
-    """Return each row path's value at each of POINTS, carried forward.
+) -> tuple[dict[bytes, Series], dict[bytes, Series]]:
+    """Return each row path's rbytes and rentries at each of POINTS, carried
+    forward.
 
     ROWS must be ordered as SAMPLES are; they are read once, in one pass. A
-    value holds until the path's next row. A NULL rbytes (an error) keeps the
-    previous value; a tombstone makes it None, as does no row yet. Raises
-    ValueError if a row is out of order or of no sample in SAMPLES.
+    value holds until the path's next row. A NULL value (an error) keeps that
+    metric's previous value; a tombstone makes both None, as does no row
+    yet. Raises ValueError if a row is out of order or of no sample in
+    SAMPLES.
     """
     point_at = {p.id: i for i, p in enumerate(points)}
     rows = iter(rows)
     row = next(rows, None)
-    current: dict[bytes, int | None] = {}
-    series: dict[bytes, Series] = {}
+    current: dict[bytes, tuple[int | None, int | None]] = {}
+    rbytes: dict[bytes, Series] = {}
+    rentries: dict[bytes, Series] = {}
     for sample in samples:
         while row is not None and row[0] == sample.id:
-            _, path, rbytes, deleted = row
+            _, path, nbytes, nentries, deleted = row
             if deleted:
-                current[path] = None
-            elif rbytes is not None:
-                current[path] = rbytes
+                current[path] = (None, None)
+            else:
+                was_bytes, was_entries = current.get(path, (None, None))
+                current[path] = (
+                    was_bytes if nbytes is None else nbytes,
+                    was_entries if nentries is None else nentries,
+                )
             row = next(rows, None)
         if (i := point_at.get(sample.id)) is not None:
-            for path, value in current.items():
-                if (s := series.get(path)) is None:
-                    s = series[path] = [None] * len(points)
-                s[i] = value
+            for path, (nbytes, nentries) in current.items():
+                if path not in rbytes:
+                    rbytes[path] = [None] * len(points)
+                    rentries[path] = [None] * len(points)
+                rbytes[path][i] = nbytes
+                rentries[path][i] = nentries
     if row is not None:
         raise ValueError(f"a row of sample {row[0]} is out of sample order")
-    return series
+    return rbytes, rentries

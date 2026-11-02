@@ -3,17 +3,18 @@
 Serves web/ on a free local port with two data sets:
 
 - tests/data/web, two synthetic trees, for regression checks of the page's
-  semantics, URL codec, update ordering, data refresh, click hit-testing
-  and both views. Tree 1 has split dirs (A, Z, and a name that is not
-  UTF-8), an unsplit dir Q stored with one subdir, a dir absent at the first
-  point (Z/y), dirs stored as one number, and four sets: Top level, Mixed
-  (a subdir and two top-level dirs), Partial (Q/r only) and Empty. Tree 2
-  has one dir and only Top level. Some checks serve altered copies.
+  semantics, URL codec, update ordering, data refresh, click hit-testing,
+  both views and both metrics (rbytes, rentries). Tree 1 has split dirs (A,
+  Z, and a name that is not UTF-8), an unsplit dir Q stored with one subdir,
+  a dir absent at the first point (Z/y), dirs stored as one number, and four
+  sets: Top level, Mixed (a subdir and two top-level dirs), Partial (Q/r
+  only) and Empty. Tree 2 has one dir and only Top level. Some checks serve
+  altered copies.
 - web/data (if present), the real data written by dirhistory-generate: for
   every tree, in light and dark mode, the Stack view at Depth 0 and 1,
   drilling into the first drillable band, hiding a band, reloading from
-  the URL hash and unhiding it, ticking one band after None; then each
-  set's Trends cards.
+  the URL hash and unhiding it, ticking one band after None; the Stack view
+  of rentries; then each set's Trends cards.
 
 Pages are served with the Content-Security-Policy of
 deploy/nginx.conf.example, so anything it blocks is a console error.
@@ -40,6 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 FIXTURE = ROOT / "tests" / "data" / "web"
 SETTLE_MS = 500  # time for fetch + render after a navigation or click
+MINUS = "\N{MINUS SIGN}"  # the page's sign of a negative value
 CSP = re.search(
     r'add_header Content-Security-Policy "([^"]+)"',
     (ROOT / "deploy" / "nginx.conf.example").read_text(),
@@ -270,12 +272,24 @@ def check_fixture(page: Page, base: str) -> None:
     # Reset restores the Stack view's state.
     go(
         page,
-        f"{base}#tree=1&sflat=1&smin=0&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size&sort=size",
+        f"{base}#tree=1&sflat=1&smin=0&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size"
+        "&sort=size&sminent=5&metric=rentries",
     )
     act(page, lambda: page.click("#reset"))
-    stack_keys = {"depth", "top", "in", "hide", "pick", "lsort", "smin", "sflat"}
+    stack_keys = {
+        "depth",
+        "top",
+        "in",
+        "hide",
+        "pick",
+        "lsort",
+        "smin",
+        "sminent",
+        "sflat",
+    }
     assert not keys(page) & stack_keys, f"Reset kept some: {state(page)}"
     assert "sort=size" in state(page), f"Reset changed the Trends view: {state(page)}"
+    assert "metric=rentries" in state(page), f"Reset changed the metric: {state(page)}"
     assert page.input_value("#depth") == "0" and page.input_value("#top") == "64", (
         "Reset did not restore the fields"
     )
@@ -421,13 +435,15 @@ def check_model(page: Page, base: str) -> None:
             const info = (bands) => Object.fromEntries(bands.map((b) => [b.key,
               {label: b.label, own: b.own, drillable: b.drillable, values: b.values}]));
             const rooted = m.normalize({...raw,
-              rbytes: {".": 300, a: 100, "a/x": 40, b: [50, 100, 150]},
+              series: {".": [300, 9], a: [100, 5], "a/x": [40, 2],
+                b: [[50, 100, 150], 1]},
               sets: [{name: "Root", paths: ["."]}], split: [".", "a"]});
             const rootValues = (hidden) => m.stackBands(rooted,
               {...opts, roots: ["."], hidden}).bands[0].values;
             return JSON.stringify({
               n: [m.MAX_BANDS, m.DEFAULT_TOP, m.PALETTE_SIZE],
               rbytes: data.rbytes,
+              rentries: data.rentries,
               children: [...data.children],
               d0: keys({}),
               d1: keys({depth: 1}),
@@ -452,7 +468,28 @@ def check_model(page: Page, base: str) -> None:
                 [{peak: 4, span: 1}, {min: 5, flat: true}],
               ].map(([x, f]) => m.passes(x, f)),
               reasons: [{min: 0, flat: true}, {min: 2 ** 30, flat: false},
-                {min: 0, flat: false}].map(m.filterReason),
+                {min: 0, flat: false}].map((f) => m.filterReason(f)),
+              entryReason: m.filterReason({min: 1000, flat: true},
+                m.METRICS.rentries.amount),
+              // rentries: the same bands, of another series.
+              entries1: info(run({metric: "rentries", depth: 1}).bands),
+              entries0: keys({metric: "rentries"}),
+              entryCards: m.trendCards(data, top, [0, 2], "rentries")
+                .map((c) => [c.path, c.end, c.change, c.span]),
+              counts: [0, 999, 999.6, 1000, 12345, 999499, 1.5e9, -2500]
+                .map(m.formatCount),
+              deltas: [m.formatDelta(0, m.formatCount),
+                m.formatDelta(2500, m.formatCount), m.formatDelta(0),
+                m.formatDelta(-1024)],
+              // A metric the file does not list is null.
+              noEntries: m.normalize({...raw, metrics: ["rbytes"]}).rentries,
+              // A file from before series pairs: an rbytes map only.
+              old: (({series, metrics, ...rest}) => {
+                const old = m.normalize({...rest, rbytes: Object.fromEntries(
+                  Object.entries(series).map(([p, pair]) => [p, pair[0]]))});
+                return [JSON.stringify(old.rbytes) === JSON.stringify(data.rbytes),
+                  old.rentries, "series" in old];
+              })(raw),
               legend: Object.fromEntries(
                 ["", "delta", "-delta", "size", "name", "-name", "bogus"].map((by) =>
                   [by, m.sortLegend(run({}).bands, by, [0, 2]).map((b) => b.key)])),
@@ -483,6 +520,35 @@ def check_model(page: Page, base: str) -> None:
     assert got["n"] == [512, 64, 64], (
         f"MAX_BANDS, DEFAULT_TOP, PALETTE_SIZE: {got['n']}"
     )
+    assert got["entryReason"] == "under 1.00 k entries at peak", got["entryReason"]
+    e1 = got["entries1"]
+    assert e1["A/."]["label"] == "A/ entries", f"own entries label: {e1['A/.']}"
+    # Own entries: the files directly in a dir, plus the dir itself.
+    assert e1["A/."]["values"] == [1, 1, 1], f"A/ entries: {e1['A/.']}"
+    assert e1["Z/."]["values"] == [500, 100, 101], f"Z/ entries: {e1['Z/.']}"
+    assert e1["A/b"]["values"] == [2000] * 3, f"A/b entries: {e1['A/b']}"
+    # Ranked by their own span: café 5000, Z 200, A and Q 0 (by key).
+    assert got["entries0"] == {"keys": ["Q", "A", "Z", caf], "cut": 0}, got["entries0"]
+    assert got["entryCards"] == [
+        ["A", 3000, 0, 0],
+        ["Q", 40000, 0, 0],
+        ["Z", 300, -200, 200],
+        [caf, 15000, 5000, 5000],
+    ], f"entry cards: {got['entryCards']}"
+    assert got["counts"] == [
+        "0",
+        "999",
+        "1.00 k",
+        "1.00 k",
+        "12.3 k",
+        "999 k",
+        "1.50 G",
+        f"{MINUS}2.50 k",
+    ], f"formatCount: {got['counts']}"
+    assert got["deltas"] == ["±0", "+2.50 k", "±0 B", f"{MINUS}1.00 KiB"], got["deltas"]
+    assert got["noEntries"] is None, f"file without rentries: {got['noEntries']}"
+    assert got["old"] == [True, None, False], f"file with rbytes only: {got['old']}"
+    assert got["rentries"]["A/c"] == [999] * 3, "rentries scalars not expanded"
     rb = got["rbytes"]
     assert rb["A/c"] == [100 * gib] * 3 and rb["Q/r"] == [10 * gib] * 3, "scalars"
     assert rb["Z/y"][0] is None, "null not kept"
@@ -850,7 +916,7 @@ def check_sets(page: Page, base: str) -> None:
 def check_sort_and_unchanged(page: Page, base: str) -> None:
     """Sorting cards, and hiding unchanged and small ones unless asked."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
-    tree["rbytes"]["Z/y"] = 2**30
+    tree["series"]["Z/y"][0] = 2**30
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     go(page, f"{base}#tree=1&view=trends&set=Mixed")
     assert len(cards(page)) == 2, f"unchanged card shown: {cards(page)}"
@@ -891,9 +957,9 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     assert cards(page)[0] == "A" and cards(page)[2] == "Z/y", f"by size: {cards(page)}"
 
     # With every card unchanged, the count says where they went.
-    tree["rbytes"]["A"] = 2**40
-    caf = next(p for p in tree["rbytes"] if p.startswith("caf") and "/" not in p)
-    tree["rbytes"][caf] = 2**30
+    tree["series"]["A"][0] = 2**40
+    caf = next(p for p in tree["series"] if p.startswith("caf") and "/" not in p)
+    tree["series"][caf][0] = 2**30
     page.goto(f"{base}#tree=1&view=trends&set=Mixed")
     act(page, page.reload)  # a hash change alone keeps the loaded file
     text = page.inner_text("#trends-hidden")
@@ -904,6 +970,87 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     act(page, lambda: page.click("#view button[data-view=stack]"))
     act(page, lambda: page.click("#reset"))
     assert {"sort", "flat", "min"} <= keys(page), state(page)
+
+
+def check_metric(page: Page, base: str) -> None:
+    """The Bytes / Entries toggle: both views chart rentries, with their own
+    Min filters, and the rest of the view state survives the switch.
+
+    Tree 1's rentries: A 3000 and Q 40000, constant; Z 500 -> 300; café
+    10000 -> 15000; own entries A/ 1, Z/ 500, 100, 101.
+    """
+    caf = "caf�"  # Playwright's view of café's name
+    go(page, f"{base}#tree=1")
+    act(page, lambda: page.click("#metric button[data-metric=rentries]"))
+    assert "metric=rentries" in state(page), state(page)
+    # Min entries, default 1000: A and Q unchanged, Z under 1000 at peak.
+    assert bands(page) == [caf], f"default entries filters: {bands(page)}"
+    summary = page.inner_text("#summary")
+    want = "3 filtered out (unchanged in this range, or under 1.00 k entries at peak)"
+    assert "15.0 k entries in 1 band" in summary and want in summary, summary
+    assert page.input_value("#smin") == "1000", page.input_value("#smin")
+    assert "Min entries" in page.inner_text("#controls"), "Min not labeled entries"
+    head = page.inner_text("#legend-head")
+    assert "Entries" in head and "Size" not in head, head
+    assert page.is_visible("text=rentries: rfiles + rsubdirs"), "header not switched"
+
+    # Min entries is its own: changing it keeps Min GiB, and the reverse.
+    act(page, lambda: page.fill("#smin", "250"))
+    act(page, lambda: page.press("#smin", "Enter"))
+    assert "sminent=250" in state(page) and "smin=" not in state(page), state(page)
+    assert bands(page) == [caf, "Z"], f"Min entries 250: {bands(page)}"
+    act(page, lambda: page.click("#metric button[data-metric=rbytes]"))
+    assert "metric" not in keys(page) and "sminent=250" in state(page), state(page)
+    assert page.input_value("#smin") == "1", page.input_value("#smin")
+    assert "Min GiB" in page.inner_text("#controls"), "Min not labeled GiB"
+    assert bands(page) == ["A", caf, "Z"], f"back to bytes: {bands(page)}"
+
+    # Own-files bands and legend values are counts.
+    go(page, f"{base}#tree=1&metric=rentries&sflat=1&sminent=0&in=A&depth=1")
+    assert set(bands(page)) == {"A/ entries", "b", "c"}, f"in A: {bands(page)}"
+    values = page.eval_on_selector_all(
+        "#legend li", "els => els.map(e => e.querySelector('.value').textContent)"
+    )
+    assert sorted(values) == ["1", "2.00 k", "999"], f"legend values: {values}"
+    assert "±0" in page.inner_text("#legend"), page.inner_text("#legend")
+
+    # Switching keeps the tree, set, drill, Depth, hides and picks.
+    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=1&smin=0&sminent=0"
+    go(page, f"{base}#{kept}")
+    act(page, lambda: page.click("#metric button[data-metric=rentries]"))
+    pairs = set(state(page).lstrip("#").split("&"))
+    assert pairs == {*kept.split("&"), "metric=rentries"}, f"switch: {state(page)}"
+    assert list(series(page)) == ["A/b"], f"pick lost: {series(page)}"
+    assert "A/c" in page.inner_text("#hidden-list"), "hide lost"
+
+    # The Trends view: entry counts, with Min entries of its own (minent).
+    go(page, f"{base}#tree=1&view=trends&metric=rentries")
+    assert cards(page) == [caf], f"entry cards: {cards(page)}"
+    card_text = page.locator("#cards .trend-card").first.inner_text()
+    assert "15.0 k" in card_text and "+5.00 k" in card_text, card_text
+    hidden = page.inner_text("#trends-hidden")
+    want = (
+        "3 directories filtered out (unchanged in this range, or under 1.00 k"
+        " entries at peak)."
+    )
+    assert hidden == want, hidden
+    act(page, lambda: page.check("#flat"))
+    act(page, lambda: page.fill("#min", "0"))
+    act(page, lambda: page.press("#min", "Enter"))
+    assert "minent=0" in state(page) and "min=" not in state(page), state(page)
+    assert len(cards(page)) == 4, f"all entry cards: {cards(page)}"
+
+    # A data file written before rentries (with an rbytes map, not series
+    # pairs): Entries is disabled, and a URL asking for it shows bytes.
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    tree["rbytes"] = {p: pair[0] for p, pair in tree.pop("series").items()}
+    del tree["metrics"]
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    page.goto(f"{base}#tree=1&metric=rentries")
+    act(page, page.reload)  # a hash change alone keeps the loaded file
+    assert page.is_disabled("#metric button[data-metric=rentries]"), "not disabled"
+    assert bands(page) == ["A", caf, "Z"], f"old file: {bands(page)}"
+    assert "Min GiB" in page.inner_text("#controls"), "old file: Min not GiB"
 
 
 def check_trends_resize(page: Page, base: str) -> None:
@@ -924,7 +1071,7 @@ def check_absent_in_range(page: Page, base: str) -> None:
     """A dir absent over the shown range (unchanged and under any Min, so
     shown only on request) says so, not that it never existed."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
-    tree["rbytes"]["Z/y"] = [2**30, None, None]
+    tree["series"]["Z/y"][0] = [2**30, None, None]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     times = tree["times"]
     go(page, f"{base}#tree=1&view=trends&set=Mixed&flat=1&min=0")
@@ -996,9 +1143,10 @@ def check_refresh_keeps_zoom(page: Page, base: str) -> None:
     times = tree["times"]  # hourly points 00:00, 01:00, 02:00
     later = "2026-10-01T03:00:00Z"
     tree["times"] = [*times[1:], later]  # 00:00 merged away, 03:00 added
-    for series in tree["rbytes"].values():
-        if isinstance(series, list):  # else one number: the same at every point
-            series[:] = [*series[1:], series[-1]]
+    for pair in tree["series"].values():
+        for series in pair:
+            if isinstance(series, list):  # else one number: the same at every point
+                series[:] = [*series[1:], series[-1]]
     index = json.loads((FIXTURE / "trees.json").read_text())
     tree["generated"] = index[0]["generated"] = "2026-10-01T04:00:00Z"
     index[0]["last_sample"] = later
@@ -1023,7 +1171,9 @@ def check_click_between_points(page: Page, base: str) -> None:
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["tree"]["max_depth"] = 2
     tree["times"] = [t0, t1]
-    tree["rbytes"] = {"G": g, "G/x": g, "H": h, "H/y": h}
+    tree["series"] = {
+        p: [v, 1] for p, v in {"G": g, "G/x": g, "H": h, "H/y": h}.items()
+    }
     tree["sets"] = [{"name": "Top level", "paths": ["G", "H"]}]
     tree["split"] = ["G", "H"]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
@@ -1124,6 +1274,21 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         assert len(bands(page)) == n, f"tree {tree}: picking changed the list"
         check_many_bands(page, base, tree)
 
+    # Entries: the same view, of rentries, under their own Min filter.
+    go(page, f"{base}#tree={tree}&metric=rentries")
+    assert page.is_enabled("#metric button[data-metric=rentries]"), (
+        f"tree {tree}: no rentries in its file"
+    )
+    n = len(bands(page))
+    assert n <= 64, f"tree {tree}: {n} entry bands drawn"
+    assert (
+        n
+        or page.is_visible("#stack-empty")
+        or "filtered out" in page.inner_text("#summary")
+    ), f"tree {tree}: no entry bands, no note"
+    if shots:
+        page.screenshot(path=shots / f"tree-{tree}-entries.png")
+
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
     sets = next(t["sets"] for t in entries if t["id"] == tree)
     go(page, f"{base}#tree={tree}&view=trends")
@@ -1219,6 +1384,7 @@ def main() -> int:
             check_refresh_keeps_zoom,
             check_click_between_points,
             check_picks,
+            check_metric,
         ):
             run_checks(
                 browser, "light", lambda pg, c=check: c(pg, url(fixture)), problems

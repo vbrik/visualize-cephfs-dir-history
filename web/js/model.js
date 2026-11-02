@@ -1,7 +1,8 @@
 // Pure data shaping for the charts; no DOM. See docs/terms.md for "set",
-// "stored dir" and "own-files band". A tree file holds, per time point, the
-// rbytes of every stored dir (a set dir, or one within its depth below it),
-// the tree's sets, and `split`: the stored dirs whose subdirs are all stored.
+// "stored dir", "metric" and "own-files band". A tree file holds, per time
+// point, the rbytes and rentries of every stored dir (a set dir, or one
+// within its depth below it), the tree's sets, and `split`: the stored dirs
+// whose subdirs are all stored.
 
 export const ROOT = ".";
 
@@ -100,35 +101,77 @@ export function formatBytes(bytes) {
   return `${bytes < 0 ? "−" : ""}${v.toFixed(digits)} ${units[i]}`;
 }
 
-/** Signed change, e.g. "+3.1 GiB". */
-export function formatDelta(bytes) {
-  return bytes > 0 ? `+${formatBytes(bytes)}` : bytes < 0 ? formatBytes(bytes) : "±0 B";
+/** A count as a short SI string, e.g. "950", "12.3 k", "1.20 M". */
+export function formatCount(n) {
+  const units = ["", " k", " M", " G", " T", " P"];
+  let v = Math.abs(n);
+  let i = 0;
+  // From 999.5 on, so that rounding never shows "1000 k".
+  while (v >= 999.5 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  const digits = i === 0 || v >= 100 ? 0 : v >= 10 ? 1 : 2;
+  return `${n < 0 ? "−" : ""}${v.toFixed(digits)}${units[i]}`;
 }
 
+/** Signed change in FORMAT (default bytes), e.g. "+3.1 GiB", "±0 B". */
+export function formatDelta(value, format = formatBytes) {
+  return value > 0 ? `+${format(value)}` : value < 0 ? format(value) : `±${format(0)}`;
+}
+
+// What the views can chart, per tree file key: format (a value as short
+// text, for columns), amount (with its unit, for prose), own (the own-files
+// band's suffix, `dir/ <own>`), noun (what a value measures). rentries is
+// rfiles + rsubdirs, so a dir counts itself, and its own-files band is the
+// files directly in it plus 1.
+export const METRICS = {
+  rbytes: { format: formatBytes, amount: formatBytes, own: "bytes", noun: "size" },
+  rentries: {
+    format: formatCount,
+    amount: (n) => `${formatCount(n)} entries`,
+    own: "entries",
+    noun: "entry count",
+  },
+};
+
 /**
- * RAW, a tree file as read, ready for the views: every rbytes series a list
- * of one value (bytes, or null: absent) per time point, where the file has
- * one number for a series that never changed; `split` a Set; and `children`
- * a Map from each split dir to its stored subdirs, sorted.
+ * RAW, a tree file as read, ready for the views: for each METRICS key, a
+ * map from every stored dir to its series, a list of one value (or null:
+ * absent) per time point; `split` a Set; and `children` a Map from each
+ * split dir to its stored subdirs, sorted.
+ *
+ * The file's `series` maps each dir to one series per metric, in the order
+ * of its `metrics`; a series that never changed is one number. A metric the
+ * file lacks is null. A file written before `series` has `rbytes` instead,
+ * the map of rbytes series alone.
  */
 export function normalize(raw) {
   const n = raw.times.length;
-  const rbytes = Object.fromEntries(
-    Object.entries(raw.rbytes).map(([p, v]) => [p, Array.isArray(v) ? v : new Array(n).fill(v)]),
+  const expand = (v) => (Array.isArray(v) ? v : new Array(n).fill(v));
+  const { series = null, metrics: order = [], ...rest } = raw;
+  const pairs = series ? Object.entries(series) : Object.entries(raw.rbytes).map(([p, v]) => [p, [v]]);
+  const at = series ? order : ["rbytes"];
+  const metrics = Object.fromEntries(
+    Object.keys(METRICS).map((m) => {
+      const i = at.indexOf(m);
+      return [m, i < 0 ? null : Object.fromEntries(pairs.map(([p, v]) => [p, expand(v[i])]))];
+    }),
   );
   const split = new Set(raw.split);
   const children = new Map([...split].map((dir) => [dir, []]));
-  for (const p of Object.keys(rbytes)) {
+  for (const p of Object.keys(metrics.rbytes)) {
     if (p !== ROOT) children.get(parentOf(p))?.push(p);
   }
   for (const kids of children.values()) kids.sort();
-  return { ...raw, rbytes, split, children };
+  return { ...rest, ...metrics, split, children };
 }
 
 /**
  * The Stack view's bands for DATA (from normalize).
  *
- * opts: roots (the dirs to show: a set's dirs, or the drilled-into dir),
+ * opts: metric (a METRICS key, default "rbytes": the series to stack),
+ * roots (the dirs to show: a set's dirs, or the drilled-into dir),
  * base (labels are relative to it; null: the tree root), depth (levels to
  * split below each root), top (most bands returned), hidden (band keys; see
  * below), range ([first, last] point indexes), by (optional; a legend sort,
@@ -136,12 +179,12 @@ export function normalize(raw) {
  * see passes; by default none).
  *
  * A dir less than DEPTH below its root and in data.split becomes an
- * own-files band (key `${dir}/.`: the files directly in it, its rbytes minus
+ * own-files band (key `${dir}/.`: the files directly in it, its value minus
  * its subdirs', at least 0) plus the bands of its stored subdirs, likewise;
- * any other dir is one band of its rbytes (key: the dir). Absent counts as
+ * any other dir is one band of its value (key: the dir). Absent counts as
  * 0. Bands with the same key appear once (ECharts series ids must be
  * unique). That does not make a set holding a dir and its subdir safe: the
- * subdir's bytes are counted in both.
+ * subdir's bytes are counted in both. Keys do not depend on the metric.
  *
  * HIDDEN holds band keys, and hiding removes the key's bytes at every
  * Depth: a dir key, the dir's subtree; an own-files key `X/.`, the files
@@ -169,12 +212,13 @@ export function normalize(raw) {
  * ranked bands were left out, and how many were filtered out.
  */
 export function stackBands(data, opts) {
-  const { roots, base, depth, top, hidden, range, keep = [], by = "", min = 0, flat = true } = opts;
-  const zeroed = (dir) => data.rbytes[dir].map((v) => v ?? 0);
-  // The files directly in split dir DIR: its rbytes minus its subdirs', at least 0.
+  const { metric = "rbytes", roots, base, depth, top, hidden, range, keep = [], by = "", min = 0, flat = true } = opts;
+  const series = data[metric];
+  const zeroed = (dir) => series[dir].map((v) => v ?? 0);
+  // The files directly in split dir DIR: its value minus its subdirs', at least 0.
   const ownFiles = (dir) => {
     const own = zeroed(dir);
-    for (const kid of data.children.get(dir)) data.rbytes[kid].forEach((v, i) => (own[i] -= v ?? 0));
+    for (const kid of data.children.get(dir)) series[kid].forEach((v, i) => (own[i] -= v ?? 0));
     return own.map((v) => Math.max(0, v));
   };
   const all = new Map(); // band key -> band
@@ -197,7 +241,7 @@ export function stackBands(data, opts) {
   const removed = [];
   for (const h of new Set(hidden)) {
     if (!h.endsWith("/.")) {
-      if (Object.hasOwn(data.rbytes, h) && !holds(h, true)) removed.push([h, zeroed(h)]);
+      if (Object.hasOwn(series, h) && !holds(h, true)) removed.push([h, zeroed(h)]);
     } else {
       const x = h.slice(0, -2);
       if (data.split.has(x) && !holds(x, false)) removed.push([x, ownFiles(x)]);
@@ -227,7 +271,7 @@ export function stackBands(data, opts) {
     .toSorted((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
     .map(({ band }) => ({
       ...band,
-      label: bandLabel(data, band, base ?? ROOT),
+      label: bandLabel(data, band, base ?? ROOT, METRICS[metric].own),
       drillable: !band.own && data.split.has(band.dir),
     }));
   const key = by.replace(/^-/, "");
@@ -241,13 +285,13 @@ export function stackBands(data, opts) {
 }
 
 /** BAND's label: its dir relative to BASE, where BASE itself (and ROOT) is
- * named, not "."; an own-files band adds "/ bytes". */
-function bandLabel(data, band, base) {
+ * named, not "."; an own-files band adds "/ OWN" (see METRICS). */
+function bandLabel(data, band, base, own) {
   const { dir } = band;
   let name = relative(dir, base);
   if (dir === ROOT) name = data.tree.fs_path;
   else if (dir === base) name = dir.slice(dir.lastIndexOf("/") + 1);
-  return band.own ? `${name}/ bytes` : name;
+  return band.own ? `${name}/ ${own}` : name;
 }
 
 /** How many levels below ROOTS the Stack view can split: the most levels
@@ -269,7 +313,7 @@ export function setDirOf(paths, path) {
 
 /** Whether drilling can reach PATH from the set dirs PATHS: PATH is one of
  * them, or a stored subdir of a split dir that drilling can reach. So an
- * untrusted PATH (e.g. from the URL) is safe to look up in data.rbytes. */
+ * untrusted PATH (e.g. from the URL) is safe to look up in a metric's series. */
 export function reachable(data, paths, path) {
   if (paths.includes(path)) return true;
   if (path === ROOT) return false;
@@ -278,21 +322,22 @@ export function reachable(data, paths, path) {
 }
 
 /**
- * Shape the set dirs PATHS (a set's, in DATA.sets) into trend cards for
- * RANGE ([first, last] point indexes), in PATHS order.
+ * Shape the set dirs PATHS (a set's, in DATA.sets) into trend cards of
+ * METRIC (a METRICS key) for RANGE ([first, last] point indexes), in PATHS
+ * order.
  *
  * Returns [{path, values, start, end, change, peak, span, lo, hi}]: values
- * is the dir's whole rbytes series (null: absent). Within the range, absent
- * counting as 0 (as in the Stack view): start and end are its bytes at the ends,
+ * is the dir's whole series (null: absent). Within the range, absent
+ * counting as 0 (as in the Stack view): start and end are its values at the ends,
  * change = end - start, peak the largest and span the largest minus the
  * smallest, so a dir that appears or disappears has a span. lo and hi bound
  * its present values (the sparkline's scale), both null if it is absent
  * throughout.
  */
-export function trendCards(data, paths, range) {
+export function trendCards(data, paths, range, metric = "rbytes") {
   const [a, b] = range;
   return paths.map((path) => {
-    const values = data.rbytes[path];
+    const values = data[metric][path];
     const inRange = values.slice(a, b + 1);
     const present = inRange.filter((v) => v !== null);
     const zeroed = inRange.map((v) => v ?? 0);
@@ -317,16 +362,17 @@ export function trendCards(data, paths, range) {
 export const unchanged = (card) => card.span === 0;
 
 /** Whether a band or card X ({peak, span} over the shown range) passes a
- * view's filters: a peak of at least MIN bytes, and a change unless FLAT
- * (show unchanged). */
+ * view's filters: a peak of at least MIN (in the metric's unit), and a
+ * change unless FLAT (show unchanged). */
 export const passes = (x, { min, flat }) => x.peak >= min && (flat || !unchanged(x));
 
-/** Why a view's filters MIN (bytes) and FLAT drop things, e.g. "unchanged
- * in this range, or under 1.00 GiB at peak"; "" if they drop nothing. */
-export function filterReason({ min, flat }) {
+/** Why a view's filters MIN and FLAT drop things, e.g. "unchanged in this
+ * range, or under 1.00 GiB at peak", MIN in FORMAT (default bytes); "" if
+ * they drop nothing. */
+export function filterReason({ min, flat }, format = formatBytes) {
   const why = [];
   if (!flat) why.push("unchanged in this range");
-  if (min > 0) why.push(`under ${formatBytes(min)} at peak`);
+  if (min > 0) why.push(`under ${format(min)} at peak`);
   return why.join(", or ");
 }
 

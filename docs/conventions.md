@@ -9,7 +9,10 @@
   `ensure_ascii=True`. Terminal messages use `generate.display`
   (backslashreplace), never fsdecode'd text.
 - Sizes are integer bytes everywhere; the page formats them in IEC units
-  (KiB … PiB), like `trackdir db summary`.
+  (KiB … PiB), like `trackdir db summary`. Counts (rentries) are integers,
+  formatted with SI suffixes (k, M, G). A metric's formats and labels are in
+  `model.METRICS`; the metric's name is its tree-file name (`rbytes`,
+  `rentries`) in the URL hash and in code.
 - Times in JSON are UTC ISO 8601 to the second (`2026-10-21T19:19:45Z`).
 - `history.py` and `sets.py` are pure (no database; only `sets.load` reads
   its file) and hold the logic; `db.py` only queries; `generate.py` wires

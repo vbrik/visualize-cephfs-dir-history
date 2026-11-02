@@ -1,9 +1,10 @@
 # dirhistory — CephFS directory size history charts
 
-A static website that charts how the sizes of directories on a CephFS
-filesystem change over time. It shows which directories grow and shrink,
-using the samples that [trackdir](https://github.com/vbrik/track-cephfs-dir-sizes)
-records in PostgreSQL from CephFS recursive statistics (`ceph.dir.rbytes`).
+A static website that charts how the sizes and file counts of directories
+on a CephFS filesystem change over time. It shows which directories grow and
+shrink, using the samples that [trackdir](https://github.com/vbrik/track-cephfs-dir-sizes)
+records in PostgreSQL from CephFS recursive statistics (`ceph.dir.rbytes`,
+`ceph.dir.rfiles`, `ceph.dir.rsubdirs`).
 
 - `dirhistory-generate` reads the trackdir database and writes JSON data
   files. Run it periodically.
@@ -18,6 +19,9 @@ also has the set **Top level**, its top-level directories. Stack bands are the
 directories' rbytes, the size of the whole subtree; `dir/ bytes` is the
 files directly in a split directory. Bands add up, unless a set holds a
 directory and one of its own subdirectories: those bytes can count twice.
+The *Entries* toggle charts rentries instead, the number of files and
+directories in the subtree (rfiles + rsubdirs, the directory itself
+included), in both views.
 See [docs/terms.md](docs/terms.md) for the terms and
 [docs/design.md](docs/design.md) for the design, the data format and the
 known risks.
@@ -99,16 +103,17 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 |---|---|
 | Tree | Which sampled tree to show. Changing it shows the tree's first set. |
 | View | *Stack*: the stacked chart of the set's directories. *Trends*: a card per set directory, each on its own scale; click one to open it in Stack. |
+| Bytes, Entries | Both views: chart rbytes (sizes) or rentries (files plus directories, each directory counting itself; the own-files band is then `dir/ entries`, the files directly in a directory plus 1). Everything else stays as it is; Min has a separate value per metric. Entries is disabled for a data file written before it existed, until the next `dirhistory-generate`. |
 | Set | Which of the tree's sets to show, with its number of directories: Top level, then the sets of the `--sets` file. |
 | Depth | Stack: split each directory this many levels into its subdirectories; the files directly in a split directory are the band `dir/ bytes`. The most is the levels the data file stores below the shown directories. |
 | Top | Stack: draw only this many bands (1–512, default 64): the first in the legend's sort, by default those whose size changed most in the shown range; the summary counts the rest. Past 64 bands, colors repeat. |
 | Legend tick boxes, None, All | Stack: draw only the ticked bands; *None* unticks all, to tick just the few to compare. Unticked bands stay listed, below the ticked ones, with their size and change; the chart's scale, the summary and the table follow the ticked ones. Changing Tree, Set or Depth, or drilling, ticks all again. |
-| Legend Dir, Size, Δ | Stack: sort the legend by name, by size at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first: the chart stacks the least changed at the bottom, the biggest movers on top). When there are more bands than Top, the sort also chooses which are drawn: e.g. Δ reversed draws the most shrunk. The chart's stacking does not change. |
+| Legend Dir, Size (Entries), Δ | Stack: sort the legend by name, by value at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first: the chart stacks the least changed at the bottom, the biggest movers on top). When there are more bands than Top, the sort also chooses which are drawn: e.g. Δ reversed draws the most shrunk. The chart's stacking does not change. |
 | Band (legend or chart) | Stack: click a band of a directory that can be split to show only what is inside it, one level down; the path above the chart goes back. |
 | hide | Stack: remove a band's bytes from the chart, at every Depth: a directory's, with everything in it, or `dir/ bytes`, the files directly in it. Click the chip to bring it back. |
-| Min GiB | Both views, each its own: hide bands (Stack) or cards (Trends) whose largest size in the shown range is under this many GiB (default 1; 0 shows all). Ticked bands are never hidden. The summary (Stack) or the line above the cards (Trends) counts what was filtered out. |
-| Show unchanged | Both views, each its own: also show bands or cards whose size did not change in the shown range; off by default. |
-| Reset | Stack: restore Depth, Top, Min GiB, Show unchanged, drill-down, hiding, ticks and the legend's order. |
+| Min GiB, Min entries | Both views, each its own, and per metric: hide bands (Stack) or cards (Trends) whose largest value in the shown range is under this many GiB (default 1) or entries (default 1000); 0 shows all. Ticked bands are never hidden. The summary (Stack) or the line above the cards (Trends) counts what was filtered out. |
+| Show unchanged | Both views, each its own: also show bands or cards whose value did not change in the shown range; off by default. |
+| Reset | Stack: restore Depth, Top, Min GiB and Min entries, Show unchanged, drill-down, hiding, ticks and the legend's order. |
 | Sort | Trends: card order, largest first, in the shown range: *Span* (max − min), *Peak* (max), *Current size* (at the range's end), or *Name*. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
 

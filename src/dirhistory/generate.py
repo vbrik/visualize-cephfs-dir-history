@@ -39,6 +39,8 @@ from dirhistory.sets import (
 )
 
 INDEX = "trees.json"
+# The metrics of a tree file's series pairs, in pair order.
+METRICS = ("rbytes", "rentries")
 
 _DURATION = re.compile(r"(\d+)([smhdw])")
 _DURATION_UNITS = {
@@ -57,10 +59,10 @@ in web/ reads the files.
 
 The sets file (--sets, required; an empty file is valid) names, per tree,
 sets of directories. Each tree also gets the implicit set "Top level", its
-top-level directories. The page's Stack view charts the rbytes of a set's
-directories as bands, and can split a directory into its subdirectories,
-down to the depth the set stores. Its Trends view shows one card per
-directory of a set.
+top-level directories. The page's Stack view charts the rbytes (or, toggled,
+the rentries: rfiles + rsubdirs) of a set's directories as bands, and can
+split a directory into its subdirectories, down to the depth the set stores.
+Its Trends view shows one card per directory of a set.
 
 The database is only read. Prints each file written to stdout; notes go to
 stderr.
@@ -118,8 +120,10 @@ def tree_document(tree: Tree, history: TreeHistory, generated: datetime) -> dict
     """Return the JSON document of a tree file.
 
     Paths are os.fsdecode'd: bytes that are not UTF-8 become lone surrogates,
-    which JSON escapes (write_json keeps ensure_ascii). A series that is the
-    same at every time point is one number (see compact).
+    which JSON escapes (write_json keeps ensure_ascii). Each stored dir has
+    one entry in "series", a pair of its METRICS series, so its path is
+    written once: paths are most of a large file. A series that is the same
+    at every time point is one number (see compact).
     """
     return {
         "generated": iso(generated),
@@ -131,7 +135,11 @@ def tree_document(tree: Tree, history: TreeHistory, generated: datetime) -> dict
             "max_depth": tree.max_depth,
         },
         "times": [iso(t) for t in history.times],
-        "rbytes": {os.fsdecode(p): compact(s) for p, s in history.rbytes.items()},
+        "metrics": list(METRICS),
+        "series": {
+            os.fsdecode(p): [compact(s), compact(history.rentries[p])]
+            for p, s in history.rbytes.items()
+        },
         "sets": [
             {"name": s.name, "paths": [os.fsdecode(p) for p in s.paths]}
             for s in history.sets

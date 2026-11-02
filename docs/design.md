@@ -40,14 +40,39 @@ list (see [Data files](#data-files)). The first sample and the stored dirs'
 rows are streamed, so memory depends on the number of changed paths, stored
 dirs and time points, not on the length of the history.
 
+### Two metrics: rbytes and rentries
+
+People ask both "where did the space go" and "where did the files go"
+(a dir of millions of small files strains the MDS, not the disks). The page
+charts one metric at a time, chosen by a page-wide toggle (`metric=`):
+rbytes, or rentries = rfiles + rsubdirs, the files and dirs in the
+subtree. rsubdirs counts the dir itself, so rentries is at least 1, and an
+own-files band `X/ entries` is the files directly in X plus 1. The sum is
+one number because the question is "how many inodes", and a split by type
+would double the bands.
+
+- Everything else is the same for both: bands, splitting, hiding,
+  ranking, picks and filters work on whichever series is shown. Band keys
+  are paths, so the toggle keeps the view (drill, hides, picks, colors).
+- Min is per metric as well as per view (`smin`/`sminent`,
+  `min`/`minent`), since no threshold suits both a GiB and an entry count;
+  Min entries defaults to 1000. Show unchanged is per view only.
+- trackdir writes a dir's row whenever any of its columns changes, rfiles
+  and rsubdirs included, so carrying values forward between rows is exact
+  for both. A NULL rfiles or rsubdirs (an rstats error) keeps the previous
+  rentries, as a NULL rbytes keeps rbytes.
+- The tree file pairs both series per path (see [Data files](#data-files)):
+  paths are most of a large file, and a second map keyed by path would
+  have doubled it.
+
 ### Propagation lag
 
 CephFS propagates rstats upward with a delay, so within one sample a
 child can have grown while its parent has not. A split dir's own-files band
-(`X/ bytes`) then dips by the child's growth for one point, and goes
-negative if the child is large; the page clamps it at 0. Only own-files
-bands are affected, and a dip can lift one into the Top by a single-point
-spike.
+(`X/ bytes`, `X/ entries`) then dips by the child's growth for one point,
+and goes negative if the child is large; the page clamps it at 0. Only
+own-files bands are affected, and a dip can lift one into the Top by a
+single-point spike.
 
 - Time points are the last sample per UTC bucket of at least 1 hour (fixed:
   `MIN_BUCKET`), not every 5-minute sample, so far fewer lagging samples are
@@ -120,7 +145,8 @@ views each show one set at a time.
 
 - ECharts (vendored, pinned): a stacked area with a zoom slider today;
   treemap, heatmap and bar charts for the next views.
-- **Stack** bands are rbytes. Each set dir is one band, or, at Depth N, is
+- **Stack** bands are rbytes (or rentries, see
+  [Two metrics](#two-metrics-rbytes-and-rentries)). Each set dir is one band, or, at Depth N, is
   split N levels (only dirs in the file's `split` list: those with all their
   subdirs stored; any other stays whole). Depth counts levels below the shown
   dirs, which are the set's, or the drilled-into dir's. A band reached from
@@ -173,8 +199,9 @@ views each show one set at a time.
   (see Top above); the chart's stacking stays by span. Ticked bands
   come first, each group in that order, so the few picked stay in view in a
   long list.
-- View state is in the URL hash (`view`, `set`, `depth`, `top`, `in`, `hide`,
-  `pick`, `lsort`, `smin`, `sflat`, `sort`, `min`, `flat`), so a view can be
+- View state is in the URL hash (`view`, `metric`, `set`, `depth`, `top`,
+  `in`, `hide`, `pick`, `lsort`, `smin`, `sminent`, `sflat`, `sort`, `min`,
+  `minent`, `flat`), so a view can be
   bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not
   UTF-8 survive (`model.encodeValue`). Keys and views of older pages are
@@ -189,8 +216,9 @@ views each show one set at a time.
   unchanged* and the range are shared by all sets. Min GiB and *Show
   unchanged* are per view (Stack `smin`, `sflat`; Trends `min`, `flat`, its
   older key): a threshold that suits a level's bands need not suit set dirs.
+  Min entries likewise (`sminent`, `minent`).
 - Trends cards are the current set's dirs, not their stored descendants. A
-  card shows rbytes, the whole dir, not own size: it asks "how big is this",
+  card shows rbytes (or rentries), the whole dir, not its own files: it asks "how big is this",
   and set dirs may nest, since cards are never added up. A card's change and
   scale follow the range, so zooming reveals a shape. Cards color by
   direction (growth warm, shrinkage cool), so their number is not tied to
@@ -199,7 +227,8 @@ views each show one set at a time.
 - A wildcard can match thousands of dirs (`/npx/user/*`), most of which
   never change. Cards unchanged in the shown range (constant, or absent
   throughout) are hidden unless *Show unchanged* (`flat=1`) is on, as are
-  cards whose peak in the range is under Min GiB (`min`, default 1; so a dir
+  cards whose peak in the range is under Min GiB (`min`, default 1; Min
+  entries, `minent`, default 1000; so a dir
   absent throughout needs `min=0` too), and the rest sort by span (max − min) by default, so the movers come first; also
   by peak, current size or name (`sort=`). Sort keys and the unchanged test
   count absent as 0, like a card's change, so a dir created or deleted in
@@ -228,14 +257,16 @@ the file's order, "Top level" first.
 | `generated` | When the file was written (UTC). |
 | `tree` | `{id, fs_path, fs_name, cluster, max_depth}`. |
 | `times` | Time points, oldest first. |
-| `rbytes` | `{path: series}` for every stored dir: a set dir, or one within its `depth` below a set dir. A series is a list (bytes or null per point, null: absent) if it changed, else one number or null, its constant value. |
+| `metrics` | The metrics of each `series` pair, in order: `["rbytes", "rentries"]`. |
+| `series` | `{path: [rbytes, rentries]}` for every stored dir: a set dir, or one within its `depth` below a set dir. Each series is a list (a value or null per point, null: absent) if it changed, else one number or null, its constant value. The page reads a file without `series` (written before rentries) from its `rbytes`, `{path: series}`, and disables Entries. |
 | `sets` | The tree's sets in `--sets` order, "Top level" first: `[{name, paths}]`, a set's dirs in pattern order, by path within a pattern. The page sorts the Trends cards itself. |
 | `split` | The stored dirs whose subdirs are all stored (each less than its `depth` below a set dir, and above `max_depth`), sorted. Only these can be split or drilled into. |
 
 Most stored dirs never change, so one number instead of a list keeps files
 small: on a real database 2 866 of the 2 995 series of the largest Top level
 set are one number, and its file is 0.3 MB; a 10 678-dir set measured 99.5 %
-unchanged.
+unchanged. Then paths are most of a file: of a 205 MB rbytes-only file of
+1.9 M stored dirs, 143 MB were path keys.
 
 ## Risks and limitations
 
@@ -248,8 +279,9 @@ unchanged.
   and the inner one as its own band. A band reached from two roots is drawn
   once, which does not prevent this. Nothing guards against it; the set's
   author chooses.
-- **Lag dips in own-files bands.** A split dir's `X/ bytes` can dip for a
-  point when a child's rbytes is ahead of its parent's (see
+- **Lag dips in own-files bands.** A split dir's `X/ bytes` or
+  `X/ entries` can dip for a point when a child's value is ahead of its
+  parent's (see
   [Propagation lag](#propagation-lag)), and can lift the band into Top. Seen:
   ≤ 0.25 GiB at 1 h points, 8.6 GiB at finer sampling. The page clamps
   at 0 and does not smooth.
