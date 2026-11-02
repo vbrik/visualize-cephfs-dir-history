@@ -36,3 +36,10 @@
   a data file's format, regenerate `web/data` (`dirhistory-generate`, with
   `TRACKDIR_DB`) before running it, or its real-tree checks fail on the old
   files.
+- Commit tested work before a long live-database run (`dirhistory-generate`
+  over all trees takes minutes), and wrap the run in `timeout`. A session
+  restart or a stalled server mid-run otherwise strands uncommitted work.
+- If `dirhistory-generate` takes minutes where it took seconds, first check
+  whether the server accepts a new connection within 10 s
+  (`?connect_timeout=10`). An overloaded server looked like a hang in the
+  code.
