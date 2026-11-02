@@ -180,6 +180,21 @@ def check_fixture(page: Page, base: str) -> None:
     assert "hide=" not in state(page), f"chips did not unhide: {state(page)}"
     assert any(b.startswith("caf") for b in bands(page)), "chips did not bring caf back"
 
+    # A hide made at Depth 1 still holds at Depth 0: the band above it and
+    # the total shrink (A 700 -> 350 GiB, total 990 -> 640 GiB).
+    go(page, f"{base}#tree=1")
+    a_link = page.locator("button.link", has_text=re.compile("^A$"))
+    a_value = page.locator("#legend li").filter(has=a_link).locator(".value")
+    assert a_value.inner_text() == "700 GiB", f"A: {a_value.inner_text()}"
+    assert "990 GiB" in page.inner_text("#summary"), page.inner_text("#summary")
+    go(page, f"{base}#tree=1&depth=1")
+    hide_b = page.locator("#legend li", has_text="A/b").locator("button.hide")
+    act(page, hide_b.click)
+    act(page, lambda: page.locator("#crumbs button").first.click())  # Depth 0
+    assert "hide=A/b" in state(page) and "depth=" not in state(page), state(page)
+    assert a_value.inner_text() == "350 GiB", f"A less A/b: {a_value.inner_text()}"
+    assert "640 GiB" in page.inner_text("#summary"), page.inner_text("#summary")
+
     # Bands past Top are counted.
     go(page, f"{base}#tree=1&top=2")
     assert len(bands(page)) == 2, f"top=2: {bands(page)}"
@@ -223,8 +238,10 @@ def check_model(page: Page, base: str) -> None:
             const info = (bands) => Object.fromEntries(bands.map((b) => [b.key,
               {label: b.label, own: b.own, drillable: b.drillable, values: b.values}]));
             const rooted = m.normalize({...raw,
-              rbytes: {".": 300, a: 100, b: [50, 100, 150]},
-              sets: [{name: "Root", paths: ["."]}], split: ["."]});
+              rbytes: {".": 300, a: 100, "a/x": 40, b: [50, 100, 150]},
+              sets: [{name: "Root", paths: ["."]}], split: [".", "a"]});
+            const rootValues = (hidden) => m.stackBands(rooted,
+              {...opts, roots: ["."], hidden}).bands[0].values;
             return JSON.stringify({
               n: m.MAX_BANDS,
               rbytes: data.rbytes,
@@ -237,6 +254,11 @@ def check_model(page: Page, base: str) -> None:
               top2: keys({top: 2}),
               hideA: keys({depth: 1, hidden: ["A"]}),
               hideOwnA: keys({depth: 1, hidden: ["A/."]}),
+              // Hidden bytes leave the bands above them too (Depth 0).
+              zLessY: info(run({hidden: ["Z/y"]}).bands).Z.values,
+              aLessOwn: info(run({hidden: ["A/."]}).bands).A.values,
+              rootLess: [["a/x"], ["a", "a/x"], ["a/x", "a"], ["a/."], ["a", "a/."],
+                ["./."], ["nope", "nope/.", "b/."]].map(rootValues),
               maxTop: m.maxDepth(data, top),
               maxPartial: m.maxDepth(data, set("Partial")),
               root: info(m.stackBands(rooted, {...opts, roots: ["."], depth: 1}).bands),
@@ -286,6 +308,21 @@ def check_model(page: Page, base: str) -> None:
     assert not {"A/.", "A/b", "A/c"} & set(got["hideA"]["keys"]), got["hideA"]
     assert "Q" in got["hideA"]["keys"], f"hiding A hid Q: {got['hideA']}"
     assert set(got["hideOwnA"]["keys"]) == want - {"A/."}, got["hideOwnA"]
+    assert got["zLessY"] == [100 * gib, 20 * gib, 20 * gib], f"Z - Z/y: {got['zLessY']}"
+    assert got["aLessOwn"] == [350 * gib, 400 * gib, 450 * gib], (
+        f"A - A/ bytes: {got['aLessOwn']}"
+    )
+    # ROOT 300 = a 100 (a/x 40, a/ bytes 60) + b + ROOT/ bytes; nothing twice;
+    # unknown dirs and unsplit own-files keys subtract nothing.
+    assert got["rootLess"] == [
+        [260] * 3,
+        [200] * 3,
+        [200] * 3,
+        [240] * 3,
+        [200] * 3,
+        [150, 200, 250],
+        [300] * 3,
+    ], f"ROOT less hidden: {got['rootLess']}"
 
     assert (got["maxTop"], got["maxPartial"]) == (1, 0), "maxDepth"
     assert got["root"]["./."]["label"] == "/fixture/ bytes", f"ROOT: {got['root']}"

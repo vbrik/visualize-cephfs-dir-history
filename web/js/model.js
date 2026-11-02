@@ -138,15 +138,29 @@ export function normalize(raw) {
  * 0. A band reached from two roots (a set holding a dir and its subdir)
  * appears once.
  *
- * A band is hidden if HIDDEN holds its key, or a dir key (not ending "/.")
- * that its dir is under: hiding a dir hides its subtree at any depth,
- * hiding an own-files band only that band. The other bands rank by span
- * (max − min) over the range, ties by key, so dirs that shrank or vanished
- * stay visible. Returns {bands, cut}: the first TOP, as {key, dir, own,
- * label, values, drillable}, and how many ranked past them.
+ * HIDDEN holds band keys, and hiding removes the key's bytes at every
+ * Depth: a dir key, the dir's subtree; an own-files key `X/.`, the files
+ * directly in X. So the bands under a hidden dir key, and a hidden
+ * own-files band, are dropped; and a drawn dir band that holds hidden bytes
+ * (a dir strictly above a hidden dir, or X or above for `X/.`) has them
+ * subtracted, at least 0. Otherwise a hide made at one Depth would leak
+ * back in at a shallower one while its chip still says it is hidden. A key
+ * under another hidden dir key is skipped, so nothing is subtracted twice;
+ * an unknown dir, or `X/.` for an X not in data.split, subtracts nothing.
+ *
+ * The other bands rank by span (max − min) over the range, after those
+ * subtractions, ties by key, so dirs that shrank or vanished stay visible.
+ * Returns {bands, cut}: the first TOP, as {key, dir, own, label, values,
+ * drillable}, and how many ranked past them.
  */
 export function stackBands(data, { roots, base, depth, top, hidden, range }) {
   const zeroed = (dir) => data.rbytes[dir].map((v) => v ?? 0);
+  // The files directly in split dir DIR: its rbytes minus its subdirs', at least 0.
+  const ownFiles = (dir) => {
+    const own = zeroed(dir);
+    for (const kid of data.children.get(dir)) data.rbytes[kid].forEach((v, i) => (own[i] -= v ?? 0));
+    return own.map((v) => Math.max(0, v));
+  };
   const all = new Map(); // band key -> band
   const add = (band) => all.has(band.key) || all.set(band.key, band);
   const expand = (dir, level) => {
@@ -154,23 +168,43 @@ export function stackBands(data, { roots, base, depth, top, hidden, range }) {
       add({ key: dir, dir, own: false, values: zeroed(dir) });
       return;
     }
-    const kids = data.children.get(dir);
-    const own = zeroed(dir);
-    for (const kid of kids) data.rbytes[kid].forEach((v, i) => (own[i] -= v ?? 0));
-    add({ key: `${dir}/.`, dir, own: true, values: own.map((v) => Math.max(0, v)) });
-    for (const kid of kids) expand(kid, level + 1);
+    add({ key: `${dir}/.`, dir, own: true, values: ownFiles(dir) });
+    for (const kid of data.children.get(dir)) expand(kid, level + 1);
   };
   for (const root of roots) expand(root, 0);
 
   const dirKeys = hidden.filter((h) => !h.endsWith("/."));
   const isHidden = (band) => hidden.includes(band.key) || dirKeys.some((h) => isUnder(band.dir, h));
+  // Hidden bytes to subtract: [dir holding them, values]. Keys are untrusted
+  // (from the URL), so only stored dirs and split dirs count.
+  const holds = (x, strict) => dirKeys.some((h) => (h !== x || !strict) && isUnder(x, h));
+  const removed = [];
+  for (const h of new Set(hidden)) {
+    if (!h.endsWith("/.")) {
+      if (Object.hasOwn(data.rbytes, h) && !holds(h, true)) removed.push([h, zeroed(h)]);
+    } else {
+      const x = h.slice(0, -2);
+      if (data.split.has(x) && !holds(x, false)) removed.push([x, ownFiles(x)]);
+    }
+  }
+  const visible = [...all.values()]
+    .filter((band) => !isHidden(band))
+    .map((band) => {
+      if (band.own) return band; // holds no subdir's bytes
+      const inside = removed.filter(([x]) => isUnder(x, band.dir));
+      if (!inside.length) return band;
+      const values = band.values.map((v, i) =>
+        Math.max(0, inside.reduce((rest, [, r]) => rest - r[i], v)),
+      );
+      return { ...band, values };
+    });
+
   const [a, b] = range;
   const span = (values) => {
     const shown = values.slice(a, b + 1);
     return Math.max(...shown) - Math.min(...shown);
   };
-  const ranked = [...all.values()]
-    .filter((band) => !isHidden(band))
+  const ranked = visible
     .map((band) => ({ band, span: span(band.values) }))
     .sort((x, y) => y.span - x.span || (x.band.key < y.band.key ? -1 : 1))
     .map(({ band }) => band);
