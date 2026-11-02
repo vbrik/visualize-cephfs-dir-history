@@ -136,8 +136,9 @@ views each show one set at a time.
   max 512) of them are listed, chosen in the legend's sort (`lsort`): by
   default span, else the largest (`size`) or smallest (`-size`) at the
   range's end, the most grown (`delta`) or shrunk (`-delta`), or the first
-  by name. Picks are listed first. The chosen bands stack in span order
-  whatever the sort. The rest are not drawn and not summed anywhere, and
+  by name. Picks are listed first. The chosen bands stack by span whatever
+  the sort, the least changed at the bottom: a steady base under the
+  movers, which then sit on top, nearest the total's line. The rest are not drawn and not summed anywhere, and
   there is no "Other" band: the summary says how many are left out, adding
   "(raise Top)" when Top is below 512. Hidden bands are not ranked. Past 64
   bands, colors repeat (see [conventions](conventions.md)), and the chart's
@@ -165,9 +166,10 @@ views each show one set at a time.
   clears them; hiding a band drops its pick.
 - The legend sorts by name, size at the range's end, or change over the
   range (`lsort=name|size|delta`, `-` before it reversed); its default is
-  chart order, the top of the stack first, so rows line up with the bands.
+  chart order, the top of the stack (the biggest movers) first, so rows
+  line up with the bands.
   When more bands than Top are ranked, sorting also chooses which are listed
-  (see Top above); the chart's stacking stays in span order. Ticked bands
+  (see Top above); the chart's stacking stays by span. Ticked bands
   come first, each group in that order, so the few picked stay in view in a
   long list.
 - View state is in the URL hash (`view`, `set`, `depth`, `top`, `in`, `hide`,

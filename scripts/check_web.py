@@ -238,7 +238,7 @@ def check_fixture(page: Page, base: str) -> None:
     # Top keeps the first bands in the legend's sort; they stack by span.
     go(page, f"{base}#tree=1&sflat=1&smin=0&top=2&lsort=-size")
     assert bands(page) == ["Q", "Z"], f"top=2, -size: {bands(page)}"
-    assert list(series(page)) == ["Z", "Q"], f"stack not by span: {series(page)}"
+    assert list(series(page)) == ["Q", "Z"], f"stack not by span: {series(page)}"
     assert "(raise Top)" in page.inner_text("#summary"), page.inner_text("#summary")
 
     # By default the Stack view filters out unchanged bands (Q) and those
@@ -246,7 +246,7 @@ def check_fixture(page: Page, base: str) -> None:
     # is never filtered out. (Playwright shows café's name with U+FFFD.)
     caf = "caf\ufffd"
     go(page, f"{base}#tree=1")
-    assert bands(page) == ["Z", caf, "A"], f"default filters: {bands(page)}"
+    assert bands(page) == ["A", caf, "Z"], f"default filters: {bands(page)}"
     summary = page.inner_text("#summary")
     want = "1 filtered out (unchanged in this range, or under 1.00 GiB at peak)"
     assert want in summary, summary
@@ -254,12 +254,12 @@ def check_fixture(page: Page, base: str) -> None:
     assert "sflat=1" in state(page) and "Q" in bands(page), state(page)
     act(page, lambda: page.fill("#smin", "150"))
     act(page, lambda: page.press("#smin", "Enter"))
-    assert bands(page) == [caf, "A"], f"smin=150: {bands(page)}"
+    assert bands(page) == ["A", caf], f"smin=150: {bands(page)}"
     assert "2 filtered out (under 150 GiB at peak)" in page.inner_text("#summary")
     go(page, f"{base}#tree=1&depth=1")
     assert f"{caf}/ bytes" not in bands(page), f"0 B band shown: {bands(page)}"
     go(page, f"{base}#tree=1&pick=Q&pick=A")
-    assert "Q" in bands(page) and list(series(page)) == ["A", "Q"], series(page)
+    assert "Q" in bands(page) and list(series(page)) == ["Q", "A"], series(page)
 
     # Top's range: 512 is kept, more is clamped.
     go(page, f"{base}#tree=1&sflat=1&smin=0&top=512")
@@ -308,7 +308,7 @@ def check_picks(page: Page, base: str) -> None:
     go(page, f"{base}#tree=1&sflat=1&smin=0")
     # Keys stay in the page's strings: café's name is not UTF-8.
     colors = series(page)
-    assert len(colors) == 4 and next(iter(colors)) == "A", f"series: {list(colors)}"
+    assert len(colors) == 4 and next(iter(colors)) == "Q", f"series: {list(colors)}"
 
     # None draws nothing but keeps every row listed, unticked, and the
     # range: the empty chart's zoom slider must not change it.
@@ -329,7 +329,7 @@ def check_picks(page: Page, base: str) -> None:
     tick(page, "^Z$")
     tick(page, "^A$")
     assert series(page) == {"A": colors["A"], "Z": colors["Z"]}, series(page)
-    assert bands(page) == ["Z", "A", "Q", caf], f"ticked not first: {bands(page)}"
+    assert bands(page) == ["A", "Z", caf, "Q"], f"ticked not first: {bands(page)}"
     summary = page.inner_text("#summary")
     assert "750 GiB in 2 of 4 listed bands" in summary, summary
     assert page.locator("#table-body tr").count() == 2, "table not of drawn bands"
@@ -340,9 +340,9 @@ def check_picks(page: Page, base: str) -> None:
     act(page, delta.click)
     assert bands(page) == ["A", "Z", caf, "Q"], f"by change: {bands(page)}"
     assert delta.get_attribute("data-order") == "down", "no sort arrow"
-    assert list(series(page)) == ["A", "Z"], "sorting changed the chart"
+    assert list(series(page)) == ["Z", "A"], "sorting changed the chart"
     act(page, page.reload)
-    assert list(series(page)) == ["A", "Z"], "picks lost on reload"
+    assert list(series(page)) == ["Z", "A"], "picks lost on reload"
     assert bands(page) == ["A", "Z", caf, "Q"] and "lsort=delta" in state(page), (
         "sort lost on reload"
     )
@@ -351,11 +351,12 @@ def check_picks(page: Page, base: str) -> None:
     assert delta.get_attribute("data-order") == "up", "no reversed arrow"
     act(page, delta.click)
     assert "lsort=" not in state(page), state(page)
-    assert bands(page) == ["Z", "A", "Q", caf], f"chart order: {bands(page)}"
+    assert bands(page) == ["A", "Z", caf, "Q"], f"chart order: {bands(page)}"
     assert delta.get_attribute("data-order") is None, "arrow left in chart order"
 
     # A chart click finds the band among those drawn: 3/4 of the way to the
-    # last point, 700 GiB is in Z (on A), not in café (unticked, between).
+    # last point, A (on Z's 62.5 GiB) holds 150 GiB; café (unticked) would
+    # lie between them and hold it.
     x, y = page.evaluate(
         """(bytes) => {
             const el = document.getElementById("chart");
@@ -366,10 +367,10 @@ def check_picks(page: Page, base: str) -> None:
             const box = el.getBoundingClientRect();
             return [box.left + x, box.top + y];
         }""",
-        700 * 2**30,
+        150 * 2**30,
     )
     act(page, lambda: page.mouse.click(x, y))
-    assert "in=Z" in state(page), f"chart click among picks: {state(page)}"
+    assert "in=A" in state(page), f"chart click among picks: {state(page)}"
     assert "pick=" not in state(page), f"drilling kept picks: {state(page)}"
 
     # Hiding a picked band drops its pick; All, or ticking the last
@@ -491,8 +492,9 @@ def check_model(page: Page, base: str) -> None:
         caf: [f"{caf}/x"],
     }, f"children: {got['children']}"
 
-    # Depth 0: the set dirs, by span (A 200, café 100, Z 50, Q 0 GiB).
-    assert got["d0"] == {"keys": ["A", caf, "Z", "Q"], "cut": 0}, (
+    # Depth 0: the set dirs, bottom first: least span first (Q 0, Z 50,
+    # café 100, A 200 GiB), so the movers ride on a steady base.
+    assert got["d0"] == {"keys": ["Q", "Z", caf, "A"], "cut": 0}, (
         f"depth 0: {got['d0']}"
     )
     b0 = got["bands0"]
@@ -516,29 +518,29 @@ def check_model(page: Page, base: str) -> None:
 
     # Top, and hiding a dir (its subtree) or only its own files.
     assert len(got["top2"]["keys"]) == 2 and got["top2"]["cut"] == 2, got["top2"]
-    assert got["keepQ"] == {"keys": ["A", "Q"], "cut": 2}, f"keep Q: {got['keepQ']}"
+    assert got["keepQ"] == {"keys": ["Q", "A"], "cut": 2}, f"keep Q: {got['keepQ']}"
     assert got["keepPastTop"] == {"keys": ["Z"], "cut": 3}, got["keepPastTop"]
     by_top2 = {by: r["keys"] for by, r in got["byTop2"].items()}
     assert by_top2 == {
-        "": ["A", caf],
-        "size": ["A", caf],
-        "-size": ["Z", "Q"],
-        "-delta": ["Z", "Q"],
-        "name": ["A", "Q"],
-        "-name": [caf, "Z"],
-        "bogus": ["A", caf],
+        "": [caf, "A"],
+        "size": [caf, "A"],
+        "-size": ["Q", "Z"],
+        "-delta": ["Q", "Z"],
+        "name": ["Q", "A"],
+        "-name": ["Z", caf],
+        "bogus": [caf, "A"],
     }, f"Top by legend sort: {by_top2}"
     assert all(r["cut"] == 2 for r in got["byTop2"].values()), got["byTop2"]
-    assert got["keepBy"] == {"keys": ["A", "Q"], "cut": 2}, (
+    assert got["keepBy"] == {"keys": ["Q", "A"], "cut": 2}, (
         f"pick kept: {got['keepBy']}"
     )
     # Filters (peaks A 700, café 200, Z 100, Q 40 GiB; Q unchanged), picks
     # exempt. Filtered bands are counted apart from those past Top.
-    assert got["unchanged"] == {"keys": ["A", caf, "Z"], "cut": 0}, got["unchanged"]
+    assert got["unchanged"] == {"keys": ["Z", caf, "A"], "cut": 0}, got["unchanged"]
     small = got["small"]
     assert [b["key"] for b in small["bands"]] == ["A"], f"min: {small}"
     assert (small["cut"], small["filtered"]) == (1, 2), f"min counts: {small}"
-    assert got["keepSmall"]["keys"] == ["A", caf, "Q"], got["keepSmall"]
+    assert got["keepSmall"]["keys"] == ["Q", caf, "A"], got["keepSmall"]
     assert got["passes"] == [True, False, False], f"passes: {got['passes']}"
     assert got["reasons"] == [
         "",
@@ -548,8 +550,8 @@ def check_model(page: Page, base: str) -> None:
 
     # Legend orders, over the range: change A +200, café +100, Q 0, Z -50
     # GiB; size A 700, café 200, Z 50, Q 40 GiB. Chart order is the top of
-    # the stack first; an unknown sort is chart order.
-    chart = ["Q", "Z", caf, "A"]
+    # the stack first (the biggest movers); an unknown sort is chart order.
+    chart = ["A", caf, "Z", "Q"]
     assert got["legend"] == {
         "": chart,
         "delta": ["A", caf, "Q", "Z"],
@@ -559,7 +561,7 @@ def check_model(page: Page, base: str) -> None:
         "-name": [caf, "Z", "Q", "A"],
         "bogus": chart,
     }, f"legend orders: {got['legend']}"
-    assert got["legendFirst"] == [["Q", "Z", caf, "A"], ["Q", "Z", "A", caf]], (
+    assert got["legendFirst"] == [["Z", "Q", "A", caf], ["Q", "Z", "A", caf]], (
         f"ticked first: {got['legendFirst']}"
     )
     assert not {"A/.", "A/b", "A/c"} & set(got["hideA"]["keys"]), got["hideA"]

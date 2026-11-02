@@ -157,7 +157,9 @@ export function normalize(raw) {
  * (see passes), after those subtractions, are filtered out, except those
  * in KEEP. The rest rank by span (max − min) over the range, ties by key,
  * so dirs that shrank or vanished stay visible.
- * TOP of them are returned, in rank order. Which TOP: those whose keys are
+ * TOP of them are returned, in stack order (bottom first): the reverse of
+ * rank order, so the least changed lie at the bottom and the movers ride on
+ * top of a steady base. Which TOP: those whose keys are
  * in KEEP (optional; the legend's picks) first, so a pick is never cut by
  * zooming or sorting, then the first of the rest in BY's order, ties by
  * rank. BY "" (the default) is rank; "size" keeps the largest at the
@@ -234,7 +236,7 @@ export function stackBands(data, opts) {
   const kept = order.filter((band) => keep.includes(band.key)).slice(0, top);
   const rest = order.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
   const chosen = new Set([...kept, ...rest]);
-  const bands = ranked.filter((band) => chosen.has(band));
+  const bands = ranked.filter((band) => chosen.has(band)).toReversed();
   return { bands, cut: ranked.length - bands.length, filtered: scored.length - passing.length };
 }
 

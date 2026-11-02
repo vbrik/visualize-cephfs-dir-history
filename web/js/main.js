@@ -290,7 +290,9 @@ function renderStack(s, set) {
   const c = colors();
   // Keyed without Depth and Top, so bands keep their colors when those
   // change; over the listed bands, so a band keeps its color when unticked.
-  c.bands = bandColors(`${data.tree.id}|${set.name}|${inPath}`, model.bands, c.palette);
+  // In rank order (the stack's top first): the biggest movers get the
+  // palette's first, most distinct, slots.
+  c.bands = bandColors(`${data.tree.id}|${set.name}|${inPath}`, model.bands.toReversed(), c.palette);
 
   // A tooltip left open over series that are being replaced would throw.
   chart.dispatchAction({ type: "hideTip" });
