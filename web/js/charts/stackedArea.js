@@ -19,8 +19,14 @@ import { escapeHtml, formatBytes, formatDelta, formatRate, stepIndex } from "../
  * "start": point i's rate fills its interval (t[i-1], t[i]]), stacked by
  * sign (samesign: up from 0 and down from 0), with no gaps; the tooltip
  * shows the rates of the step under the pointer and their net.
+ * pointer: Change mode: a function returning the pointer's time (ms), or
+ * null. ECharts gives the tooltip the nearest point, half a step off.
  */
-export function stackedAreaOption(data, model, { colors, range, format = formatBytes, order, gaps = new Map(), change = false }) {
+export function stackedAreaOption(
+  data,
+  model,
+  { colors, range, format = formatBytes, order, gaps = new Map(), change = false, pointer = () => null },
+) {
   const times = data.times.map((t) => Date.parse(t));
   const layers = model.bands.map((b) => ({
     id: b.key,
@@ -45,14 +51,16 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
     },
     yAxis: {
       type: "value",
-      ...(change ? {} : { min: 0 }),
+      // Explicit in both modes: setOption merges, so a mode's leftover min
+      // would otherwise stay (null: fit the data, below 0 too).
+      min: change ? null : 0,
       axisLabel: { color: colors.muted, formatter: (v) => (change ? formatRate(v, format) : format(v)) },
       splitLine: { lineStyle: { color: colors.grid, width: 1 } },
     },
     tooltip: {
       trigger: "axis",
-      // Change mode: the step under the pointer, not the nearest point, so
-      // the pointer does not snap and the tooltip finds the step itself.
+      // Change mode: the pointer line follows the pointer, not the nearest
+      // point; the tooltip finds the step under it (see pointer above).
       axisPointer: { type: "line", snap: !change, lineStyle: { color: colors.muted, width: 1 } },
       backgroundColor: colors.surface,
       borderColor: colors.grid,
@@ -61,7 +69,10 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
       // params is empty when no band is drawn (all hidden or unticked).
       formatter: (params) => {
         if (!params.length) return "";
-        if (change) return rateTooltip(stepIndex(data.times, params[0].axisValue), layers, rowOrder, data, format);
+        if (change) {
+          const i = stepIndex(data.times, pointer() ?? params[0].axisValue);
+          return rateTooltip(i, layers, rowOrder, data, format);
+        }
         return tooltip(params[0].dataIndex, layers, rowOrder, data, range, format);
       },
     },

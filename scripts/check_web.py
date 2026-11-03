@@ -331,6 +331,105 @@ def tooltip_names(page: Page, i: int) -> list[str]:
     )
 
 
+def tooltip_text_at(page: Page, fraction: float) -> str:
+    """The Stack chart's tooltip text with the pointer FRACTION of the way
+    from the first point to the second, just above the zero line."""
+    x, y = page.evaluate(
+        """(f) => {
+            const el = document.getElementById("chart");
+            const chart = echarts.getInstanceByDom(el);
+            const data = chart.getOption().series[0].data;
+            const ms = data[0][0] + f * (data[1][0] - data[0][0]);
+            const [x, y] = chart.convertToPixel("grid", [ms, 0]);
+            const box = el.getBoundingClientRect();
+            return [box.left + x, box.top + y - 4];
+        }""",
+        fraction,
+    )
+    act(page, lambda: page.mouse.move(x, y))
+    return page.evaluate(
+        "document.querySelector('#chart .tt')?.textContent ?? ''"
+    )
+
+
+def check_change_mode(page: Page, base: str) -> None:
+    """The Size / Change toggle and Smooth, in both views.
+
+    Tree 1, hourly: A 500 -> 600 -> 700 GiB, café 100 -> 150 -> 200, Z
+    100 -> 100 -> 50; so per day A +2.34 TiB/d, café +1.17 TiB/d, Z 0 then
+    -1.17 TiB/d.
+    """
+    caf = "caf\ufffd"  # Playwright's view of café's name
+    go(page, f"{base}#tree=1")
+    act(page, lambda: page.click("#mode button[data-mode=change]"))
+    assert "mode=change" in state(page), state(page)
+    # The same bands as Size mode, stacked by rate span (A, café 0; Z 50
+    # GiB/h): the legend lists the outside of the stack first.
+    assert bands(page) == ["Z", caf, "A"], f"Change bands: {bands(page)}"
+    summary = page.inner_text("#summary")
+    assert "net +2.34 TiB/d at the end in 3 bands" in summary, summary
+    table = page.text_content("#table-body")  # in a closed <details>
+    assert table.count("/d") == 9, f"rates in the table: {table}"
+    head = page.text_content("table thead tr.change-only")
+    assert "Avg rate" in head, head
+    assert page.is_visible("text=growth above zero"), "Change header not shown"
+    # 1.25 h is point 2's step (A +100 GiB/h, café +50, Z -50), not the
+    # nearer point 1's (Z 0, net +150 GiB/h = +3.52 TiB/d).
+    tip = tooltip_text_at(page, 1.25)
+    assert "Net" in tip and f"{MINUS}1.17 TiB/d" in tip, f"tooltip at 1.25 h: {tip!r}"
+    assert "+3.52 TiB/d" not in tip, f"tooltip at 1.25 h: {tip!r}"
+
+    # Switching keeps the view; back to Size drops only mode.
+    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=1&smin=0"
+    go(page, f"{base}#{kept}")
+    act(page, lambda: page.click("#mode button[data-mode=change]"))
+    pairs = set(state(page).lstrip("#").split("&"))
+    assert pairs == {*kept.split("&"), "mode=change"}, f"to Change: {state(page)}"
+    assert list(series(page)) == ["A/b"], f"pick lost: {series(page)}"
+    act(page, lambda: page.click("#mode button[data-mode=size]"))
+    pairs = set(state(page).lstrip("#").split("&"))
+    assert pairs == set(kept.split("&")), f"back to Size: {state(page)}"
+
+    # Bogus values fall back to Size and Smooth on.
+    go(page, f"{base}#tree=1&mode=bogus&smooth=x")
+    pressed = page.get_attribute("#mode button[data-mode=size]", "aria-pressed")
+    assert pressed == "true", "bogus mode not Size"
+    assert page.is_checked("#smooth"), "bogus smooth not on"
+    # Unticking Smooth writes smooth=0; Reset ticks it, and keeps the mode.
+    go(page, f"{base}#tree=1&mode=change")
+    act(page, lambda: page.uncheck("#smooth"))
+    assert "smooth=0" in state(page), state(page)
+    act(page, lambda: page.click("#reset"))
+    assert "smooth" not in keys(page) and "mode=change" in state(page), state(page)
+
+    # Clicking a band's step drills into it: A at point 1 is 0..+2.34 TiB/d.
+    x, y = page.evaluate(
+        """() => {
+            const el = document.getElementById("chart");
+            const chart = echarts.getInstanceByDom(el);
+            const data = chart.getOption().series[0].data;
+            const ms = (data[0][0] + data[1][0]) / 2;
+            const [x, y] = chart.convertToPixel("grid", [ms, 1200 * 2 ** 30]);
+            const box = el.getBoundingClientRect();
+            return [box.left + x, box.top + y];
+        }"""
+    )
+    act(page, lambda: page.mouse.click(x, y))
+    assert "in=A" in state(page), f"click in Change mode: {state(page)}"
+
+    # Trends: average rates, one shared scale for all cards.
+    go(page, f"{base}#tree=1&view=trends&mode=change")
+    text = card(page, "A").inner_text()
+    assert "+2.34 TiB/d" in text and "+200 GiB" in text, f"card A: {text}"
+    scales = page.eval_on_selector_all(
+        "#cards .scale", "els => els.map(e => e.textContent)"
+    )
+    assert len(set(scales)) == 1 and scales[0].startswith("shared scale"), scales
+    assert page.is_visible("text=All cards share one scale"), "Trends header"
+    zero = page.get_attribute("#cards .trend-card .zero", "d")
+    assert zero and zero.startswith("M 0 "), f"zero line: {zero}"
+
+
 def check_picks(page: Page, base: str) -> None:
     """The legend's tick boxes, None and All, and its column sorts."""
     go(page, f"{base}#tree=1&sflat=1&smin=0")
@@ -964,13 +1063,18 @@ def check_change_option(page: Page) -> None:
             ];
             const colors = {bands: new Map([["a", "#111"], ["b", "#222"]]),
               surface: "#fff", ink: "#000", muted: "#888", grid: "#ccc"};
+            let pointerMs = null;
             const opt = (change) => s.stackedAreaOption({times}, {bands},
-              {colors, range: [0, 2], change, gaps: new Map([["a", 2]])});
+              {colors, range: [0, 2], change, gaps: new Map([["a", 2]]),
+                pointer: () => pointerMs});
             const o = opt(true);
+            // ECharts passes the nearest point, whatever snap says.
             const tip = (h) => {
               const div = document.createElement("div");
               const ms = Date.parse(times[0]) + h * 3600e3;
-              div.innerHTML = o.tooltip.formatter([{dataIndex: 0, axisValue: ms}]);
+              pointerMs = ms;
+              const i = Math.round(h);
+              div.innerHTML = o.tooltip.formatter([{dataIndex: i, axisValue: Date.parse(times[i])}]);
               return div.textContent;
             };
             return {
@@ -979,7 +1083,7 @@ def check_change_option(page: Page) -> None:
               data: o.series[0].data.map(([, v]) => v),
               min: o.yAxis.min ?? null,
               label: o.yAxis.axisLabel.formatter(gib),
-              tip: [tip(0.25), tip(1.5)],
+              tip: [tip(0.25), tip(1.25)],
               size: {step: opt(false).series[0].step ?? false, min: opt(false).yAxis.min,
                 width: opt(false).series[0].lineStyle.width},
             };
@@ -990,10 +1094,11 @@ def check_change_option(page: Page) -> None:
     assert got["data"] == [0, 24 * gib, -48 * gib], f"rates, null as 0: {got['data']}"
     assert got["min"] is None, f"y axis min: {got['min']}"
     assert got["label"] == "+1.00 GiB/d", f"axis label: {got['label']}"
-    # 0.25 h is in point 1's interval, whatever the nearest point (dataIndex 0).
+    # 0.25 h is in point 1's interval and 1.25 h in point 2's, whatever the
+    # nearest point.
     tip1, tip2 = got["tip"]
     assert "+24.0 GiB/d" in tip1 and "Net" in tip1, f"tooltip at 0.25 h: {tip1}"
-    assert f"{MINUS}48.0 GiB/d" in tip2, f"tooltip at 1.5 h: {tip2}"
+    assert f"{MINUS}48.0 GiB/d" in tip2, f"tooltip at 1.25 h: {tip2}"
     assert "since" not in tip1, f"no change-since note: {tip1}"
     assert got["size"] == {"step": False, "min": 0, "width": 2}, got["size"]
 
@@ -1587,6 +1692,21 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     if shots:
         page.screenshot(path=shots / f"tree-{tree}-entries.png")
 
+    # Change mode: the same bands, as rates, in both views.
+    go(page, f"{base}#tree={tree}&mode=change&depth=1")
+    n = len(bands(page))
+    assert n <= 64, f"tree {tree}: {n} Change bands drawn"
+    assert (
+        n
+        or page.is_visible("#stack-empty")
+        or "filtered out" in page.inner_text("#summary")
+    ), f"tree {tree}: no Change bands, no note"
+    if shots:
+        page.screenshot(path=shots / f"tree-{tree}-change.png")
+    go(page, f"{base}#tree={tree}&mode=change&view=trends")
+    if shots:
+        page.screenshot(path=shots / f"tree-{tree}-change-trends.png")
+
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
     sets = next(t["sets"] for t in entries if t["id"] == tree)
     go(page, f"{base}#tree={tree}&view=trends")
@@ -1685,6 +1805,7 @@ def main() -> int:
             functools.partial(check_gaps, scale=2**14),  # about 16 PiB
             check_picks,
             check_metric,
+            check_change_mode,
         ):
             run_checks(
                 browser, "light", lambda pg, c=check: c(pg, url(fixture)), problems

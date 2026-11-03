@@ -5,9 +5,10 @@
 
 import { rangeSliderOption } from "./charts/rangeSlider.js";
 import { GAP_PX, gapWidths, stackedAreaOption } from "./charts/stackedArea.js";
-import { HEIGHT, WIDTH, sparkPaths, sparkPointAt, sparkXs } from "./charts/trendCard.js";
+import { HEIGHT, WIDTH, sparkPaths, sparkPointAt, sparkRatePaths, sparkStepAt, sparkXs } from "./charts/trendCard.js";
 import {
   CARD_SORTS,
+  DAY_MS,
   DEFAULT_TOP,
   LEGEND_SORTS,
   MAX_BANDS,
@@ -18,11 +19,14 @@ import {
   encodeValue,
   filterReason,
   formatDelta,
+  formatRate,
   indexRange,
   layerAt,
   maxDepth,
   normalize,
   passes,
+  rateScale,
+  rates,
   reachable,
   relative,
   setDirOf,
@@ -39,6 +43,7 @@ const DEFAULTS = {
   tree: null,
   view: "stack",
   metric: "rbytes", // a model.METRICS key: what both views chart
+  mode: "size", // "size": values; "change": their rates per day, in both views
   set: null, // the tree's first set, "Top level"
   depth: 0,
   top: DEFAULT_TOP,
@@ -54,13 +59,14 @@ const DEFAULTS = {
   smin: 1,
   sminent: 1000,
   sflat: false,
+  smooth: true, // Stack: remove lag outliers from subtracted bands (model.smoothLag)
   sort: "span",
   min: 1,
   minent: 1000,
   flat: false,
 };
 // The Stack view's state keys, which its Reset restores.
-const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort", "smin", "sminent", "sflat"];
+const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort", "smin", "sminent", "sflat", "smooth"];
 const GIB = 2 ** 30;
 // Each metric's Min filters: its state keys in the Stack and Trends views,
 // the unit they are in, and that unit's name in the Min control's label.
@@ -77,6 +83,7 @@ const chart = echarts.init($("chart"), null, { renderer: "canvas" });
 let index = [];
 let data = null; // the current tree file
 let metric = "rbytes"; // the shown metric: S.metric if DATA has it, set by render
+let change = false; // Change mode (S.mode "change"), set by render
 let range = null; // [a, b] point indexes shown by the zoom slider
 let model = null; // the bands listed in the legend, from model.stackBands
 let drawn = []; // those of them drawn: the ticked ones
@@ -100,6 +107,7 @@ function readState() {
     tree: p.has("tree") ? Number(p.get("tree")) : (index[0]?.id ?? null),
     view: p.get("view") === "trends" ? "trends" : "stack",
     metric: Object.hasOwn(METRICS, p.get("metric")) ? p.get("metric") : DEFAULTS.metric,
+    mode: p.get("mode") === "change" ? "change" : DEFAULTS.mode,
     set: p.get("set") ?? DEFAULTS.set,
     // Clamped to the levels stored when rendering, which needs the data.
     depth: clampInt(p.get("depth"), 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth),
@@ -112,6 +120,7 @@ function readState() {
     smin: atLeast0(p.get("smin"), DEFAULTS.smin),
     sminent: atLeast0(p.get("sminent"), DEFAULTS.sminent),
     sflat: p.get("sflat") === "1",
+    smooth: p.get("smooth") !== "0",
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
     min: atLeast0(p.get("min"), DEFAULTS.min),
     minent: atLeast0(p.get("minent"), DEFAULTS.minent),
@@ -124,6 +133,7 @@ function writeState(changes) {
   const p = [["tree", s.tree]];
   if (s.view !== DEFAULTS.view) p.push(["view", s.view]);
   if (s.metric !== DEFAULTS.metric) p.push(["metric", s.metric]);
+  if (s.mode !== DEFAULTS.mode) p.push(["mode", s.mode]);
   if (s.set !== DEFAULTS.set) p.push(["set", s.set]);
   if (s.depth !== DEFAULTS.depth) p.push(["depth", s.depth]);
   if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
@@ -134,6 +144,7 @@ function writeState(changes) {
   if (s.smin !== DEFAULTS.smin) p.push(["smin", s.smin]);
   if (s.sminent !== DEFAULTS.sminent) p.push(["sminent", s.sminent]);
   if (s.sflat) p.push(["sflat", "1"]);
+  if (!s.smooth) p.push(["smooth", "0"]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
   if (s.min !== DEFAULTS.min) p.push(["min", s.min]);
   if (s.minent !== DEFAULTS.minent) p.push(["minent", s.minent]);
@@ -183,6 +194,23 @@ function filters(s, view) {
 const format = (value) => METRICS[metric].format(value);
 const amount = (value) => METRICS[metric].amount(value);
 const formatChange = (value) => formatDelta(value, METRICS[metric].format);
+/** A rate per day in the shown metric, e.g. "+2.34 TiB/d"; amountRate adds
+ * its unit, e.g. "+4.50 k entries/d". */
+const rate = (value) => formatRate(value, METRICS[metric].format);
+const amountRate = (value) => formatRate(value, amount);
+
+/** The highest and lowest of RATES in the shown range (points a+1..b), and
+ * the average rate of VALUES over it; all 0 for a range of one point. */
+function rangeRates(values, rs) {
+  const [a, b] = range;
+  const shown = rs.slice(a + 1, b + 1);
+  const days = (Date.parse(data.times[b]) - Date.parse(data.times[a])) / DAY_MS;
+  return {
+    avg: days > 0 ? (values[b] - values[a]) / days : 0,
+    peak: shown.length ? Math.max(...shown) : 0,
+    low: shown.length ? Math.min(...shown) : 0,
+  };
+}
 
 // --- data -------------------------------------------------------------------
 
@@ -282,6 +310,8 @@ function render() {
   metric = data && !data[s.metric] ? DEFAULTS.metric : s.metric;
   document.body.dataset.view = s.view;
   document.body.dataset.metric = metric;
+  change = s.mode === "change";
+  document.body.dataset.mode = s.mode;
   renderControls(s);
   if (!data) return;
   const set = currentSet(s);
@@ -320,6 +350,8 @@ function renderStack(s, set) {
     keep,
     by: s.lsort,
     ...filters(s, "stack"),
+    smooth: s.smooth,
+    change,
   };
   model = stackBands(data, opts);
   drawn = s.pick === null ? model.bands : model.bands.filter((band) => keep.includes(band.key));
@@ -337,7 +369,8 @@ function renderStack(s, set) {
   chart.setOption({ series: [] }, { replaceMerge: ["series"] });
   // The tooltip lists bands in the legend's order.
   const order = sortLegend(drawn, s.lsort, range);
-  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range, format, order, gaps }), {
+  const option = { colors: c, range, format, order, gaps, change, pointer: () => pointerMs };
+  chart.setOption(stackedAreaOption(data, { bands: drawn }, option), {
     replaceMerge: ["series"],
   });
   zoomTo(chart);
@@ -358,6 +391,8 @@ function renderControls(s) {
     b.disabled = data !== null && !data[b.dataset.metric];
     b.title = b.disabled ? "Not in this tree's data file: run dirhistory-generate" : "";
   }
+  for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.mode === s.mode);
+  $("smooth").checked = s.smooth;
   const tree = $("tree");
   tree.replaceChildren(
     ...index.map((t) => {
@@ -467,15 +502,19 @@ function nextLegendSort(current, by) {
 function renderTable() {
   const [a, b] = range;
   $("table-body").replaceChildren(
-    ...drawn.map(({ label, values }) => {
+    ...drawn.map(({ label, values, rates: rs }) => {
       const tr = document.createElement("tr");
-      for (const cell of [
-        label,
-        format(values[a]),
-        format(values[b]),
-        formatChange(values[b] - values[a]),
-        format(Math.max(...values.slice(a, b + 1))),
-      ]) {
+      const r = change ? rangeRates(values, rs) : null;
+      const cells = change
+        ? [label, rate(r.avg), rate(r.peak), rate(r.low), formatChange(values[b] - values[a])]
+        : [
+            label,
+            format(values[a]),
+            format(values[b]),
+            formatChange(values[b] - values[a]),
+            format(Math.max(...values.slice(a, b + 1))),
+          ];
+      for (const cell of cells) {
         const td = document.createElement("td");
         td.textContent = cell;
         tr.append(td);
@@ -513,7 +552,7 @@ function absolute(path) {
 
 function renderSummary(s, set, inPath) {
   const b = range[1];
-  const total = drawn.reduce((sum, band) => sum + band.values[b], 0);
+  const total = drawn.reduce((sum, band) => sum + (change ? (band.rates[b] ?? 0) : band.values[b]), 0);
   const n = drawn.length;
   const k = set.paths.length;
   const where = inPath === null ? set.name : absolute(inPath);
@@ -523,11 +562,14 @@ function renderSummary(s, set, inPath) {
   const filtered = model.filtered ? `, ${model.filtered} filtered out (${why})` : "";
   const of = drawn.length < model.bands.length ? ` of ${model.bands.length} listed` : "";
   $("summary").textContent =
-    `${where}: ${amount(total)} in ${n}${of} band${n === 1 && !of ? "" : "s"}${cut}${filtered}; `
+    `${where}: ${change ? `net ${amountRate(total)} at the end` : amount(total)} in `
+    + `${n}${of} band${n === 1 && !of ? "" : "s"}${cut}${filtered}; `
     + `set ${set.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
   $("chart").setAttribute(
     "aria-label",
-    `Stacked area of directory ${METRICS[metric].noun}s in ${where}; values are in the table below.`,
+    change
+      ? `Stacked step area of directory ${METRICS[metric].noun} rates in ${where}; rates are in the table below.`
+      : `Stacked area of directory ${METRICS[metric].noun}s in ${where}; values are in the table below.`,
   );
 }
 
@@ -553,6 +595,7 @@ function renderTrends(s, set) {
     : `${hidden} director${hidden === 1 ? "y" : "ies"} filtered out (${why}).`;
 
   sparkX = sparkXs(data.times, range);
+  const scale = change ? rateScale(cards, range) : null; // shared by the shown cards
   const shown = new Set(all.map((card) => card.path));
   for (const path of cardEls.keys()) if (!shown.has(path)) cardEls.delete(path);
   $("cards").replaceChildren(...cards.map((card) => cardEls.get(card.path) ?? newCard(card.path)));
@@ -563,15 +606,21 @@ function renderTrends(s, set) {
     const name = el.querySelector(".name");
     name.textContent = card.path === ROOT ? data.tree.fs_path : card.path;
     name.title = absolute(card.path);
-    el.querySelector(".size").textContent = card.values[b] === null ? "absent" : format(card.end);
+    el.querySelector(".size").textContent = change
+      ? rate(card.rate)
+      : card.values[b] === null
+        ? "absent"
+        : format(card.end);
     el.querySelector(".tag").textContent = formatChange(card.change);
-    el.querySelector(".scale").textContent =
-      card.lo === null
+    el.querySelector(".scale").textContent = change
+      ? `shared scale ${rate(scale.lo)} – ${rate(scale.hi)}`
+      : card.lo === null
         ? "absent in this range"
         : `scale ${format(card.lo)} – ${format(card.hi)}, span ${format(card.hi - card.lo)}`;
-    const { line, fill } = sparkPaths(sparkX, card, range);
+    const { line, fill, zero = "" } = change ? sparkRatePaths(sparkX, card, range, scale) : sparkPaths(sparkX, card, range);
     el.querySelector(".line").setAttribute("d", line);
     el.querySelector(".fill").setAttribute("d", fill);
+    el.querySelector(".zero").setAttribute("d", zero);
   }
 
   if (!slider) {
@@ -579,7 +628,9 @@ function renderTrends(s, set) {
     slider.on("datazoom", () => followZoom(slider));
   }
   slider.resize();
-  slider.setOption(rangeSliderOption(data, { colors: colors(), shadow: setTotal(set) }), {
+  const total = setTotal(set);
+  const shadow = change ? rates(total, data.times).map((v) => v ?? 0) : total;
+  slider.setOption(rangeSliderOption(data, { colors: colors(), shadow }), {
     replaceMerge: ["series"],
   });
   zoomTo(slider);
@@ -606,7 +657,7 @@ function newCard(path) {
   spark.setAttribute("aria-hidden", "true");
   const cursor = svg("line", "cursor");
   cursor.setAttribute("y2", HEIGHT);
-  spark.append(svg("path", "fill"), svg("path", "line"), cursor);
+  spark.append(svg("path", "zero"), svg("path", "fill"), svg("path", "line"), cursor);
   el.append(head, spark, Object.assign(text(""), { className: "scale" }));
   // The Stack view inside the card's dir, split one level if it can be.
   const open = () =>
@@ -626,7 +677,8 @@ function showSparkTip(e) {
   const card = spark && cardOf.get(spark.parentElement);
   if (!card) return hideSparkTip();
   const box = spark.getBoundingClientRect();
-  const [i, x] = sparkPointAt(sparkX, range, (e.clientX - box.left) / box.width);
+  const at = change ? sparkStepAt : sparkPointAt;
+  const [i, x] = at(sparkX, range, (e.clientX - box.left) / box.width);
   const cursor = spark.querySelector(".cursor");
   if (tipCursor !== cursor) hideSparkTip();
   tipCursor = cursor;
@@ -635,8 +687,14 @@ function showSparkTip(e) {
   cursor.style.visibility = "visible";
 
   const tip = $("spark-tip");
-  tip.querySelector(".tt-when").textContent = new Date(data.times[i]).toLocaleString();
-  tip.querySelector("b").textContent = card.values[i] === null ? "absent" : format(card.values[i]);
+  const when = (j) => new Date(data.times[j]).toLocaleString();
+  // A rate covers the interval from the point before to its own.
+  tip.querySelector(".tt-when").textContent = change && i > 0 ? `${when(i - 1)} – ${when(i)}` : when(i);
+  tip.querySelector("b").textContent = change
+    ? rate(card.rates[i] ?? 0)
+    : card.values[i] === null
+      ? "absent"
+      : format(card.values[i]);
   tip.hidden = false;
   const left = box.left + (x / WIDTH) * box.width - tip.offsetWidth / 2;
   tip.style.left = `${Math.max(4, Math.min(innerWidth - tip.offsetWidth - 4, left))}px`;
@@ -653,6 +711,7 @@ function hideSparkTip() {
 /** Give the drawn bands gaps only where they hide no thin band at the
  * chart's current scale (stackedArea.gapWidths). */
 function fitGaps() {
+  if (change) return; // no gaps in Change mode (stackedAreaOption)
   // Measured over the stack's height: across one byte, the pixel difference
   // is lost in rounding.
   const [a, b] = range;
@@ -779,16 +838,32 @@ for (const [id, view] of [["min", "trends"], ["smin", "stack"]]) {
   });
 }
 $("sflat").addEventListener("change", (e) => writeState({ sflat: e.target.checked }));
+$("smooth").addEventListener("change", (e) => writeState({ smooth: e.target.checked }));
 $("cards").addEventListener("pointermove", showSparkTip);
 $("cards").addEventListener("pointerleave", hideSparkTip);
 addEventListener("scroll", hideSparkTip, { passive: true });
+
+// The pointer's time over the chart, for Change mode's tooltip: ECharts
+// hands the tooltip the nearest point only. Captured before ECharts' own
+// handlers (on the canvas inside), so the tooltip sees this move's time.
+let pointerMs = null;
+$("chart").addEventListener(
+  "pointermove",
+  (e) => {
+    const box = $("chart").getBoundingClientRect();
+    const px = [e.clientX - box.left, e.clientY - box.top];
+    pointerMs = chart.containPixel("grid", px) ? chart.convertFromPixel("grid", px)[0] : null;
+  },
+  { capture: true },
+);
 
 // Clicking a drillable band's area drills into it. ECharts reports clicks on
 // a line series' line only, so find the band under the pointer from the stack.
 chart.getZr().on("click", (e) => {
   if (!model || !chart.containPixel("grid", [e.offsetX, e.offsetY])) return;
   const [ms, bytes] = chart.convertFromPixel("grid", [e.offsetX, e.offsetY]);
-  const band = drawn[layerAt(drawn.map((b) => b.values), data.times, ms, bytes)];
+  const layers = drawn.map((b) => (change ? b.rates : b.values));
+  const band = drawn[layerAt(layers, data.times, ms, bytes, { step: change })];
   if (band?.drillable) drill(band.dir);
 });
 // With no band drawn the chart has no time extent, and its slider reports
@@ -799,6 +874,9 @@ for (const b of $("view").querySelectorAll("button")) {
 }
 for (const b of $("metric").querySelectorAll("button")) {
   b.addEventListener("click", () => writeState({ metric: b.dataset.metric }));
+}
+for (const b of $("mode").querySelectorAll("button")) {
+  b.addEventListener("click", () => writeState({ mode: b.dataset.mode }));
 }
 
 window.addEventListener("hashchange", () => update(false));

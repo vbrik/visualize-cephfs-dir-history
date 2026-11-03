@@ -183,6 +183,8 @@ body[data-view="trends"] .stack-only,
 body[data-view="stack"] .trends-only { display: none !important; }
 body:not([data-metric="rentries"]) .rentries-only,
 body[data-metric="rentries"] .rbytes-only { display: none !important; }
+body:not([data-mode="change"]) .change-only,
+body[data-mode="change"] .size-only { display: none !important; }
 
 body {
   margin: 0 auto;
@@ -347,6 +349,7 @@ td { font-variant-numeric: tabular-nums; }
 .spark .line { fill: none; stroke: var(--dir); stroke-width: 2; stroke-linejoin: round; }
 .spark .fill { fill: var(--dir-fill); }
 .spark .cursor { stroke: var(--grid); stroke-width: 1; visibility: hidden; }
+.spark .zero { fill: none; stroke: var(--grid); stroke-width: 1; }
 .spark-tip {
   position: fixed;
   z-index: 10;
