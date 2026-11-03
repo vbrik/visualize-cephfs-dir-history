@@ -1,6 +1,6 @@
 # Change mode: rates of change in both views — design
 
-Status: draft (2026-11-03).
+Status: implemented (2026-11-03).
 
 ## Intent
 

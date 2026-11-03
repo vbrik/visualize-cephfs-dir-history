@@ -77,13 +77,73 @@ single-point spike.
 - Time points are the last sample per UTC bucket of at least 1 hour (fixed:
   `MIN_BUCKET`), not every 5-minute sample, so far fewer lagging samples are
   used.
-- No smoothing: it would also drop a real change lasting one point.
+- *Smooth* (a Stack checkbox, on by default; `smooth=0` turns it off), in
+  both modes: at each point where a subtracted dir changed (the only places
+  lag can show), a subtraction (an own-files band, or a dir band less
+  hidden bytes) takes the median of its value at that point and its two
+  neighbors (`model.smoothLag`), before the clamp at 0 and over the whole
+  history, so zooming never changes a value. It removes a one-point dip or
+  bump and keeps a step. This replaces an earlier "no smoothing" decision
+  (it would also drop a real one-point change): the views are for long-term
+  trends, production samples are hourly at most, and losing a real change
+  that lasts one point, even one week-wide point, is acceptable; in Change
+  mode a dip becomes a loud pair of opposite spikes.
 
-Measured on a real database, over 2 days of hourly points, the largest dip
+Measured on the real data files on 2026-11-03 (4 trees, 272 hourly points
+over 12 days, 20 215 split dirs, own-files values before the clamp):
+Smooth changes only the points that are one-point outliers (rbytes 214,
+299, 89, 327 per tree; rentries 78, 131, 35, 134) and leaves about a tenth
+of them (rbytes 27, 32, 6, 34; the largest left 0.14 GiB, against up to
+30.1 GiB removed); points below 0 fall by half or more (deepest −0.40 →
+−0.15 GiB, −216 → −14 entries). Two-point dips (two points below both
+outer neighbors) it leaves as they are: rbytes 27, 34, 6, 27 per tree, at
+most 0.15 GiB but for one of 5.5 GiB. A wider window would take those too,
+and more real changes with them; it is not used.
+
+Measured earlier on a real database, over 2 days of hourly points, the largest dip
 in any own-files band is 0.25 GiB; 8.6 GiB was seen earlier at finer
 sampling. Over 11 days (272 hourly points, 4 trees, 20 215 split dirs), the
 largest was 0.40 GiB below 0, and 217 entries below 1 in an `X/ entries`
 band; dips hit fewer points for rentries (244) than for rbytes (679).
+
+### Change mode: rates of change
+
+The largest dirs set a chart's scale, so a big dir's growth is hard to see
+next to its size, and in the Stack view a small dir's growth is lost under
+a big dir's bulk; for some questions only growth matters. A page-wide
+Size / Change toggle (`mode=change`), orthogonal to Bytes / Entries,
+charts each band's and card's rate of change instead of its value.
+
+- A rate, not a difference: point i's is (v[i] − v[i−1]) over the time
+  since point i−1, per day (`model.rates`), so points of different widths
+  (`--recent`, gaps in sampling) compare, and a gap's growth spreads over
+  it. It covers the interval (t[i−1], t[i]]; a range's rates are those of
+  points a+1..b. Absent counts as 0, so creation and deletion are spikes.
+- Stack: the same bands as Size mode (Top still ranks by value span: a dir
+  that grew a steady 3.4 TiB over a week beats one that hit 500 GiB/h for
+  an hour, because it grew more), stacked instead by rate span, steady
+  growers at the bottom, bursts outside. Filters and *Show unchanged* stay
+  on values: a dir growing at a constant rate has a rate span of 0 but has
+  changed.
+- Step areas (ECharts `step: "start"`): ECharts' samesign stacking places
+  each point separately, growth up from 0 and shrinkage down from it, so
+  straight segments of a band whose rate changes sign would cut diagonally
+  across every band between; steps make that a vertical jump at the bucket
+  edge, with one series per band. Rejected: a positive and a negative
+  series per band (up to 1024 series at Top 512, too slow) and bars
+  (hairlines at thousands of points). No gaps between bands: nearly every
+  band has some tiny rate, and its neighbor changes with the sign.
+- ECharts hands an axis tooltip only the nearest point, even unsnapped,
+  half a step off; the page records the pointer's time (a capture listener
+  on the chart) and the tooltip and clicks use the step under it
+  (`model.stepIndex`).
+- Trends: a card's number is its average rate over the range, its
+  sparkline its rates as steps, and all shown cards share one scale
+  (`model.rateScale`), so heights compare. A single burst flattens the
+  rest; the average rates still rank them, and a clipped scale is a
+  possible follow-up.
+- Rates are derived in the page from the values it has: no data format
+  change.
 
 ### Time resolution
 
@@ -201,9 +261,9 @@ views each show one set at a time.
   (see Top above); the chart's stacking stays by span. Ticked bands
   come first, each group in that order, so the few picked stay in view in a
   long list.
-- View state is in the URL hash (`view`, `metric`, `set`, `depth`, `top`,
-  `in`, `hide`, `pick`, `lsort`, `smin`, `sminent`, `sflat`, `sort`, `min`,
-  `minent`, `flat`), so a view can be
+- View state is in the URL hash (`view`, `metric`, `mode`, `set`, `depth`,
+  `top`, `in`, `hide`, `pick`, `lsort`, `smin`, `sminent`, `sflat`,
+  `smooth`, `sort`, `min`, `minent`, `flat`), so a view can be
   bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not
   UTF-8 survive (`model.encodeValue`). Keys and views of older pages are
@@ -245,7 +305,8 @@ views each show one set at a time.
   still applies a drag on release, since cards reorder and come and go
   with the range.
 - Reset restores the Stack view's controls (Depth, Top, drilling, hides,
-  picks, the legend's order) only; it is hidden in the Trends view.
+  picks, the legend's order, Smooth) only, not the page-wide Bytes /
+  Entries and Size / Change; it is hidden in the Trends view.
 
 ## Data files
 
@@ -291,7 +352,8 @@ path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
   parent's (see
   [Propagation lag](#propagation-lag)), and can lift the band into Top. Seen:
   ≤ 0.40 GiB and ≤ 217 entries at 1 h points, 8.6 GiB at finer sampling.
-  The page clamps at 0 and does not smooth.
+  The page clamps at 0, and *Smooth* (on by default) removes most one-point
+  dips; two-point ones stay (see Propagation lag).
 - **Bands past Top, or filtered out, are not drawn.** The chart's total and
   the table cover the drawn bands only; the summary says how many are left
   out. By default (Min 1 GiB, unchanged filtered) a big constant dir is

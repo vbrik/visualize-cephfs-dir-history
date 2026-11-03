@@ -21,7 +21,9 @@ files directly in a split directory. Bands add up, unless a set holds a
 directory and one of its own subdirectories: those bytes can count twice.
 The *Entries* toggle charts rentries instead, the number of files and
 directories in the subtree (rfiles + rsubdirs, the directory itself
-included), in both views.
+included), in both views. *Change* charts how fast each changes, per day,
+instead of how big it is: in the Stack view growth stacks above zero and
+shrinkage below, and Trends cards share one scale.
 See [docs/terms.md](docs/terms.md) for the terms and
 [docs/design.md](docs/design.md) for the design, the data format and the
 known risks.
