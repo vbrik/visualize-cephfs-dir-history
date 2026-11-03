@@ -123,6 +123,15 @@ export function formatDelta(value, format = formatBytes) {
 // Change mode's rates are per day.
 export const DAY_MS = 86_400_000;
 
+// TIMES (ISO strings) as ms, parsed once per array: a tree's times are one
+// array, and rates and hit-testing run per band, card and pointer move.
+const parsed = new WeakMap();
+function msOf(times) {
+  let ms = parsed.get(times);
+  if (!ms) parsed.set(times, (ms = times.map((t) => Date.parse(t))));
+  return ms;
+}
+
 /** A signed rate per day in FORMAT (default bytes), e.g. "+2.34 TiB/d". */
 export const formatRate = (value, format = formatBytes) => `${formatDelta(value, format)}/d`;
 
@@ -133,7 +142,7 @@ export const formatRate = (value, format = formatBytes) => `${formatDelta(value,
  * has none (null).
  */
 export function rates(values, times) {
-  const ms = times.map((t) => Date.parse(t));
+  const ms = msOf(times);
   return values.map((v, i) => (i === 0 ? null : (((v ?? 0) - (values[i - 1] ?? 0)) / (ms[i] - ms[i - 1])) * DAY_MS));
 }
 
@@ -384,10 +393,11 @@ export function reachable(data, paths, path) {
  * change = end - start, peak the largest and span the largest minus the
  * smallest, so a dir that appears or disappears has a span. lo and hi bound
  * its present values (the sparkline's scale), both null if it is absent
- * throughout. rates is the whole series' rates (see rates), and rate the
- * average rate over the range, change over its duration (0 for one point).
+ * throughout. With CHANGE (Change mode) a card also has rates, the whole
+ * series' rates (see rates), and rate, the average rate over the range:
+ * change over its duration (0 for one point).
  */
-export function trendCards(data, paths, range, metric = "rbytes") {
+export function trendCards(data, paths, range, metric = "rbytes", { change = false } = {}) {
   const [a, b] = range;
   const days = (Date.parse(data.times[b]) - Date.parse(data.times[a])) / DAY_MS;
   return paths.map((path) => {
@@ -408,8 +418,7 @@ export function trendCards(data, paths, range, metric = "rbytes") {
       span: peak - Math.min(...zeroed),
       lo: present.length ? Math.min(...present) : null,
       hi: present.length ? Math.max(...present) : null,
-      rates: rates(values, data.times),
-      rate: days > 0 ? (end - start) / days : 0,
+      ...(change && { rates: rates(values, data.times), rate: days > 0 ? (end - start) / days : 0 }),
     };
   });
 }
@@ -506,7 +515,7 @@ function legendOrder(key, by, range) {
  * (ISO strings): the first at or after MS, at least 1; the last if MS is
  * past it. Change mode's steps, tooltip and clicks use it. */
 export function stepIndex(times, ms) {
-  const next = times.findIndex((x) => Date.parse(x) >= ms);
+  const next = msOf(times).findIndex((x) => x >= ms);
   return next < 0 ? times.length - 1 : Math.max(1, next);
 }
 
@@ -521,7 +530,7 @@ export function stepIndex(times, ms) {
  * >= 0 up from 0, those < 0 down from 0, each in layer order.
  */
 export function layerAt(layers, times, ms, value, { step = false } = {}) {
-  const t = times.map((x) => Date.parse(x));
+  const t = msOf(times);
   if (step) {
     const i = stepIndex(times, ms);
     const edge = [0, 0]; // the positive and negative stacks' outer edges

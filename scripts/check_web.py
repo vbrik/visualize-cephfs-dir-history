@@ -1014,10 +1014,10 @@ def check_rate_sparks(page: Page) -> None:
               rbytes: {up: [0, 10, 20, 30], flat: [7, 7, 7, 7], gap: [1, 2, null, 3],
                 never: [null, null, null, null]}};
             const paths = Object.keys(data.rbytes);
-            const cards = m.trendCards(data, paths, [0, 3]);
+            const cards = m.trendCards(data, paths, [0, 3], "rbytes", {change: true});
             const scale = m.rateScale(cards, [0, 3]);
             const xs = t.sparkXs(data.times, [0, 3]);
-            const one = m.trendCards(data, paths, [2, 2]);
+            const one = m.trendCards(data, paths, [2, 2], "rbytes", {change: true});
             const oneScale = m.rateScale(one, [2, 2]);
             return {
               upRate: cards[0].rate,
@@ -1030,6 +1030,8 @@ def check_rate_sparks(page: Page) -> None:
               neverPaths: t.sparkRatePaths(xs, cards[3], [0, 3], scale),
               stepAt: [0, 0.2, 0.3, 0.7, 0.9].map((f) => t.sparkStepAt(xs, [0, 3], f)),
               stepAtOne: t.sparkStepAt(t.sparkXs(data.times, [2, 2]), [2, 2], 0.5),
+              // Size mode has no use for rates.
+              sizeRates: m.trendCards(data, paths, [0, 3]).some((c) => "rates" in c),
             };
         }"""
     )
@@ -1051,6 +1053,35 @@ def check_rate_sparks(page: Page) -> None:
     assert [i for i, _ in c["stepAt"]] == [1, 1, 2, 2, 3], f"step at: {c['stepAt']}"
     assert c["stepAt"][2][1] == 500, f"cursor mid-interval: {c['stepAt']}"
     assert c["stepAtOne"] == [2, 500], f"step at, one point: {c['stepAtOne']}"
+    assert not c["sizeRates"], "Size-mode cards computed rates"
+
+    # Cost: 3000 cards of 5000 points, as on every range, sort or filter
+    # change. Parsing every time string per card took 2.2 s in each mode.
+    ms = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const n = 5000;
+            const t0 = Date.UTC(2026, 0, 1);
+            const times = Array.from({length: n},
+              (_, i) => new Date(t0 + i * 3600e3).toISOString());
+            const rbytes = {};
+            for (let c = 0; c < 3000; c++) {
+              rbytes["d" + c] = Array.from({length: n}, (_, i) => i * c);
+            }
+            const data = {times, rbytes};
+            const paths = Object.keys(rbytes);
+            const time = (f) => {
+              const s = performance.now();
+              f();
+              return performance.now() - s;
+            };
+            m.trendCards(data, paths.slice(0, 1), [0, n - 1]);  // warm up
+            const all = [0, n - 1];
+            return [time(() => m.trendCards(data, paths, all)),
+              time(() => m.trendCards(data, paths, all, "rbytes", {change: true}))];
+        }"""
+    )
+    assert max(ms) < 1000, f"trendCards at 3000 x 5000 (Size, Change): {ms} ms"
 
 
 def check_change_option(page: Page) -> None:

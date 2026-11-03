@@ -577,7 +577,7 @@ function renderSummary(s, set, inPath) {
  * S.flat). */
 function renderTrends(s, set) {
   const [a, b] = range;
-  const all = trendCards(data, set.paths, range, metric);
+  const all = trendCards(data, set.paths, range, metric, { change });
   const filter = filters(s, "trends");
   const cards = sortCards(all.filter((card) => passes(card, filter)), s.sort);
   const hidden = all.length - cards.length;
