@@ -377,16 +377,19 @@ export function reachable(data, paths, path) {
  * METRIC (a METRICS key) for RANGE ([first, last] point indexes), in PATHS
  * order.
  *
- * Returns [{path, values, start, end, change, peak, span, lo, hi}]: values
+ * Returns [{path, values, start, end, change, peak, span, lo, hi, rates,
+ * rate}]: values
  * is the dir's whole series (null: absent). Within the range, absent
  * counting as 0 (as in the Stack view): start and end are its values at the ends,
  * change = end - start, peak the largest and span the largest minus the
  * smallest, so a dir that appears or disappears has a span. lo and hi bound
  * its present values (the sparkline's scale), both null if it is absent
- * throughout.
+ * throughout. rates is the whole series' rates (see rates), and rate the
+ * average rate over the range, change over its duration (0 for one point).
  */
 export function trendCards(data, paths, range, metric = "rbytes") {
   const [a, b] = range;
+  const days = (Date.parse(data.times[b]) - Date.parse(data.times[a])) / DAY_MS;
   return paths.map((path) => {
     const values = data[metric][path];
     const inRange = values.slice(a, b + 1);
@@ -405,8 +408,21 @@ export function trendCards(data, paths, range, metric = "rbytes") {
       span: peak - Math.min(...zeroed),
       lo: present.length ? Math.min(...present) : null,
       hi: present.length ? Math.max(...present) : null,
+      rates: rates(values, data.times),
+      rate: days > 0 ? (end - start) / days : 0,
     };
   });
+}
+
+/** Change mode's one scale for all of CARDS (from trendCards): {lo, hi},
+ * the lowest and highest of their rates in RANGE (points a+1..b), with 0
+ * always inside. */
+export function rateScale(cards, [a, b]) {
+  let [lo, hi] = [0, 0];
+  for (const card of cards) {
+    for (let i = a + 1; i <= b; i++) [lo, hi] = [Math.min(lo, card.rates[i]), Math.max(hi, card.rates[i])];
+  }
+  return { lo, hi };
 }
 
 /** Whether CARD's dir is unchanged in its range: constant, or absent throughout. */

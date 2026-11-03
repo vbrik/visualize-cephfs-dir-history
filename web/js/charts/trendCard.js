@@ -61,3 +61,42 @@ export function sparkPointAt(xs, range, fraction) {
   for (const [i, x] of xs.entries()) if (Math.abs(x - want) < Math.abs(xs[best] - want)) best = i;
   return [range[0] + best, xs[best]];
 }
+
+/**
+ * Change mode: return {line, fill, zero}, SVG path data of CARD's rates over
+ * RANGE as steps, at XS (from sparkXs), on SCALE ({lo, hi}, from
+ * model.rateScale, shared by all cards). Point i's rate is flat over its
+ * interval, from point i-1's x to point i's (points a+1..b); steps join by
+ * vertical lines, and every segment keeps both its ends. The fill reaches to
+ * the zero line, which ZERO draws across. On a scale of 0 (lo = hi) all sit
+ * mid-height. All three are "" for a range of one point.
+ */
+export function sparkRatePaths(xs, card, [a, b], { lo, hi }) {
+  if (b <= a) return { line: "", fill: "", zero: "" };
+  const bottom = HEIGHT - PAD;
+  const round = (n) => Math.round(n * 10) / 10;
+  const y = (v) => round(hi === lo ? HEIGHT / 2 : bottom - ((v - lo) / (hi - lo)) * (bottom - PAD));
+  const pts = [];
+  for (let i = a + 1; i <= b; i++) {
+    const py = y(card.rates[i]);
+    pts.push(`${round(xs[i - a - 1])} ${py}`, `${round(xs[i - a])} ${py}`);
+  }
+  const y0 = y(0);
+  const line = `M ${pts.join(" L ")}`;
+  return {
+    line,
+    fill: `M ${round(xs[0])} ${y0} L ${pts.join(" L ")} L ${round(xs.at(-1))} ${y0} Z`,
+    zero: `M 0 ${y0} L ${WIDTH} ${y0}`,
+  };
+}
+
+/** Change mode: the point whose step holds FRACTION (0..1) of the
+ * sparkline's width, and its step's middle x: [index, x]. XS is from
+ * sparkXs. A range of one point has no steps: [a, its x]. */
+export function sparkStepAt(xs, [a, b], fraction) {
+  if (b <= a) return [a, xs[0]];
+  const want = fraction * WIDTH;
+  let i = a + 1;
+  while (i < b && xs[i - a] < want) i++;
+  return [i, (xs[i - a - 1] + xs[i - a]) / 2];
+}

@@ -771,6 +771,7 @@ def check_model(page: Page, base: str) -> None:
     assert sparks["zoomed"]["line"] == "M 0 53 L 1000 3", "scale not by range"
     assert [i for i, _ in sparks["at"]] == [0, 1, 2, 3], f"nearest: {sparks['at']}"
     assert sparks["zoomedAt"] == [2, 1000], f"nearest when zoomed: {sparks['zoomedAt']}"
+    check_rate_sparks(page)
 
     # gapWidths, bottom band first, at 1 px per unit (MIN_GAPPED_PX is 4).
     gaps = page.evaluate(
@@ -872,6 +873,55 @@ def check_rates(page: Page) -> None:
     assert got["steadyKept"] == ["s", "j"], f"steady unchanged? {got['steadyKept']}"
     assert got["sRates"] == [None, 240, 240, 240, 240], f"s rates: {got['sRates']}"
     assert got["onePointOrder"] == ["j", "s"], f"one point: {got['onePointOrder']}"
+
+
+def check_rate_sparks(page: Page) -> None:
+    """Change mode's Trends cards: rates, a shared scale, step sparklines."""
+    c = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const t = await import("./js/charts/trendCard.js");
+            const data = {times: ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z",
+                "2026-10-01T03:00:00Z", "2026-10-01T04:00:00Z"],
+              rbytes: {up: [0, 10, 20, 30], flat: [7, 7, 7, 7], gap: [1, 2, null, 3],
+                never: [null, null, null, null]}};
+            const paths = Object.keys(data.rbytes);
+            const cards = m.trendCards(data, paths, [0, 3]);
+            const scale = m.rateScale(cards, [0, 3]);
+            const xs = t.sparkXs(data.times, [0, 3]);
+            const one = m.trendCards(data, paths, [2, 2]);
+            const oneScale = m.rateScale(one, [2, 2]);
+            return {
+              upRate: cards[0].rate,
+              upRates: cards[0].rates,
+              scale,
+              onePoint: {rate: one[0].rate, scale: oneScale,
+                paths: t.sparkRatePaths(t.sparkXs(data.times, [2, 2]), one[0], [2, 2], oneScale)},
+              upPaths: t.sparkRatePaths(xs, cards[0], [0, 3], scale),
+              neverPaths: t.sparkRatePaths(xs, cards[3], [0, 3], scale),
+              stepAt: [0, 0.2, 0.3, 0.7, 0.9].map((f) => t.sparkStepAt(xs, [0, 3], f)),
+              stepAtOne: t.sparkStepAt(t.sparkXs(data.times, [2, 2]), [2, 2], 0.5),
+            };
+        }"""
+    )
+    assert c["upRate"] == 180, f"30 over 4 h, per day: {c['upRate']}"
+    assert c["upRates"] == [None, 240, 120, 240], f"up rates: {c['upRates']}"
+    # gap [1, 2, 0, 3]: rates 24, -24, 72; up's reach 240.
+    assert c["scale"] == {"lo": -24, "hi": 240}, f"shared scale: {c['scale']}"
+    empty = {"line": "", "fill": "", "zero": ""}
+    want = {"rate": 0, "scale": {"lo": 0, "hi": 0}, "paths": empty}
+    assert c["onePoint"] == want, f"one-point range: {c['onePoint']}"
+    # y(v) = 53 - (v + 24) / 264 * 50: y(240) = 3, y(120) = 25.7, y(0) = 48.5.
+    up = c["upPaths"]
+    assert up["line"] == "M 0 3 L 250 3 L 250 25.7 L 750 25.7 L 750 3 L 1000 3", up
+    assert up["zero"] == "M 0 48.5 L 1000 48.5", f"zero line: {up['zero']}"
+    assert up["fill"].startswith("M 0 48.5 L 0 3 "), f"fill: {up['fill']}"
+    assert up["fill"].endswith(" L 1000 3 L 1000 48.5 Z"), f"fill: {up['fill']}"
+    line = "M 0 48.5 L 250 48.5 L 250 48.5 L 750 48.5 L 750 48.5 L 1000 48.5"
+    assert c["neverPaths"]["line"] == line, f"all-zero rates: {c['neverPaths']}"
+    assert [i for i, _ in c["stepAt"]] == [1, 1, 2, 2, 3], f"step at: {c['stepAt']}"
+    assert c["stepAt"][2][1] == 500, f"cursor mid-interval: {c['stepAt']}"
+    assert c["stepAtOne"] == [2, 500], f"step at, one point: {c['stepAtOne']}"
 
 
 def cards(page: Page) -> list[str]:
