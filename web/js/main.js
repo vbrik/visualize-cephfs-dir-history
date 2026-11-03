@@ -4,7 +4,7 @@
 // dirs' trend cards and their range slider).
 
 import { rangeSliderOption } from "./charts/rangeSlider.js";
-import { stackedAreaOption } from "./charts/stackedArea.js";
+import { GAP_PX, gapWidths, stackedAreaOption } from "./charts/stackedArea.js";
 import { HEIGHT, WIDTH, sparkPaths, sparkPointAt, sparkXs } from "./charts/trendCard.js";
 import {
   CARD_SORTS,
@@ -80,6 +80,9 @@ let metric = "rbytes"; // the shown metric: S.metric if DATA has it, set by rend
 let range = null; // [a, b] point indexes shown by the zoom slider
 let model = null; // the bands listed in the legend, from model.stackBands
 let drawn = []; // those of them drawn: the ticked ones
+// Band key -> its gap line width, as fitGaps last set it: the next render
+// starts from it, so a render that changes no band's height sets no gap.
+let gaps = new Map();
 const slots = new Map(); // view key -> Map(band key -> palette slot)
 // The Trends view's slider, made when it is first shown: ECharts sizes a
 // chart from its element, which is 0×0 while hidden.
@@ -334,10 +337,11 @@ function renderStack(s, set) {
   chart.setOption({ series: [] }, { replaceMerge: ["series"] });
   // The tooltip lists bands in the legend's order.
   const order = sortLegend(drawn, s.lsort, range);
-  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range, format, order }), {
+  chart.setOption(stackedAreaOption(data, { bands: drawn }, { colors: c, range, format, order, gaps }), {
     replaceMerge: ["series"],
   });
   zoomTo(chart);
+  fitGaps();
 
   renderLegend(c, s);
   renderTable();
@@ -644,6 +648,29 @@ function hideSparkTip() {
   $("spark-tip").hidden = true;
   if (tipCursor) tipCursor.style.visibility = "";
   tipCursor = null;
+}
+
+/** Give the drawn bands gaps only where they hide no thin band at the
+ * chart's current scale (stackedArea.gapWidths). */
+function fitGaps() {
+  // Measured over the stack's height: across one byte, the pixel difference
+  // is lost in rounding.
+  const [a, b] = range;
+  let top = 0;
+  for (let i = a; i <= b; i++) {
+    top = Math.max(top, drawn.reduce((sum, band) => sum + (band.values[i] ?? 0), 0));
+  }
+  const y = (v) => chart.convertToPixel({ yAxisIndex: 0 }, v);
+  const pxPerUnit = top > 0 ? (y(0) - y(top)) / top : 0;
+  // Hidden, the chart is 0×0 and has no scale.
+  if (!(pxPerUnit > 0)) return;
+  const widths = gapWidths(drawn, range, pxPerUnit);
+  // Only bands whose width changed: a setOption costs per series sent.
+  const changed = drawn.flatMap((band, i) =>
+    widths[i] === (gaps.get(band.key) ?? GAP_PX) ? [] : [{ id: band.key, lineStyle: { width: widths[i] } }],
+  );
+  if (changed.length) chart.setOption({ series: changed });
+  gaps = new Map(drawn.map((band, i) => [band.key, widths[i]]));
 }
 
 /** Set TARGET chart's zoom slider to the shown range. */

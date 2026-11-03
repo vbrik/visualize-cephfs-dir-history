@@ -770,6 +770,40 @@ def check_model(page: Page, base: str) -> None:
     assert [i for i, _ in sparks["at"]] == [0, 1, 2, 3], f"nearest: {sparks['at']}"
     assert sparks["zoomedAt"] == [2, 1000], f"nearest when zoomed: {sparks['zoomedAt']}"
 
+    # gapWidths, bottom band first, at 1 px per unit (MIN_GAPPED_PX is 4).
+    gaps = page.evaluate(
+        """async () => {
+            const m = await import("./js/charts/stackedArea.js");
+            const fit = (rows, range = [0, 2], px = 1) =>
+              m.gapWidths(rows.map((values) => ({values})), range, px);
+            const thick = [10, 10, 10], thin = [1, 1, 1], absent = [0, 0, 0];
+            return {
+              min: m.MIN_GAPPED_PX,
+              none: fit([]),
+              mixed: fit([thick, thin, thick, thick]),
+              edge: [fit([[4, 4, 4]]), fit([[3.99, 4, 4]])],
+              zeros: fit([[0, 10, null], thick]),
+              absentBetween: fit([thick, absent, thick]),
+              absentAboveThin: fit([thin, absent, thick]),
+              allAbsent: fit([absent, absent]),
+              ranged: [fit([[1, 10, 10]], [1, 2]), fit([[1, 10, 10]], [0, 2])],
+              scaled: fit([[100, 100, 100]], [0, 2], 0.03),
+            };
+        }"""
+    )
+    assert gaps["min"] == 4, f"MIN_GAPPED_PX changed: {gaps['min']}; update these cases"
+    assert gaps["none"] == [], f"no bands: {gaps['none']}"
+    # A thin band's edges have no gap: its own (top) and the one below's.
+    assert gaps["mixed"] == [0, 0, 2, 2], f"thin between thick: {gaps['mixed']}"
+    assert gaps["edge"] == [[2], [0]], f"4 and 3.99 px tall: {gaps['edge']}"
+    assert gaps["zeros"] == [2, 2], f"absent points make a band thin: {gaps['zeros']}"
+    assert gaps["absentBetween"] == [2, 0, 2], f"absent band: {gaps['absentBetween']}"
+    got = gaps["absentAboveThin"]
+    assert got == [0, 0, 2], f"thin under absent: {got}"
+    assert gaps["allAbsent"] == [0, 0], f"all absent: {gaps['allAbsent']}"
+    assert gaps["ranged"] == [[2], [0]], f"not by range: {gaps['ranged']}"
+    assert gaps["scaled"] == [0], f"3 px at 0.03 px per unit: {gaps['scaled']}"
+
 
 def cards(page: Page) -> list[str]:
     return page.eval_on_selector_all(
@@ -1261,6 +1295,51 @@ def check_many_bands(page: Page, base: str, tree: int) -> None:
     )
 
 
+def gap_widths(page: Page) -> dict[str, float]:
+    """The Stack chart's gap line widths, bottom first, as {band key: px}."""
+    return page.evaluate(
+        """() => {
+            const chart = echarts.getInstanceByDom(document.getElementById("chart"));
+            return Object.fromEntries(
+                chart.getOption().series.map((s) => [s.id, s.lineStyle.width]));
+        }"""
+    )
+
+
+def check_gaps(page: Page, base: str, scale: int = 1) -> None:
+    """Thin bands lose the gaps on their edges, by the zoomed range, so the
+    gaps never paint over them; edges between thick bands keep theirs.
+
+    Tree 1 with Q at 4 GiB and café at 4 GiB at the first point: at about
+    0.3 px per GiB, each is 1-2 px tall where it is that small. SCALE
+    multiplies every size, e.g. to petabytes, where px per byte is tiny.
+    """
+    caf = "caf\ufffd"  # Playwright's view of café's name
+    tree = json.loads((FIXTURE / "tree-1.json").read_text())
+    tree["series"]["Q"][0] = 4 * 2**30
+    tree["series"]["caf\udce9"][0][0] = 4 * 2**30
+    for sizes in tree["series"].values():
+        v = sizes[0]
+        sizes[0] = [x and x * scale for x in v] if isinstance(v, list) else v * scale
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
+
+    def want(thin: set[str]) -> dict[str, int]:
+        order = list(gap_widths(page))
+        return {
+            key: 2 if key not in thin and (above is None or above not in thin) else 0
+            for key, above in zip(order, [*order[1:], None], strict=True)
+        }
+
+    got = gap_widths(page)
+    assert set(got) == {"A", "Q", "Z", caf}, f"series: {list(got)}"
+    assert got == want({"Q", caf}), f"full range: {got}"
+    times = tree["times"]
+    act(page, lambda: zoom(page, "chart", times[1], times[2]))
+    got = gap_widths(page)
+    assert got == want({"Q"}), f"zoomed past café's small point: {got}"
+
+
 def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     """Generic checks of one tree of real data."""
     go(page, f"{base}#tree={tree}")
@@ -1409,6 +1488,8 @@ def main() -> int:
             check_refresh_after_regeneration,
             check_refresh_keeps_zoom,
             check_click_between_points,
+            check_gaps,
+            functools.partial(check_gaps, scale=2**14),  # about 16 PiB
             check_picks,
             check_metric,
         ):

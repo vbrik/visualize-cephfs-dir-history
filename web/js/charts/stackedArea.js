@@ -12,14 +12,17 @@ import { escapeHtml, formatBytes, formatDelta } from "../model.js";
  * order: MODEL's bands in the tooltip's row order (default: stack order, top
  * first), e.g. the legend's, so each row's place does not depend on the
  * hovered point.
+ * gaps: Map key -> a band's gap line width (px), e.g. as gapWidths last fit
+ * it; GAP_PX for a band not in it.
  */
-export function stackedAreaOption(data, model, { colors, range, format = formatBytes, order }) {
+export function stackedAreaOption(data, model, { colors, range, format = formatBytes, order, gaps = new Map() }) {
   const times = data.times.map((t) => Date.parse(t));
   const layers = model.bands.map((b) => ({
     id: b.key,
     name: b.label,
     values: b.values,
     color: colors.bands.get(b.key),
+    gap: gaps.get(b.key) ?? GAP_PX,
   }));
   const layerOf = new Map(layers.map((l) => [l.id, l]));
   const rowOrder = order ? order.map((b) => layerOf.get(b.key)) : layers.toReversed();
@@ -62,13 +65,46 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
       stack: "total",
       symbol: "none",
       data: times.map((t, i) => [t, l.values[i]]),
-      // The line in the surface color is the 2px gap between stacked bands.
-      lineStyle: { width: 2, color: colors.surface },
+      // The line in the surface color is the gap between stacked bands.
+      lineStyle: { width: l.gap, color: colors.surface },
       itemStyle: { color: l.color },
       areaStyle: { color: l.color, opacity: 0.9 },
       emphasis: { disabled: true },
     })),
   };
+}
+
+// Width (px) of the line on a band's top edge that is the gap between it and
+// the band above. Centered on the edge, it covers GAP_PX / 2 of both.
+export const GAP_PX = 2;
+// Height (px) both bands at an edge need for it to keep its gap: a band with
+// gaps on both edges shows MIN_GAPPED_PX - GAP_PX of its color.
+export const MIN_GAPPED_PX = 4;
+
+/**
+ * The gap line width (px) of each of BANDS (stack order, bottom first) over
+ * RANGE ([a, b] point indexes) at PXPERUNIT pixels per value unit. An edge
+ * keeps its gap only if the bands on both sides of it are at least
+ * MIN_GAPPED_PX tall wherever they are present (above 0) in RANGE, so the
+ * gaps never hide a thin band. The top band's edge has nothing above it. A
+ * band absent from all of RANGE has no gap, and the bands below and above
+ * it meet at its edge.
+ */
+export function gapWidths(bands, [a, b], pxPerUnit) {
+  const widths = Array(bands.length).fill(0);
+  let above = Infinity; // height (px) of the nearest present band above
+  for (let j = bands.length - 1; j >= 0; j--) {
+    let min = Infinity;
+    for (let i = a; i <= b; i++) {
+      const v = bands[j].values[i];
+      if (v > 0 && v < min) min = v;
+    }
+    if (min === Infinity) continue;
+    const height = min * pxPerUnit;
+    if (height >= MIN_GAPPED_PX && above >= MIN_GAPPED_PX) widths[j] = GAP_PX;
+    above = height;
+  }
+  return widths;
 }
 
 // Most bands the tooltip lists; the rest share one row.
