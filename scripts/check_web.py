@@ -347,9 +347,7 @@ def tooltip_text_at(page: Page, fraction: float) -> str:
         fraction,
     )
     act(page, lambda: page.mouse.move(x, y))
-    return page.evaluate(
-        "document.querySelector('#chart .tt')?.textContent ?? ''"
-    )
+    return page.evaluate("document.querySelector('#chart .tt')?.textContent ?? ''")
 
 
 def check_change_mode(page: Page, base: str) -> None:
@@ -914,20 +912,25 @@ def check_rates(page: Page) -> None:
         """async () => {
             const m = await import("./js/model.js");
             const raw = await (await fetch("data/tree-1.json")).json();
-            const hours = (...hs) => hs.map((h) => new Date(Date.UTC(2026, 9, 1, h)).toISOString());
+            const hours = (...hs) =>
+              hs.map((h) => new Date(Date.UTC(2026, 9, 1, h)).toISOString());
             const tree = (times, series, paths, split) => m.normalize({...raw, times,
-              series: Object.fromEntries(Object.entries(series).map(([p, v]) => [p, [v, 1]])),
+              series: Object.fromEntries(
+                Object.entries(series).map(([p, v]) => [p, [v, 1]])),
               sets: [{name: "S", paths}], split});
-            const lag = (parent, kid) => m.smoothLag(parent.map((v, i) => v - kid[i]), [kid]);
-            const lagTree = tree(hours(0, 1, 2), {".": [100, 100, 200], k: [90, 190, 190]},
-              ["."], ["."]);
-            const own = (smooth) => m.stackBands(lagTree, {roots: ["."], base: null, depth: 1,
-              top: 64, hidden: [], range: [0, 2], flat: true, smooth}).bands
+            const lag = (parent, kid) =>
+              m.smoothLag(parent.map((v, i) => v - kid[i]), [kid]);
+            const lagTree = tree(hours(0, 1, 2),
+              {".": [100, 100, 200], k: [90, 190, 190]}, ["."], ["."]);
+            const lagOpts = {roots: ["."], base: null, top: 64, range: [0, 2],
+              flat: true};
+            const own = (smooth) => m.stackBands(lagTree,
+              {...lagOpts, depth: 1, hidden: [], smooth}).bands
               .find((b) => b.key === "./.").values;
             const moves = tree(hours(0, 1, 2, 3, 4),
               {s: [0, 10, 20, 30, 40], j: [0, 0, 30, 30, 30]}, ["s", "j"], []);
-            const run = (o) => m.stackBands(moves, {roots: ["s", "j"], base: null, depth: 0,
-              top: 64, hidden: [], range: [0, 4], ...o}).bands;
+            const run = (o) => m.stackBands(moves, {roots: ["s", "j"], base: null,
+              depth: 0, top: 64, hidden: [], range: [0, 4], ...o}).bands;
             const keys = (o) => run(o).map((b) => b.key);
             return {
               rates: m.rates([0, 10, 20, 30], hours(0, 1, 3, 4)),
@@ -941,8 +944,8 @@ def check_rates(page: Page) -> None:
               lastPoint: lag([100, 100, 100], [50, 50, 60]),
               ownRaw: own(false),
               ownSmooth: own(true),
-              hiddenSmooth: m.stackBands(lagTree, {roots: ["."], base: null, depth: 0,
-                top: 64, hidden: ["k"], range: [0, 2], flat: true, smooth: true}).bands[0].values,
+              hiddenSmooth: m.stackBands(lagTree,
+                {...lagOpts, depth: 0, hidden: ["k"], smooth: true}).bands[0].values,
               sizeOrder: keys({}),
               changeOrder: keys({change: true}),
               changeTop1: keys({change: true, top: 1}),
@@ -982,7 +985,8 @@ def check_rates(page: Page) -> None:
               "2026-10-01T02:00:00Z"];
             const at = (h) => Date.parse(times[0]) + h * 3600e3;
             const layers = [[0, 10, 10], [0, -5, 20], [0, 4, -3]];  // p, n, q
-            const step = (h, vs) => vs.map((v) => m.layerAt(layers, times, at(h), v, {step: true}));
+            const step = (h, vs) =>
+              vs.map((v) => m.layerAt(layers, times, at(h), v, {step: true}));
             return {
               stepAt: step(0.5, [1, 9.9, 10.5, 14, -0.1, -5, 14.1, -5.1]),
               stepAt2: step(1.5, [25, -2, -4]),
@@ -1020,7 +1024,8 @@ def check_rate_sparks(page: Page) -> None:
               upRates: cards[0].rates,
               scale,
               onePoint: {rate: one[0].rate, scale: oneScale,
-                paths: t.sparkRatePaths(t.sparkXs(data.times, [2, 2]), one[0], [2, 2], oneScale)},
+                paths: t.sparkRatePaths(t.sparkXs(data.times, [2, 2]), one[0], [2, 2],
+                  oneScale)},
               upPaths: t.sparkRatePaths(xs, cards[0], [0, 3], scale),
               neverPaths: t.sparkRatePaths(xs, cards[3], [0, 3], scale),
               stepAt: [0, 0.2, 0.3, 0.7, 0.9].map((f) => t.sparkStepAt(xs, [0, 3], f)),
@@ -1058,7 +1063,8 @@ def check_change_option(page: Page) -> None:
               "2026-10-01T02:00:00Z"];
             const gib = 2 ** 30;
             const bands = [
-              {key: "a", label: "a", values: [0, 1, 2], rates: [null, 24 * gib, -48 * gib]},
+              {key: "a", label: "a", values: [0, 1, 2],
+                rates: [null, 24 * gib, -48 * gib]},
               {key: "b", label: "b", values: [0, 0, 0], rates: [null, 0, 0]},
             ];
             const colors = {bands: new Map([["a", "#111"], ["b", "#222"]]),
@@ -1074,7 +1080,8 @@ def check_change_option(page: Page) -> None:
               const ms = Date.parse(times[0]) + h * 3600e3;
               pointerMs = ms;
               const i = Math.round(h);
-              div.innerHTML = o.tooltip.formatter([{dataIndex: i, axisValue: Date.parse(times[i])}]);
+              const near = [{dataIndex: i, axisValue: Date.parse(times[i])}];
+              div.innerHTML = o.tooltip.formatter(near);
               return div.textContent;
             };
             return {
@@ -1084,8 +1091,8 @@ def check_change_option(page: Page) -> None:
               min: o.yAxis.min ?? null,
               label: o.yAxis.axisLabel.formatter(gib),
               tip: [tip(0.25), tip(1.25)],
-              size: {step: opt(false).series[0].step ?? false, min: opt(false).yAxis.min,
-                width: opt(false).series[0].lineStyle.width},
+              size: ((o) => ({step: o.series[0].step ?? false, min: o.yAxis.min,
+                width: o.series[0].lineStyle.width}))(opt(false)),
             };
         }"""
     )
