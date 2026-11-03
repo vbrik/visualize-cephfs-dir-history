@@ -12,17 +12,8 @@
 <body data-view="stack">
   <header>
     <h1>CephFS directory history</h1>
-    <p class="muted stack-only">Which directories grow and shrink. Each band is a directory's
-      <span class="rbytes-only">whole size (rbytes), or, as <code>dir/ bytes</code>, the files
-      directly in</span><span class="rentries-only">whole count of files and directories
-      (rentries: rfiles + rsubdirs, itself included), or, as <code>dir/ entries</code>, the
-      files directly in, plus 1 for</span> a directory that Depth splits. Bands add up unless
-      the set holds a directory and its own subdirectory.</p>
     <p class="muted trends-only">Each card is a set directory's whole
-      <span class="rbytes-only">size (rbytes, including its subdirectories)</span><span
-      class="rentries-only">count of files and directories (rentries: rfiles + rsubdirs,
-      itself included)</span> over the shown range. Each card has its own scale: compare
-      shapes, not heights.</p>
+      <span class="rbytes-only"> Each card may have its own scale: compare shapes, not heights.</p>
   </header>
 
   <form id="controls" class="controls">
