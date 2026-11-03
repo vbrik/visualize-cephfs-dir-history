@@ -675,6 +675,8 @@ def check_model(page: Page, base: str) -> None:
     assert got["setDirOf"] == ["A", ".", None], f"setDirOf: {got['setDirOf']}"
     assert got["reachable"] == ["A", "A/b", f"{caf}/x", "Q"], got["reachable"]
 
+    check_rates(page)
+
     cards = page.evaluate(
         """async () => {
             const m = await import("./js/model.js");
@@ -803,6 +805,73 @@ def check_model(page: Page, base: str) -> None:
     assert gaps["allAbsent"] == [0, 0], f"all absent: {gaps['allAbsent']}"
     assert gaps["ranged"] == [[2], [0]], f"not by range: {gaps['ranged']}"
     assert gaps["scaled"] == [0], f"3 px at 0.03 px per unit: {gaps['scaled']}"
+
+
+def check_rates(page: Page) -> None:
+    """Change mode's model: rates per day, lag smoothing, stack order."""
+    got = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const raw = await (await fetch("data/tree-1.json")).json();
+            const hours = (...hs) => hs.map((h) => new Date(Date.UTC(2026, 9, 1, h)).toISOString());
+            const tree = (times, series, paths, split) => m.normalize({...raw, times,
+              series: Object.fromEntries(Object.entries(series).map(([p, v]) => [p, [v, 1]])),
+              sets: [{name: "S", paths}], split});
+            const lag = (parent, kid) => m.smoothLag(parent.map((v, i) => v - kid[i]), [kid]);
+            const lagTree = tree(hours(0, 1, 2), {".": [100, 100, 200], k: [90, 190, 190]},
+              ["."], ["."]);
+            const own = (smooth) => m.stackBands(lagTree, {roots: ["."], base: null, depth: 1,
+              top: 64, hidden: [], range: [0, 2], flat: true, smooth}).bands
+              .find((b) => b.key === "./.").values;
+            const moves = tree(hours(0, 1, 2, 3, 4),
+              {s: [0, 10, 20, 30, 40], j: [0, 0, 30, 30, 30]}, ["s", "j"], []);
+            const run = (o) => m.stackBands(moves, {roots: ["s", "j"], base: null, depth: 0,
+              top: 64, hidden: [], range: [0, 4], ...o}).bands;
+            const keys = (o) => run(o).map((b) => b.key);
+            return {
+              rates: m.rates([0, 10, 20, 30], hours(0, 1, 3, 4)),
+              ratesAbsent: m.rates([null, 5, null], hours(0, 1, 2)),
+              formatRate: [m.formatRate(2400 * 2 ** 30), m.formatRate(0),
+                m.formatRate(-1000, m.formatCount)],
+              dip: lag([100, 100, 110, 110], [50, 60, 60, 60]),
+              bump: lag([100, 100, 90, 90], [50, 40, 40, 40]),
+              ownStep: lag([100, 100, 110, 110], [50, 50, 50, 50]),
+              bothStep: lag([100, 120, 120, 120], [50, 60, 60, 60]),
+              lastPoint: lag([100, 100, 100], [50, 50, 60]),
+              ownRaw: own(false),
+              ownSmooth: own(true),
+              hiddenSmooth: m.stackBands(lagTree, {roots: ["."], base: null, depth: 0,
+                top: 64, hidden: ["k"], range: [0, 2], flat: true, smooth: true}).bands[0].values,
+              sizeOrder: keys({}),
+              changeOrder: keys({change: true}),
+              changeTop1: keys({change: true, top: 1}),
+              steadyKept: keys({change: true, flat: false}),
+              sRates: run({change: true}).find((b) => b.key === "s").rates,
+              onePointOrder: keys({change: true, range: [2, 2], flat: true}),
+            };
+        }"""
+    )
+    assert got["rates"] == [None, 240, 120, 240], f"rates: {got['rates']}"
+    assert got["ratesAbsent"] == [None, 120, -120], f"absent: {got['ratesAbsent']}"
+    want = ["+2.34 TiB/d", "±0 B/d", f"{MINUS}1.00 k/d"]
+    assert got["formatRate"] == want, f"formatRate: {got['formatRate']}"
+    # A lag dip and a lag bump go; real steps stay; the last point is kept.
+    assert got["dip"] == [50, 50, 50, 50], f"dip: {got['dip']}"
+    assert got["bump"] == [50, 50, 50, 50], f"bump: {got['bump']}"
+    assert got["ownStep"] == [50, 50, 60, 60], f"own step: {got['ownStep']}"
+    assert got["bothStep"] == [50, 60, 60, 60], f"both step: {got['bothStep']}"
+    assert got["lastPoint"] == [50, 50, 40], f"last point: {got['lastPoint']}"
+    # ROOT/ bytes = [10, -90, 10]: clamped, or smoothed before the clamp.
+    assert got["ownRaw"] == [10, 0, 10], f"own, smooth off: {got['ownRaw']}"
+    assert got["ownSmooth"] == [10, 10, 10], f"own, smooth on: {got['ownSmooth']}"
+    assert got["hiddenSmooth"] == [10, 10, 10], f"hidden k: {got['hiddenSmooth']}"
+    # Steady s (span 40, rate span 0) and jumpy j (span 30, rate span 720/d).
+    assert got["sizeOrder"] == ["j", "s"], f"size order: {got['sizeOrder']}"
+    assert got["changeOrder"] == ["s", "j"], f"change order: {got['changeOrder']}"
+    assert got["changeTop1"] == ["s"], f"Top 1 by size span: {got['changeTop1']}"
+    assert got["steadyKept"] == ["s", "j"], f"steady unchanged? {got['steadyKept']}"
+    assert got["sRates"] == [None, 240, 240, 240, 240], f"s rates: {got['sRates']}"
+    assert got["onePointOrder"] == ["j", "s"], f"one point: {got['onePointOrder']}"
 
 
 def cards(page: Page) -> list[str]:

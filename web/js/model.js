@@ -120,6 +120,40 @@ export function formatDelta(value, format = formatBytes) {
   return value > 0 ? `+${format(value)}` : value < 0 ? format(value) : `±${format(0)}`;
 }
 
+// Change mode's rates are per day.
+export const DAY_MS = 86_400_000;
+
+/** A signed rate per day in FORMAT (default bytes), e.g. "+2.34 TiB/d". */
+export const formatRate = (value, format = formatBytes) => `${formatDelta(value, format)}/d`;
+
+/**
+ * VALUES' rate of change per day at each of TIMES (ISO strings): point i's
+ * is (v[i] - v[i-1]) over the time since point i-1, so it covers the
+ * interval (t[i-1], t[i]] whatever its width. Absent counts as 0. Point 0
+ * has none (null).
+ */
+export function rates(values, times) {
+  const ms = times.map((t) => Date.parse(t));
+  return values.map((v, i) => (i === 0 ? null : (((v ?? 0) - (values[i - 1] ?? 0)) / (ms[i] - ms[i - 1])) * DAY_MS));
+}
+
+/**
+ * DIFF (a subtraction's unclamped values) without CephFS's propagation-lag
+ * outliers: a subdir's change can show before its parent's within a sample,
+ * so the difference dips (or bumps) for one point. At each point i (not the
+ * first or last) where an array of SUBTRACTED (what DIFF subtracted, absent
+ * as 0) changed, the result is the median of DIFF's i-1, i and i+1, which
+ * removes a one-point outlier and keeps a step; other points are copied.
+ */
+export function smoothLag(diff, subtracted) {
+  const median3 = (x, y, z) => Math.max(Math.min(x, y), Math.min(Math.max(x, y), z));
+  return diff.map((v, i) =>
+    i > 0 && i < diff.length - 1 && subtracted.some((s) => s[i] !== s[i - 1])
+      ? median3(diff[i - 1], v, diff[i + 1])
+      : v,
+  );
+}
+
 // What the views can chart, per tree file key: format (a value as short
 // text, for columns), amount (with its unit, for prose), own (the own-files
 // band's suffix, `dir/ <own>`), noun (what a value measures). rentries is
@@ -176,7 +210,9 @@ export function normalize(raw) {
  * split below each root), top (most bands returned), hidden (band keys; see
  * below), range ([first, last] point indexes), by (optional; a legend sort,
  * see sortLegend: which bands TOP keeps), min and flat (optional filters,
- * see passes; by default none).
+ * see passes; by default none), smooth (optional: remove lag outliers from
+ * subtracted values, see smoothLag), change (optional: Change mode, see
+ * below).
  *
  * A dir less than DEPTH below its root and in data.split becomes an
  * own-files band (key `${dir}/.`: the files directly in it, its value minus
@@ -195,6 +231,9 @@ export function normalize(raw) {
  * back in at a shallower one while its chip still says it is hidden. A key
  * under another hidden dir key is skipped, so nothing is subtracted twice;
  * an unknown dir, or `X/.` for an X not in data.split, subtracts nothing.
+ * With SMOOTH, both subtractions (own files, hidden bytes) go through
+ * smoothLag over the whole history before the clamp at 0, so zooming never
+ * changes a value.
  *
  * Of the other bands, those that do not pass MIN and FLAT over the range
  * (see passes), after those subtractions, are filtered out, except those
@@ -210,17 +249,24 @@ export function normalize(raw) {
  * most shrunk, "name" the first by label. Returns {bands, cut, filtered}:
  * those bands, as {key, dir, own, label, values, drillable}, how many
  * ranked bands were left out, and how many were filtered out.
+ *
+ * With CHANGE, the same bands are returned, each with its rates too (see
+ * rates), stacked instead by rate span (max − min of its rates in the
+ * range, points a+1..b; 0 if none), smallest at the bottom, ties by key:
+ * steady growers form the base, bursts lie outside.
  */
 export function stackBands(data, opts) {
   const { metric = "rbytes", roots, base, depth, top, hidden, range, keep = [], by = "", min = 0, flat = true } = opts;
+  const { smooth = false, change = false } = opts;
   const series = data[metric];
   const zeroed = (dir) => series[dir].map((v) => v ?? 0);
-  // The files directly in split dir DIR: its value minus its subdirs', at least 0.
-  const ownFiles = (dir) => {
-    const own = zeroed(dir);
-    for (const kid of data.children.get(dir)) series[kid].forEach((v, i) => (own[i] -= v ?? 0));
-    return own.map((v) => Math.max(0, v));
+  // VALUES less each of SUBTRACTED, smoothed if asked, at least 0.
+  const minus = (values, subtracted) => {
+    const diff = values.map((v, i) => subtracted.reduce((rest, s) => rest - s[i], v));
+    return (smooth ? smoothLag(diff, subtracted) : diff).map((v) => Math.max(0, v));
   };
+  // The files directly in split dir DIR: its value minus its subdirs', at least 0.
+  const ownFiles = (dir) => minus(zeroed(dir), data.children.get(dir).map(zeroed));
   const all = new Map(); // band key -> band
   const add = (band) => all.has(band.key) || all.set(band.key, band);
   const expand = (dir, level) => {
@@ -253,10 +299,7 @@ export function stackBands(data, opts) {
       if (band.own) return band; // holds no subdir's bytes
       const inside = removed.filter(([x]) => isUnder(x, band.dir));
       if (!inside.length) return band;
-      const values = band.values.map((v, i) =>
-        Math.max(0, inside.reduce((rest, [, r]) => rest - r[i], v)),
-      );
-      return { ...band, values };
+      return { ...band, values: minus(band.values, inside.map(([, r]) => r)) };
     });
 
   const [a, b] = range;
@@ -281,7 +324,15 @@ export function stackBands(data, opts) {
   const rest = order.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
   const chosen = new Set([...kept, ...rest]);
   const bands = ranked.filter((band) => chosen.has(band)).toReversed();
-  return { bands, cut: ranked.length - bands.length, filtered: scored.length - passing.length };
+  const result = { cut: ranked.length - bands.length, filtered: scored.length - passing.length };
+  if (!change) return { bands, ...result };
+  const rated = bands.map((band) => {
+    const r = rates(band.values, data.times);
+    const shown = r.slice(a + 1, b + 1);
+    return { band: { ...band, rates: r }, span: shown.length ? Math.max(...shown) - Math.min(...shown) : 0 };
+  });
+  rated.sort((x, y) => x.span - y.span || (x.band.key < y.band.key ? -1 : 1));
+  return { bands: rated.map(({ band }) => band), ...result };
 }
 
 /** BAND's label: its dir relative to BASE, where BASE itself (and ROOT) is
