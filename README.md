@@ -1,6 +1,6 @@
 # dirhistory — CephFS directory size history charts
 
-A static website that charts how the sizes and file counts of directories
+A **static** website that charts how the sizes and file counts of directories
 on a CephFS filesystem change over time. It shows which directories grow and
 shrink, using the samples that [trackdir](https://github.com/vbrik/track-cephfs-dir-sizes)
 records in PostgreSQL from CephFS recursive statistics (`ceph.dir.rbytes`,
