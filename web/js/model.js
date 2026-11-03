@@ -255,9 +255,13 @@ export function normalize(raw) {
  * zooming or sorting, then the first of the rest in BY's order, ties by
  * rank. BY "" (the default) is rank; "size" keeps the largest at the
  * range's end, "-size" the smallest, "delta" the most grown, "-delta" the
- * most shrunk, "name" the first by label. Returns {bands, cut, filtered}:
+ * most shrunk, "name" the first by label. Returns {bands, byRank, cut, filtered}:
  * those bands, as {key, dir, own, label, values, drillable}, how many
  * ranked bands were left out, and how many were filtered out.
+ *
+ * Also returns byRank: the same bands in Size mode's stack order (bottom
+ * first), whatever CHANGE, so colors given in rank order do not depend on
+ * the mode.
  *
  * With CHANGE, the same bands are returned, each with its rates too (see
  * rates), stacked instead by rate span (max − min of its rates in the
@@ -333,7 +337,7 @@ export function stackBands(data, opts) {
   const rest = order.filter((band) => !keep.includes(band.key)).slice(0, top - kept.length);
   const chosen = new Set([...kept, ...rest]);
   const bands = ranked.filter((band) => chosen.has(band)).toReversed();
-  const result = { cut: ranked.length - bands.length, filtered: scored.length - passing.length };
+  const result = { byRank: bands, cut: ranked.length - bands.length, filtered: scored.length - passing.length };
   if (!change) return { bands, ...result };
   const rated = bands.map((band) => {
     const r = rates(band.values, data.times);
@@ -341,7 +345,9 @@ export function stackBands(data, opts) {
     return { band: { ...band, rates: r }, span: shown.length ? Math.max(...shown) - Math.min(...shown) : 0 };
   });
   rated.sort((x, y) => x.span - y.span || (x.band.key < y.band.key ? -1 : 1));
-  return { bands: rated.map(({ band }) => band), ...result };
+  const withRates = rated.map(({ band }) => band);
+  const of = new Map(withRates.map((band) => [band.key, band]));
+  return { ...result, bands: withRates, byRank: bands.map((band) => of.get(band.key)) };
 }
 
 /** BAND's label: its dir relative to BASE, where BASE itself (and ROOT) is

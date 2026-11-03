@@ -415,6 +415,15 @@ def check_change_mode(page: Page, base: str) -> None:
     act(page, lambda: page.mouse.click(x, y))
     assert "in=A" in state(page), f"click in Change mode: {state(page)}"
 
+    # A band's color does not depend on the mode the page was loaded in
+    # (colors live in memory, so reload for a fresh start).
+    fresh = {}
+    for mode in ("size", "change"):
+        go(page, f"{base}#tree=1&mode={mode}")
+        act(page, page.reload)
+        fresh[mode] = series(page)
+    assert fresh["size"] == {k: fresh["change"][k] for k in fresh["size"]}, fresh
+
     # Trends: average rates, one shared scale for all cards.
     go(page, f"{base}#tree=1&view=trends&mode=change")
     text = card(page, "A").inner_text()
