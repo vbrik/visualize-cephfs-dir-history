@@ -1,6 +1,6 @@
 // The Stack view's chart: stacked area of its bands over time (ECharts).
 
-import { escapeHtml, formatBytes, formatDelta } from "../model.js";
+import { escapeHtml, formatBytes, formatDelta, formatRate, stepIndex } from "../model.js";
 
 /**
  * Return the ECharts option for MODEL ({bands}: those of model.stackBands
@@ -14,15 +14,20 @@ import { escapeHtml, formatBytes, formatDelta } from "../model.js";
  * hovered point.
  * gaps: Map key -> a band's gap line width (px), e.g. as gapWidths last fit
  * it; GAP_PX for a band not in it.
+ * change: Change mode. The bands' rates (model.stackBands with change; null
+ * as 0) are drawn instead of their values, as step areas (ECharts step
+ * "start": point i's rate fills its interval (t[i-1], t[i]]), stacked by
+ * sign (samesign: up from 0 and down from 0), with no gaps; the tooltip
+ * shows the rates of the step under the pointer and their net.
  */
-export function stackedAreaOption(data, model, { colors, range, format = formatBytes, order, gaps = new Map() }) {
+export function stackedAreaOption(data, model, { colors, range, format = formatBytes, order, gaps = new Map(), change = false }) {
   const times = data.times.map((t) => Date.parse(t));
   const layers = model.bands.map((b) => ({
     id: b.key,
     name: b.label,
-    values: b.values,
+    values: change ? b.rates.map((v) => v ?? 0) : b.values,
     color: colors.bands.get(b.key),
-    gap: gaps.get(b.key) ?? GAP_PX,
+    gap: change ? 0 : (gaps.get(b.key) ?? GAP_PX),
   }));
   const layerOf = new Map(layers.map((l) => [l.id, l]));
   const rowOrder = order ? order.map((b) => layerOf.get(b.key)) : layers.toReversed();
@@ -40,19 +45,25 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
     },
     yAxis: {
       type: "value",
-      min: 0,
-      axisLabel: { color: colors.muted, formatter: (v) => format(v) },
+      ...(change ? {} : { min: 0 }),
+      axisLabel: { color: colors.muted, formatter: (v) => (change ? formatRate(v, format) : format(v)) },
       splitLine: { lineStyle: { color: colors.grid, width: 1 } },
     },
     tooltip: {
       trigger: "axis",
-      axisPointer: { type: "line", lineStyle: { color: colors.muted, width: 1 } },
+      // Change mode: the step under the pointer, not the nearest point, so
+      // the pointer does not snap and the tooltip finds the step itself.
+      axisPointer: { type: "line", snap: !change, lineStyle: { color: colors.muted, width: 1 } },
       backgroundColor: colors.surface,
       borderColor: colors.grid,
       textStyle: { color: colors.ink },
       confine: true,
       // params is empty when no band is drawn (all hidden or unticked).
-      formatter: (params) => (params.length ? tooltip(params[0].dataIndex, layers, rowOrder, data, range, format) : ""),
+      formatter: (params) => {
+        if (!params.length) return "";
+        if (change) return rateTooltip(stepIndex(data.times, params[0].axisValue), layers, rowOrder, data, format);
+        return tooltip(params[0].dataIndex, layers, rowOrder, data, range, format);
+      },
     },
     dataZoom: [
       { type: "slider", bottom: 16, height: 24, labelFormatter: "", borderColor: colors.grid },
@@ -64,6 +75,7 @@ export function stackedAreaOption(data, model, { colors, range, format = formatB
       type: "line",
       stack: "total",
       symbol: "none",
+      ...(change ? { step: "start" } : {}),
       data: times.map((t, i) => [t, l.values[i]]),
       // The line in the surface color is the gap between stacked bands.
       lineStyle: { width: l.gap, color: colors.surface },
@@ -130,8 +142,30 @@ function tooltip(i, layers, rowOrder, data, [a], format) {
     + `<div class="tt-note">change since ${escapeHtml(new Date(data.times[a]).toLocaleString())}</div></div>`;
 }
 
+/** Change mode's tooltip at point I: the rates of the largest (by size of
+ * rate) LAYERS there, in ROWORDER; the rest summed in one row; and the net
+ * rate of all. */
+function rateTooltip(i, layers, rowOrder, data, format) {
+  const when = `${new Date(data.times[i - 1]).toLocaleString()} – ${new Date(data.times[i]).toLocaleString()}`;
+  const rate = (value) => formatRate(value, format);
+  const by = (l) => Math.abs(l.values[i]);
+  const listed = new Set(layers.toSorted((x, y) => by(y) - by(x)).slice(0, TOOLTIP_ROWS));
+  const sum = (ls) => ls.reduce((s, l) => s + l.values[i], 0);
+  const rows = rowOrder.filter((l) => listed.has(l)).map((l) => cells(l.color, l.name, rate(l.values[i])));
+  const others = layers.filter((l) => !listed.has(l));
+  if (others.length) rows.push(cells(null, `${others.length} smaller bands`, rate(sum(others))));
+  rows.push(cells(null, "Net", rate(sum(layers))));
+  return `<div class="tt"><div class="tt-when">${escapeHtml(when)}</div>${rows.join("")}</div>`;
+}
+
 function row(color, name, value, delta, format) {
+  return cells(color, name, format(value), formatDelta(delta, format));
+}
+
+/** A tooltip row: a color key (none if COLOR is null), MAIN in bold, EXTRA
+ * (optional) and NAME. MAIN and EXTRA are formatted numbers, not names. */
+function cells(color, name, main, extra = "") {
   const key = color ? `<span class="tt-key" style="background:${color}"></span>` : `<span class="tt-key"></span>`;
-  return `<div class="tt-row">${key}<b>${format(value)}</b>`
-    + `<span class="tt-delta">${formatDelta(delta, format)}</span><span class="tt-name">${escapeHtml(name)}</span></div>`;
+  const more = extra ? `<span class="tt-delta">${extra}</span>` : "";
+  return `<div class="tt-row">${key}<b>${main}</b>${more}<span class="tt-name">${escapeHtml(name)}</span></div>`;
 }

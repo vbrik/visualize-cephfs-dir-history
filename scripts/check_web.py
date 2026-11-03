@@ -772,6 +772,7 @@ def check_model(page: Page, base: str) -> None:
     assert [i for i, _ in sparks["at"]] == [0, 1, 2, 3], f"nearest: {sparks['at']}"
     assert sparks["zoomedAt"] == [2, 1000], f"nearest when zoomed: {sparks['zoomedAt']}"
     check_rate_sparks(page)
+    check_change_option(page)
 
     # gapWidths, bottom band first, at 1 px per unit (MIN_GAPPED_PX is 4).
     gaps = page.evaluate(
@@ -874,6 +875,30 @@ def check_rates(page: Page) -> None:
     assert got["sRates"] == [None, 240, 240, 240, 240], f"s rates: {got['sRates']}"
     assert got["onePointOrder"] == ["j", "s"], f"one point: {got['onePointOrder']}"
 
+    # layerAt on a signed step stack: the block whose interval holds the time.
+    hit = page.evaluate(
+        """async () => {
+            const m = await import("./js/model.js");
+            const times = ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z",
+              "2026-10-01T02:00:00Z"];
+            const at = (h) => Date.parse(times[0]) + h * 3600e3;
+            const layers = [[0, 10, 10], [0, -5, 20], [0, 4, -3]];  // p, n, q
+            const step = (h, vs) => vs.map((v) => m.layerAt(layers, times, at(h), v, {step: true}));
+            return {
+              stepAt: step(0.5, [1, 9.9, 10.5, 14, -0.1, -5, 14.1, -5.1]),
+              stepAt2: step(1.5, [25, -2, -4]),
+              after: step(3, [15]),
+              linear: m.layerAt([[1, 1, 1], [2, 2, 2]], times, at(0.5), 2),
+            };
+        }"""
+    )
+    # At 0.5 h, point 1: p 0..10, q 10..14 above 0; n 0..-5 below.
+    assert hit["stepAt"] == [0, 0, 2, 2, 1, 1, -1, -1], f"step at: {hit['stepAt']}"
+    # At 1.5 h, point 2: p 0..10, n 10..30 above 0; q 0..-3 below.
+    assert hit["stepAt2"] == [1, 2, -1], f"step at 2: {hit['stepAt2']}"
+    assert hit["after"] == [1], f"after the last point: {hit['after']}"
+    assert hit["linear"] == 1, f"without step: {hit['linear']}"
+
 
 def check_rate_sparks(page: Page) -> None:
     """Change mode's Trends cards: rates, a shared scale, step sparklines."""
@@ -922,6 +947,55 @@ def check_rate_sparks(page: Page) -> None:
     assert [i for i, _ in c["stepAt"]] == [1, 1, 2, 2, 3], f"step at: {c['stepAt']}"
     assert c["stepAt"][2][1] == 500, f"cursor mid-interval: {c['stepAt']}"
     assert c["stepAtOne"] == [2, 500], f"step at, one point: {c['stepAtOne']}"
+
+
+def check_change_option(page: Page) -> None:
+    """The Stack chart's option in Change mode: signed step areas of rates."""
+    gib = 2**30
+    got = page.evaluate(
+        """async () => {
+            const s = await import("./js/charts/stackedArea.js");
+            const times = ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z",
+              "2026-10-01T02:00:00Z"];
+            const gib = 2 ** 30;
+            const bands = [
+              {key: "a", label: "a", values: [0, 1, 2], rates: [null, 24 * gib, -48 * gib]},
+              {key: "b", label: "b", values: [0, 0, 0], rates: [null, 0, 0]},
+            ];
+            const colors = {bands: new Map([["a", "#111"], ["b", "#222"]]),
+              surface: "#fff", ink: "#000", muted: "#888", grid: "#ccc"};
+            const opt = (change) => s.stackedAreaOption({times}, {bands},
+              {colors, range: [0, 2], change, gaps: new Map([["a", 2]])});
+            const o = opt(true);
+            const tip = (h) => {
+              const div = document.createElement("div");
+              const ms = Date.parse(times[0]) + h * 3600e3;
+              div.innerHTML = o.tooltip.formatter([{dataIndex: 0, axisValue: ms}]);
+              return div.textContent;
+            };
+            return {
+              step: o.series.map((x) => x.step),
+              widths: o.series.map((x) => x.lineStyle.width),
+              data: o.series[0].data.map(([, v]) => v),
+              min: o.yAxis.min ?? null,
+              label: o.yAxis.axisLabel.formatter(gib),
+              tip: [tip(0.25), tip(1.5)],
+              size: {step: opt(false).series[0].step ?? false, min: opt(false).yAxis.min,
+                width: opt(false).series[0].lineStyle.width},
+            };
+        }"""
+    )
+    assert got["step"] == ["start", "start"], f"steps: {got['step']}"
+    assert got["widths"] == [0, 0], f"no gaps in Change mode: {got['widths']}"
+    assert got["data"] == [0, 24 * gib, -48 * gib], f"rates, null as 0: {got['data']}"
+    assert got["min"] is None, f"y axis min: {got['min']}"
+    assert got["label"] == "+1.00 GiB/d", f"axis label: {got['label']}"
+    # 0.25 h is in point 1's interval, whatever the nearest point (dataIndex 0).
+    tip1, tip2 = got["tip"]
+    assert "+24.0 GiB/d" in tip1 and "Net" in tip1, f"tooltip at 0.25 h: {tip1}"
+    assert f"{MINUS}48.0 GiB/d" in tip2, f"tooltip at 1.5 h: {tip2}"
+    assert "since" not in tip1, f"no change-since note: {tip1}"
+    assert got["size"] == {"step": False, "min": 0, "width": 2}, got["size"]
 
 
 def cards(page: Page) -> list[str]:

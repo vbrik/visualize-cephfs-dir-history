@@ -502,13 +502,38 @@ function legendOrder(key, by, range) {
   return (x, y) => sign * cmp(x, y);
 }
 
+/** The point whose rate's interval (t[i-1], t[i]] holds time MS, of TIMES
+ * (ISO strings): the first at or after MS, at least 1; the last if MS is
+ * past it. Change mode's steps, tooltip and clicks use it. */
+export function stepIndex(times, ms) {
+  const next = times.findIndex((x) => Date.parse(x) >= ms);
+  return next < 0 ? times.length - 1 : Math.max(1, next);
+}
+
 /**
  * Index of the layer (bottom first) whose stacked span at time MS holds
  * VALUE, or -1. Layers are linear between TIMES, as the chart draws them,
  * and flat beyond the first and last points.
+ *
+ * With STEP (Change mode), layers are steps instead: at MS, each has point
+ * i's value, i the first point at or after MS (its interval holds MS), and
+ * values stack by sign as ECharts' samesign stacking draws them: those
+ * >= 0 up from 0, those < 0 down from 0, each in layer order.
  */
-export function layerAt(layers, times, ms, value) {
+export function layerAt(layers, times, ms, value, { step = false } = {}) {
   const t = times.map((x) => Date.parse(x));
+  if (step) {
+    const i = stepIndex(times, ms);
+    const edge = [0, 0]; // the positive and negative stacks' outer edges
+    for (const [k, values] of layers.entries()) {
+      const v = values[i] ?? 0;
+      const side = v >= 0 ? 0 : 1;
+      const from = edge[side];
+      edge[side] += v;
+      if (Math.min(from, edge[side]) <= value && value <= Math.max(from, edge[side])) return k;
+    }
+    return -1;
+  }
   const i = Math.max(0, t.findLastIndex((x) => x <= ms));
   const j = Math.min(i + 1, t.length - 1);
   const f = t[j] > t[i] ? Math.min(1, Math.max(0, (ms - t[i]) / (t[j] - t[i]))) : 0;
