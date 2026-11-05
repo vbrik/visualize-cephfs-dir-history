@@ -12,8 +12,12 @@ trackdir's own terms (sample, rstats, ROOT, …) are in its
 | set | A named list of dir groups of one tree, in its `[tree."/fs/path".set."NAME"]` section of the `--sets` file, plus the implicit **Top level** set (`*`, depth 0). Both views show one set at a time ("Set"). |
 | dir group | One entry of a set's `dirs`: `{ match = [patterns], depth = N }`. A pattern is relative to the tree root; wildcards match within one path component; `.` is the root; no `**`. |
 | set dir | A dir that a pattern of one of the set's groups matches. |
-| depth (of a set dir) | How many levels below the set dir the data file stores, so the page can split or drill into it: 0 = the dir only, 1 = also its subdirs, … The largest `depth` of any group, in any set, matching the dir; limited by the tree's `max_depth`. |
-| stored dir | A dir whose series the tree file holds: a set dir, or a dir within its depth below one. |
+| depth (of a set dir) | How many levels below the set dir the data file stores, so the page can split or drill into it: 0 = the dir only, 1 = also its subdirs, … The largest `depth` of any group, in any set, matching the dir; limited by the tree's `max_depth` and by its budget (see cut). |
+| stored dir | A dir whose series the tree file holds: a set dir, or a dir within its depth below one, within the tree's budget. |
+| budget | The most stored dirs a tree's file holds: the sets file's top-level `budget`, or the tree's own `[tree."/fs/path"] budget`, which overrides it. Every generated tree needs one. |
+| cut | What the generator does to a tree whose sets cover more dirs than its budget: keep whole levels from the tree root while they fit, then part of the next (the partial level), nothing deeper. |
+| partial level | The shallowest level a cut left dirs out of. It is filled by whole units (all stored subdirs of one stored dir, or one set dir whose parent is not stored) in path order. |
+| pruned dir | A stored dir that would be a split dir but for the budget: its subdirs were cut (the file's `pruned` list). The page shows its name with `*`. |
 | split dir | A stored dir whose subdirs are all stored (the file's `split` list). Only these can be split or drilled into. |
 | Depth (page) | How many levels below the set dirs (or the drilled-into dir) the Stack view splits; 0 = the dirs themselves. A dir not in `split` stays whole. |
 | Top (page) | How many bands the Stack view lists (default 64, max 512): picks first, then the first in the legend's sort, by default the largest spans. The rest are not drawn. |

@@ -43,20 +43,28 @@ known risks.
 ## Generate and view
 
     export TRACKDIR_DB=postgresql://trackdir@db.example.org/trackdir
-    touch sets.toml                           # or copy deploy/sets.toml.example and edit
+    cat > sets.toml <<'EOF'                   # or copy deploy/sets.toml.example and edit
+    budget = 100000
+    [tree."/fs/path".set."Top"]
+    dirs = [{ match = ["*"], depth = 1 }]
+    EOF
     dirhistory-generate --sets sets.toml -v   # writes web/data/
     python -m http.server -d web 8000         # then open http://localhost:8000/
 
 Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
 The database is only read. See `dirhistory-generate --help` for the options:
-sets file, directory limit, trees, output directory, and time resolution.
+sets file, trees, output directory, and time resolution.
 
-`--sets FILE` is required; an empty file (as above) gives each tree only its
-Top level set. The file names, per tree, sets of directories (patterns relative to the
-tree root) and how many levels below each the page can split and drill; see
+`--sets FILE` is required and names the trees to generate; other trees are
+skipped. Per tree, it gives sets of directories (patterns relative to the
+tree root), how many levels below each the page can split and drill, and a
+**budget**: the most directories the tree's data file stores, set at the top
+of the file for every tree or in a tree's own section. See
 [deploy/sets.toml.example](deploy/sets.toml.example). A tree whose sets
-store more than `--max-dirs` directories (100000) is an error, which catches
-a depth or pattern that stores far more than meant.
+cover more directories than its budget is stored breadth-first, every level
+from the tree root whole until the budget runs out, and saved partial, with
+a warning; the page marks a directory whose subdirectories were left out
+with `*`.
 
 A tree has at most 5000 time points (`--max-points`). By default the whole
 history gets one bucket width, the finest of 1h, 6h, 1d, 2d or 1w that fits:
@@ -81,8 +89,8 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
        # then add a line to it: db.example.org:5432:trackdir:trackdir:PASSWORD
        install -m 644 deploy/sets.toml.example /etc/dirhistory/sets.toml
        # then edit it: a section naming no tree is an error, so replace the
-       # example's trees (an empty file gives each tree only "Top level");
-       # the service passes --sets, and fails if the file is missing
+       # example's trees with yours (only they are generated), each with a
+       # budget; the service passes --sets, and fails if the file is missing
 
 3. Copy [deploy/dirhistory.service](deploy/dirhistory.service) and
    [deploy/dirhistory.timer](deploy/dirhistory.timer) to
@@ -98,6 +106,11 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
    form). Then run the service once for all trees (no `--tree`). Until it
    succeeds, the new page cannot read the old data files, and a `--tree N`
    run leaves the other trees' old files.
+6. Upgrading an install from before budgets: add `budget = N` to the sets
+   file (at the top, or per tree; `--max-dirs` was 100000), give every tree
+   to chart a section (an empty `[tree."/fs/path".set]` gives it only Top
+   level), and drop `--max-dirs` from any script: it is no longer an option.
+   Until then every run fails.
 
 ## Using the page
 
@@ -107,7 +120,7 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | View | *Stack*: the stacked chart of the set's directories. *Trends*: a card per set directory, each on its own scale; click one to open it in Stack. |
 | Bytes, Entries | Both views: chart rbytes (sizes) or rentries (files plus directories, each directory counting itself; the own-files band is then `dir/ entries`, the files directly in a directory plus 1). Everything else stays as it is; Min has a separate value per metric. Entries is disabled for a data file written before it existed, until the next `dirhistory-generate`. |
 | Set | Which of the tree's sets to show, with its number of directories: Top level, then the sets of the `--sets` file. |
-| Depth | Stack: split each directory this many levels into its subdirectories; the files directly in a split directory are the band `dir/ bytes`. The most is the levels the data file stores below the shown directories. |
+| Depth | Stack: split each directory this many levels into its subdirectories; the files directly in a split directory are the band `dir/ bytes`. The most is the levels the data file stores below the shown directories. A name ending in `*` cannot be split: the tree's budget ran out before its subdirectories. |
 | Top | Stack: draw only this many bands (1–512, default 64): the first in the legend's sort, by default those whose size changed most in the shown range; the summary counts the rest. Past 64 bands, colors repeat. |
 | Legend tick boxes, None, All | Stack: draw only the ticked bands; *None* unticks all, to tick just the few to compare. Unticked bands stay listed, below the ticked ones, with their size and change; the chart's scale, the summary and the table follow the ticked ones. Changing Tree, Set or Depth, or drilling, ticks all again. |
 | Legend Dir, Size (Entries), Δ | Stack: sort the legend by name, by value at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first: the chart stacks the least changed at the bottom, the biggest movers on top). When there are more bands than Top, the sort also chooses which are drawn: e.g. Δ reversed draws the most shrunk. The chart's stacking does not change. |

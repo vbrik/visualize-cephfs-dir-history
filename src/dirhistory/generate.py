@@ -55,10 +55,15 @@ in web/ reads the files.
 The sets file (--sets, required) names the trees to generate and, per tree,
 sets of directories and a budget: the most directories its file stores.
 Each tree also gets the implicit set "Top level", its top-level
-directories. The page's Stack view charts the rbytes (or, toggled,
-the rentries: rfiles + rsubdirs) of a set's directories as bands, and can
-split a directory into its subdirectories, down to the depth the set stores.
-Its Trends view shows one card per directory of a set.
+directories. The page's Stack view charts the rbytes (or, toggled, the
+rentries: rfiles + rsubdirs) of a set's directories as bands, and can split
+a directory into its subdirectories, down to the depth the set stores. Its
+Trends view shows one card per directory of a set.
+
+A tree whose sets cover more directories than its budget is stored
+breadth-first, each level from the tree root whole until the budget runs
+out, and saved partial with a warning; the page marks a directory whose
+subdirectories were left out with *. Raise the budget to store more.
 
 The database is only read. Prints each file written to stdout; notes go to
 stderr.

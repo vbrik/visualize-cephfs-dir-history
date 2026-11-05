@@ -175,8 +175,12 @@ views each show one set at a time.
   Tree roots are assumed unique, so a section naming two trees (same root on
   different clusters or filesystems) is an error, as is one naming no tree,
   even with `--tree`; a root that is not UTF-8 cannot be named in TOML.
+- Only the file's trees are generated, so a file with none is an error.
+  `--tree` naming a tree without a section is an error, and `trees.json`
+  keeps only the file's trees: a tree removed from the file drops out of the
+  index on the next run.
 - Every tree has the implicit set **Top level** (`*`, depth 0), always
-  first, so a tree is browsable with an empty file. A set of that name in the
+  first, so a tree is browsable with an empty set table (`[tree."/x".set]`). A set of that name in the
   file replaces it, still first, e.g. to give the top-level dirs depth 2.
   The file's other sets follow in its order.
   `watch`, the format before sets, is an error with a hint.
@@ -192,16 +196,43 @@ views each show one set at a time.
   never crosses `/` and next year's dir joins without an edit. No `**`: use
   `depth` to go deeper, since a recursive pattern could store thousands of
   dirs by accident.
-- More than `--max-dirs` (100000) stored dirs in a tree is an error naming
-  the sets and their counts. The cap is per tree, since all its sets share one
-  file, and checked before any history is fetched. It catches accidents
-  only; see the risk "Large depth makes large files".
 - Matching rides the generator's single pass over the first sample (one
   matcher for all of a tree's sets), plus the paths with later rows. Stored
   dirs' histories are fetched explicitly, since a dir that never changed is
   otherwise never read.
 - Config mistakes are errors. A pattern that matches nothing is a warning,
   for the trees read; the implicit set never warns.
+
+### Budget: partial trees
+
+A broad pattern with a large `depth` can cover millions of dirs: on the
+real database, one tree's sets covered 1.9 M. Rather than fail, each tree
+has a **budget**, the most dirs its file stores, and a tree over it is
+stored as deep as the budget allows and saved partial.
+
+- The budget is in the sets file only: a top-level `budget = N` for every
+  tree, which a tree's own `[tree."/x"] budget = N` overrides. There is no
+  default, so a tree with neither is an error: the right size depends on the
+  tree, and a forgotten budget should not silently pick one.
+- The **cut** is breadth-first from the tree root: levels are kept whole,
+  shallowest first, while they fit. The first level that does not, the
+  **partial level**, is filled by units in path (byte) order up to the first
+  that does not fit; nothing deeper is kept. A unit is all the stored
+  subdirs of one stored dir, all or none, so no dir is partly stored: it
+  could neither be split (the page needs all its subdirs) nor be told from a
+  leaf. A set dir whose parent is not stored is a unit of its own, so a
+  budget below a tree's top-level count still keeps that many set dirs.
+  Which dirs of the partial level are kept does not matter, as long as
+  every shallower level is complete; path order is reproducible.
+- A **pruned** dir is a kept dir that would have been split but for the
+  budget: stored with levels below it, its subdirs left out. A dir stored
+  for itself only, whose subdir is a set dir of its own, is not pruned: a
+  bigger budget would not make it splittable.
+- The cut is applied before any history is fetched, so the budget bounds
+  the query as well as the file. A cut tree is a warning (stored of covered
+  dirs, the depth above which every level is whole, how many pruned), not an
+  error. A set dir below the cut is left out of its set, with a warning; a
+  pattern's "matches no directory" counts matches before the cut.
 
 ### Page
 
@@ -213,6 +244,10 @@ views each show one set at a time.
   subdirs stored; any other stays whole). Depth counts levels below the shown
   dirs, which are the set's, or the drilled-into dir's. A band reached from
   two roots, as when a set holds a dir and its own subdir, is drawn once.
+- A pruned dir's name ends in `*` wherever it is shown (legend, tooltip,
+  table, hidden chips, Trends cards), with a title saying the tree's budget
+  ran out, and each view has a one-line note while one is on screen. The
+  mark is display only: sorting by name and the URL use the plain name.
 - Filters first: bands whose peak in the zoomed range is under Min GiB
   (`smin`, default 1), or that are unchanged in it unless *Show unchanged*
   (`sflat=1`), are filtered out, picks excepted; the summary counts them
@@ -327,6 +362,7 @@ the file's order, "Top level" first.
 | `series` | `{path: [rbytes, rentries]}` for every stored dir: a set dir, or one within its `depth` below a set dir. Each series is a list (a value or null per point, null: absent) if it changed, else one number or null, its constant value. The page reads a file without `series` (written before rentries) from its `rbytes`, `{path: series}`, and disables Entries. |
 | `sets` | The tree's sets in `--sets` order, "Top level" first: `[{name, paths}]`, a set's dirs in pattern order, by path within a pattern. The page sorts the Trends cards itself. |
 | `split` | The stored dirs whose subdirs are all stored (each less than its `depth` below a set dir, and above `max_depth`), sorted. Only these can be split or drilled into. |
+| `pruned` | The stored dirs that would be in `split` but for the tree's budget, sorted; `[]` if the tree fit. The page marks them `*`, and reads a file without `pruned` as none. |
 
 Most stored dirs never change, so one number instead of a list keeps files
 small: on a real database 2 866 of the 2 995 series of the largest Top level
@@ -358,13 +394,19 @@ path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
   the table cover the drawn bands only; the summary says how many are left
   out. By default (Min 1 GiB, unchanged filtered) a big constant dir is
   missing from the stack and its total.
-- **Large depth makes large files.** A broad pattern with a large `depth`
-  stores every dir below it, and every one that changes costs a number per
-  time point; the page downloads the whole file. `--max-dirs` catches
-  accidents only, not a file that is large but under the cap.
+- **Large budgets make large files.** A broad pattern with a large `depth`
+  stores every dir below it up to the budget, and every one that changes
+  costs a number per time point; the page downloads the whole file. Most
+  dirs never change, so a file is about 64 bytes per stored dir (a real
+  227 k-dir tree, 337 points: 14.5 MB). The budget bounds a file's size, not
+  how fast the page handles it.
+- **A partial tree hides depth unevenly.** In a cut tree's partial level,
+  dirs early in path order are split and later ones are pruned (`*`),
+  whatever their size: the cut follows path order, not where the bytes are.
 - **Magnitude hides change.** A stacked area shows size. A band of 59 TiB
   that grew by 0.5 TiB looks flat beside small bands. The tooltip and table
   show the change, and a Trends card has its own scale; a net-change view
   (design 2c) will show it in the stack.
-- **Lost trees.** Data files of trees removed from the database stay in
-  `web/data/` (no longer listed in `trees.json`) until deleted by hand.
+- **Lost trees.** Data files of trees removed from the database or from the
+  sets file stay in `web/data/` (no longer listed in `trees.json`) until
+  deleted by hand.
