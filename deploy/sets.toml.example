@@ -9,7 +9,9 @@
 # cover more is stored breadth-first: every level from the tree root whole
 # while it fits, then as many whole directories' subdirectories of the next
 # level as fit, in path order, nothing deeper. The run warns, and the page
-# marks a directory whose subdirectories were left out with *.
+# marks a directory whose subdirectories were left out with *. Size it for
+# the browser: the page needs about 3 KB of memory per stored directory
+# (see docs/design.md, "Large budgets make large files").
 #
 # Sections are named by the tree's root path (its fs_path) and the set's
 # name. The page lists a tree's sets in its Set menu, in this order, after
@@ -40,7 +42,7 @@
 budget = 100000
 
 [tree."/data/projects"]
-budget = 500000                            # this tree's own, instead of the one above
+budget = 200000                            # this tree's own, instead of the one above
 
 [tree."/data/projects".set."Projects"]
 dirs = [

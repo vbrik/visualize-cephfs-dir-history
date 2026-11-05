@@ -359,7 +359,7 @@ def parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="ID",
-        help="only this tree; repeatable (default: all trees)",
+        help="only this tree; repeatable (default: every tree in --sets)",
     )
     p.add_argument("-v", "--verbose", action="store_true", help="report per-tree stats")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")

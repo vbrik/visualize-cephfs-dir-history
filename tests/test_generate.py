@@ -541,3 +541,8 @@ def test_verbose_reports_pruned(monkeypatch, tmp_path, capsys):
 
 def test_cut_warning_is_none_without_a_cut():
     assert cut_warning(TREE, HISTORY, 10) is None
+
+
+def test_tree_help_says_the_default_is_the_sets_files_trees():
+    tree = next(a for a in parser()._actions if a.dest == "tree")
+    assert "every tree in --sets" in tree.help
