@@ -6,7 +6,6 @@ import os
 import re
 import sys
 import tempfile
-from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,20 +20,15 @@ from dirhistory.history import (
     MAX_POINTS,
     MIN_BUCKET,
     RECENT,
-    ROOT,
     Resolution,
     Series,
     TreeHistory,
-    parent,
     summarize,
 )
 from dirhistory.sets import (
     IMPLICIT,
-    MAX_DIRS,
-    Busiest,
     DirSet,
     SetDirs,
-    TooManyDirs,
     TreeConfig,
     with_implicit,
 )
@@ -156,6 +150,7 @@ def tree_document(tree: Tree, history: TreeHistory, generated: datetime) -> dict
             for s in history.sets
         ],
         "split": [os.fsdecode(p) for p in history.split],
+        "pruned": [os.fsdecode(p) for p in history.pruned],
     }
 
 
@@ -199,12 +194,11 @@ def read_tree(
     tree: Tree,
     res: Resolution,
     config: TreeConfig,
-    max_dirs: int,
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
     as of its latest sample, or None if it has no samples. Reads in one
-    transaction, i.e. one snapshot. CONFIG's sets and MAX_DIRS go to
-    summarize (which raises TooManyDirs)."""
+    transaction, i.e. one snapshot. CONFIG's sets and budget go to
+    summarize."""
     with conn.transaction():
         samples = db.samples(conn, tree.id)
         if not samples:
@@ -218,50 +212,53 @@ def read_tree(
             lambda paths: db.path_rows(conn, tree.id, paths),
             res,
             config.sets,
-            max_dirs,
+            config.budget,
         )
     return history, errors
-
-
-def busiest_hint(by_depth: Busiest) -> str:
-    """Return the dirs of BY_DEPTH (sets.busiest) as lines for a terminal.
-
-    Siblings among a depth's dirs print under their parent, at the rank of
-    the first of them, so a run of same-sized siblings reads as one.
-    """
-    width = max(len(str(n)) for dirs in by_depth.values() for _, n in dirs)
-    lines = ["Directories with the most stored subdirectories, by depth:"]
-    for depth, dirs in by_depth.items():
-        lines.append(f"  depth {depth}:")
-        siblings: defaultdict[bytes, list[tuple[bytes, int]]] = defaultdict(list)
-        for path, n in dirs:
-            siblings[parent(path)].append((path, n))
-        for up, group in siblings.items():
-            if up == ROOT or len(group) == 1:
-                lines += [f"    {n:>{width}}  {display(path)}" for path, n in group]
-                continue
-            lines.append(f"    {'':>{width}}  {display(up)}/")
-            lines += [
-                f"    {n:>{width}}    {display(path.rpartition(b'/')[2])}"
-                for path, n in group
-            ]
-    return "\n".join(lines)
 
 
 def set_warnings(
     tree: Tree, dir_sets: Sequence[DirSet], found: Sequence[SetDirs]
 ) -> list[str]:
-    """Return a warning per pattern of TREE's DIR_SETS that matched no
-    directory (FOUND, per set, counts each pattern's matches). The implicit
-    set never warns: it is no one's mistake if a tree has no subdirectories."""
-    return [
-        f"WARNING: tree {tree.id} ({display(tree.fs_path)}): set"
-        f" {s.name!r}: pattern {p.text!r} matches no directory"
-        for s, f in zip(dir_sets, found, strict=True)
-        if s is not IMPLICIT
-        for (p, _), n in zip(s.patterns(), f.found, strict=True)
-        if not n
-    ]
+    """Return, per set of TREE's DIR_SETS, a warning per pattern that matched
+    no directory, then one if the budget left out some of its dirs (FOUND,
+    per set, counts both). The implicit set never warns of a pattern: it is
+    no one's mistake if a tree has no subdirectories."""
+    head = f"WARNING: tree {tree.id} ({display(tree.fs_path)}): set"
+    warnings = []
+    for s, f in zip(dir_sets, found, strict=True):
+        if s is not IMPLICIT:
+            warnings += [
+                f"{head} {s.name!r}: pattern {p.text!r} matches no directory"
+                for (p, _), n in zip(s.patterns(), f.found, strict=True)
+                if not n
+            ]
+        if f.dropped:
+            warnings.append(
+                f"{head} {s.name!r}: {f.dropped} of its {len(f.paths) + f.dropped}"
+                " dirs are below the budget's cut and left out"
+            )
+    return warnings
+
+
+def cut_warning(tree: Tree, history: TreeHistory, budget: int) -> str | None:
+    """Return the warning that BUDGET cut TREE's HISTORY, or None if it did
+    not."""
+    if history.cut_level is None:
+        return None
+    n = len(history.pruned)
+    pruned = (
+        f"; {n} director{'y' if n == 1 else 'ies'} whose subdirectories were left"
+        f" out {'is' if n == 1 else 'are'} marked * in the page"
+        if n
+        else ""
+    )
+    return (
+        f"WARNING: tree {tree.id} ({display(tree.fs_path)}): budget {budget}"
+        f" reached: stored {len(history.rbytes)} of {history.candidates}"
+        f" directories, every level above depth {history.cut_level} in full"
+        f"{pruned}. Raise the tree's budget in the sets file to store more."
+    )
 
 
 def configured(
@@ -334,14 +331,6 @@ def parser() -> argparse.ArgumentParser:
         ' [tree."/tree/root"] section); see deploy/sets.toml.example',
     )
     p.add_argument(
-        "--max-dirs",
-        type=_positive_int,
-        default=MAX_DIRS,
-        metavar="N",
-        help="fail if a tree's sets store more directories than this, counting"
-        " the ones depth adds (default: %(default)s)",
-    )
-    p.add_argument(
         "--recent",
         type=_duration_arg,
         default=format_duration(RECENT),
@@ -409,9 +398,8 @@ def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
     """Write the data files ARGS ask for, of CONFIG's trees (by tree root,
     as sets.load returns them); return the exit status.
 
-    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree,
-    a CONFIG section that names no single tree, or a tree whose sets store
-    more directories than --max-dirs.
+    Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree
+    or a CONFIG section that names no single tree.
     """
     conn = db.connect(args.db)
     db.check_schema(conn)
@@ -426,19 +414,8 @@ def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
     with conn:
         for tree in chosen:
             start = perf_counter()
-            try:
-                result = read_tree(
-                    conn, tree, resolution(args), configs[tree.id], args.max_dirs
-                )
-            except TooManyDirs as e:
-                per_set = ", ".join(f"{name}: {n}" for name, n in e.counts)
-                raise ValueError(
-                    f"tree {tree.id} ({display(tree.fs_path)}): its sets store"
-                    f" {e.found} directories, more than --max-dirs {e.limit}"
-                    f" ({per_set}). Lower their depths, narrow their patterns or"
-                    " raise --max-dirs."
-                    + (f"\n{busiest_hint(e.busiest)}" if e.busiest else "")
-                ) from None
+            tree_config = configs[tree.id]
+            result = read_tree(conn, tree, resolution(args), tree_config)
             if result is None:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}) has no samples; skipped"
@@ -455,14 +432,16 @@ def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
                     " directories could not be read in its latest sample. Below them,"
                     " changes go unseen and sizes may be stale."
                 )
-            for warning in set_warnings(tree, configs[tree.id].sets, history.sets):
+            if warning := cut_warning(tree, history, tree_config.budget):
+                _note(warning)
+            for warning in set_warnings(tree, tree_config.sets, history.sets):
                 _note(warning)
             if args.verbose:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}):"
                     f" {len(history.times)} points, {len(history.rbytes)} stored"
                     f" dirs in {_count(len(history.sets), 'set')},"
-                    f" {perf_counter() - start:.1f} s"
+                    f" {len(history.pruned)} pruned, {perf_counter() - start:.1f} s"
                 )
     index = args.out / INDEX
     write_json(index, merged_index(args.out, entries, configs))

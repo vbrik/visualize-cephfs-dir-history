@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import stat
 from datetime import UTC, datetime, timedelta
 
@@ -9,9 +10,9 @@ import pytest
 from dirhistory import generate
 from dirhistory.db import Tree
 from dirhistory.generate import (
-    busiest_hint,
     compact,
     configured,
+    cut_warning,
     format_duration,
     index_entry,
     merged_index,
@@ -42,6 +43,9 @@ HISTORY = TreeHistory(
     {ROOT: [7, 9], b"caf\xe9": [4, 5], CAFE: [3, None]},
     [SetDirs("Café & co", [b"caf\xe9", ROOT], [2]), SetDirs("Empty", [], [])],
     [b"caf\xe9"],
+    [CAFE],
+    3,
+    None,
 )
 
 
@@ -98,6 +102,7 @@ def test_tree_document_round_trip(tmp_path):
         {"name": "Empty", "paths": []},
     ]
     assert loaded["split"] == ["caf\udce9"]
+    assert loaded["pruned"] == ["caf\udce9/x"]
     assert not {"rbytes", "threshold", "units", "watched"} & loaded.keys()
 
 
@@ -141,18 +146,13 @@ def test_sets_is_required(capsys):
     assert "--sets" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("option", ["--threshold", "--max-units", "--watch"])
+@pytest.mark.parametrize(
+    "option", ["--threshold", "--max-units", "--watch", "--max-dirs"]
+)
 def test_removed_options_are_gone(option, capsys):
     with pytest.raises(SystemExit):
         parser().parse_args(["--sets", "s.toml", option, "1"])
     assert "unrecognized arguments" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("value", ["0", "-1", "x"])
-def test_max_dirs_must_be_positive(value, capsys):
-    with pytest.raises(SystemExit):
-        parser().parse_args(["--sets", "s.toml", "--max-dirs", value])
-    assert "--max-dirs" in capsys.readouterr().err
 
 
 def _write(tmp_path, text, name="sets.toml", budget=100):
@@ -481,55 +481,63 @@ def test_run_fails_for_a_section_without_a_tree(monkeypatch, tmp_path, capsys):
     assert not (out / "tree-1.json").exists()
 
 
-def test_run_fails_when_stored_dirs_exceed_the_cap(monkeypatch, tmp_path, capsys):
-    exp = Tree(1, "c", None, b"/exp", 2)
-    _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"b", 4)]})
-    sets = _write(tmp_path, '[tree."/exp".set]\n')
+CUT_TREE = Tree(1, "c", None, b"/exp", 2)
+CUT_ROWS = [(ROOT, 9), (b"a", 5), (b"a/x", 3), (b"a/y", 1), (b"b", 4)]
+CUT_SET = '[tree."/exp".set.S]\ndirs = [{ match = ["*"], depth = 1 }]\n'
+DEEP_SET = '[tree."/exp".set.Deep]\ndirs = [{ match = ["*/*"], depth = 0 }]\n'
+
+
+def _cut_run(monkeypatch, tmp_path, budget, text=CUT_SET, *extra):
+    """Run the generator on CUT_TREE with TEXT's sets and BUDGET; return the
+    exit status and the tree file (None if not written)."""
+    _fake_db(monkeypatch, {CUT_TREE: CUT_ROWS})
+    sets = _write(tmp_path, text, budget=budget)
     out = tmp_path / "d"
-    argv = ["--db", "x", "--out", str(out), "--sets", str(sets)]
-    assert generate.main([*argv, "--max-dirs", "1"]) == 1
+    status = generate.main(
+        ["--db", "x", "--out", str(out), "--sets", str(sets), *extra]
+    )
+    path = out / "tree-1.json"
+    return status, json.loads(path.read_text()) if path.exists() else None
+
+
+def test_run_cuts_a_tree_to_its_budget_and_warns(monkeypatch, tmp_path, capsys):
+    status, doc = _cut_run(monkeypatch, tmp_path, 3)
+    assert status == 0
+    assert (doc["pruned"], doc["split"], set(doc["series"])) == (["a"], [], {"a", "b"})
     assert capsys.readouterr().err == (
-        "ERROR: tree 1 (/exp): its sets store 2 directories, more than --max-dirs 1"
-        " (Top level: 2). Lower their depths, narrow their patterns or raise"
-        " --max-dirs.\n"
-    )
-    assert not (out / "tree-1.json").exists()
-    assert generate.main([*argv, "--max-dirs", "2"]) == 0
-
-
-def test_busiest_hint_groups_siblings_under_their_parent():
-    hint = busiest_hint(
-        {
-            1: [(b"a", 1300), (b"b", 20)],
-            3: [(b"a/big/x", 400), (b"a/p/1", 300), (b"b/q/r", 250), (b"a/p/2", 200)],
-        }
-    )
-    assert hint == (
-        "Directories with the most stored subdirectories, by depth:\n"
-        "  depth 1:\n"
-        "    1300  a\n"
-        "      20  b\n"
-        "  depth 3:\n"
-        "     400  a/big/x\n"
-        "          a/p/\n"
-        "     300    1\n"
-        "     200    2\n"
-        "     250  b/q/r"
+        "WARNING: tree 1 (/exp): budget 3 reached: stored 2 of 4 directories,"
+        " every level above depth 2 in full; 1 directory whose subdirectories"
+        " were left out is marked * in the page. Raise the tree's budget in the"
+        " sets file to store more.\n"
     )
 
 
-def test_busiest_hint_shows_non_utf8_names_escaped():
-    assert busiest_hint({2: [(CAFE, 5)]}).endswith("5  caf\\xe9/x")
-
-
-def test_too_many_dirs_error_names_the_busiest_dirs(monkeypatch, tmp_path, capsys):
-    exp = Tree(1, "c", None, b"/exp", 2)
-    _fake_db(monkeypatch, {exp: [(ROOT, 9), (b"a", 5), (b"a/x", 3), (b"b", 4)]})
-    sets = _write(
-        tmp_path, '[tree."/exp".set.B]\ndirs = [{ match = ["*"], depth = 1 }]\n'
-    )
-    argv = ["--db", "x", "--out", str(tmp_path / "d"), "--sets", str(sets)]
-    assert generate.main([*argv, "--max-dirs", "2"]) == 1
+def test_run_warns_of_set_dirs_below_the_cut(monkeypatch, tmp_path, capsys):
+    status, doc = _cut_run(monkeypatch, tmp_path, 3, CUT_SET + DEEP_SET)
+    assert status == 0
+    assert doc["sets"][2] == {"name": "Deep", "paths": []}
     err = capsys.readouterr().err
-    assert err.startswith("ERROR: tree 1 (/exp): its sets store 3 directories")
-    assert err.endswith("raise --max-dirs.\n" + busiest_hint({1: [(b"a", 1)]}) + "\n")
+    assert (
+        "WARNING: tree 1 (/exp): set 'Deep': 2 of its 2 dirs are below the"
+        " budget's cut and left out\n"
+    ) in err
+    assert "matches no directory" not in err
+
+
+def test_run_does_not_warn_at_exact_budget(monkeypatch, tmp_path, capsys):
+    status, doc = _cut_run(monkeypatch, tmp_path, 4)
+    assert status == 0
+    assert (doc["pruned"], doc["split"]) == ([], ["a"])
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_verbose_reports_pruned(monkeypatch, tmp_path, capsys):
+    _cut_run(monkeypatch, tmp_path, 3, CUT_SET, "-v")
+    assert re.search(
+        r"tree 1 \(/exp\): 1 points, 2 stored dirs in 2 sets, 1 pruned, [\d.]+ s\n",
+        capsys.readouterr().err,
+    )
+
+
+def test_cut_warning_is_none_without_a_cut():
+    assert cut_warning(TREE, HISTORY, 10) is None

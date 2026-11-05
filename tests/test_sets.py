@@ -9,9 +9,7 @@ from dirhistory.sets import (
     DirSet,
     Matcher,
     SetDirs,
-    TooManyDirs,
     TreeConfig,
-    busiest,
     cut,
     level,
     load,
@@ -94,7 +92,6 @@ def test_matcher_largest_depth_wins_across_groups_and_sets():
     for p in [b"a", b"a/x"]:
         m.add(p)
     assert m.stored() == {b"a": 1, b"a/x": 0}
-    assert m.counts() == [1, 2]
 
 
 def test_matcher_largest_depth_wins_within_a_set():
@@ -102,7 +99,6 @@ def test_matcher_largest_depth_wins_within_a_set():
     for p in [b"a", b"a/x", b"a/x/y"]:
         m.add(p)
     assert m.stored() == {b"a": 2, b"a/x": 1, b"a/x/y": 0}
-    assert m.counts() == [3]
 
 
 def test_matcher_root_pattern_covers_children():
@@ -118,40 +114,16 @@ def test_matcher_ignores_repeated_adds():
         m.add(p)
     assert m.matches() == [[[b"a"]]]
     assert m.stored() == {b"a": 1, b"a/x": 0}
-    assert m.counts() == [2]
-
-
-def test_matcher_counts_a_path_once_per_set():
-    m = Matcher([_set("s", ("a", 1), ("*", 0)), _set("t", ("a/*", 0))])
-    for p in [b"a", b"a/x", b"b"]:
-        m.add(p)
-    assert m.counts() == [3, 1]  # a, a/x, b; a/x
 
 
 def test_select_keeps_config_order_and_first_occurrence():
-    w = select("s", [[b"b", b"c"], [b"a", b"b"]])
-    assert w == SetDirs("s", [b"b", b"c", b"a"], [2, 2])
+    w = select("s", [[b"b", b"c"], [b"a", b"b"]], {b"a", b"b", b"c"})
+    assert w == SetDirs("s", [b"b", b"c", b"a"], [2, 2], 0)
 
 
-def test_too_many_dirs_names_the_sets_and_counts():
-    e = TooManyDirs(30, 20, [("Top level", 10), ("Users", 25)], {})
-    assert (e.found, e.limit, e.counts) == (30, 20, [("Top level", 10), ("Users", 25)])
-    assert "30" in str(e) and "20" in str(e)
-    assert "'Users' 25" in str(e)
-
-
-def test_busiest_ranks_dirs_by_stored_subdirs_per_depth():
-    stored = [b"a", b"a/x", b"a/x/1", b"a/x/2", b"a/y", b"b", b"b/z", b"c"]
-    assert busiest(stored, top=2) == {1: [(b"a", 4), (b"b", 1)], 2: [(b"a/x", 2)]}
-
-
-def test_busiest_breaks_ties_by_path_and_skips_the_root():
-    stored = [b".", b"b", b"b/1", b"a", b"a/1", b"c", b"c/1"]
-    assert busiest(stored, top=2) == {1: [(b"a", 1), (b"b", 1)]}
-
-
-def test_busiest_counts_under_ancestors_that_are_not_stored():
-    assert busiest([b"a/x", b"a/x/1"], top=10) == {1: [(b"a", 2)], 2: [(b"a/x", 1)]}
+def test_select_leaves_out_cut_paths():
+    w = select("s", [[b"b", b"c"], [b"a", b"b"]], {b"b"})
+    assert (w.paths, w.found, w.dropped) == ([b"b"], [2, 2], 2)
 
 
 def test_with_implicit_comes_first():

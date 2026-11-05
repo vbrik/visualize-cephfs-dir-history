@@ -11,7 +11,7 @@ from dirhistory.history import (
     choose_points,
     summarize,
 )
-from dirhistory.sets import DirGroup, DirSet, TooManyDirs, parse_pattern
+from dirhistory.sets import DirGroup, DirSet, parse_pattern
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 GiB = 2**30
@@ -26,9 +26,9 @@ def ds(name: str, *pairs: tuple[str, int]) -> DirSet:
     return DirSet(name, [DirGroup([parse_pattern(t)], d) for t, d in pairs])
 
 
-def run(rows, n=None, step=timedelta(hours=1), sets=(), cap=100):
+def run(rows, n=None, step=timedelta(hours=1), sets=(), budget=None):
     """Summarize a tree given as rows (sample_id, path, rbytes, rentries, deleted),
-    storing the dirs of SETS (DirSets), at most CAP.
+    storing the dirs of SETS (DirSets) within BUDGET (None: all).
 
     Rows of sample 1 form the first sample; the rest are later changes.
     """
@@ -39,7 +39,7 @@ def run(rows, n=None, step=timedelta(hours=1), sets=(), cap=100):
     def fetch(paths):
         return [r for r in rows if r[1] in paths]
 
-    return summarize(samples(n, step), changed, first, fetch, sets=sets, max_dirs=cap)
+    return summarize(samples(n, step), changed, first, fetch, sets=sets, budget=budget)
 
 
 def test_choose_points_keeps_every_sample_when_few():
@@ -274,7 +274,7 @@ def test_dir_created_later_is_stored():
 
 def test_set_dirs_order_and_found():
     rows = [(1, ROOT, 9, 9, False)] + [(1, p, 1, 1, False) for p in (b"a", b"b", b"c")]
-    h = run(rows, n=1, sets=[ds("s", ("c", 0), ("*", 0), ("z", 0))], cap=3)
+    h = run(rows, n=1, sets=[ds("s", ("c", 0), ("*", 0), ("z", 0))], budget=3)
     assert h.sets[0].paths == [b"c", b"a", b"b"]
     assert h.sets[0].found == [1, 3, 0]
 
@@ -305,32 +305,43 @@ def test_root_set_dir_splits():
     assert h.sets[0].paths == [ROOT]
     assert h.split == [ROOT]
     assert set(h.rbytes) == {ROOT, b"a"}
+    assert (h.pruned, h.candidates, h.cut_level) == ([], 2, None)
 
 
-def test_too_many_stored_dirs_raises_before_fetching():
-    first = [ROOT, b"a", b"b", b"c"]
-    with pytest.raises(TooManyDirs) as e:
-        summarize(
-            samples(1),
-            set(),
-            first,
-            lambda paths: pytest.fail("fetched"),
-            sets=[ds("ok", ("a", 0)), ds("Users", ("*", 0))],
-            max_dirs=2,
-        )
-    assert (e.value.found, e.value.counts) == (3, [("ok", 1), ("Users", 3)])
-
-
-def test_too_many_stored_dirs_names_the_busiest_dirs():
+def test_budget_cuts_before_fetching_and_fetches_only_kept_dirs():
     first = [ROOT, b"a", b"a/x", b"a/y", b"b"]
-    with pytest.raises(TooManyDirs) as e:
-        summarize(samples(1), set(), first, list, sets=[ds("s", ("*", 1))], max_dirs=2)
-    assert e.value.busiest == {1: [(b"a", 2)]}
+    fetched = []
+
+    def fetch(paths):
+        fetched.append(paths)
+        return []
+
+    h = summarize(samples(1), set(), first, fetch, sets=[ds("s", ("*", 1))], budget=3)
+    # level 1 fits (1 left); a's 2 subdirs do not
+    assert fetched == [{b"a", b"b"}]
+    assert set(h.rbytes) == {b"a", b"b"}
+    assert (h.pruned, h.split, h.candidates, h.cut_level) == ([b"a"], [], 4, 2)
+
+
+def test_budget_drops_set_dirs_below_the_cut():
+    rows = [(1, p, 1, 1, False) for p in (ROOT, b"a", b"b", b"a/x", b"b/y")]
+    h = run(rows, sets=[ds("Top", ("*", 0)), ds("Deep", ("*/*", 0))], budget=3)
+    assert [(s.name, s.paths, s.found, s.dropped) for s in h.sets] == [
+        ("Top", [b"a", b"b"], [2], 0),
+        ("Deep", [b"a/x"], [2], 1),
+    ]
+
+
+def test_no_budget_keeps_everything():
+    rows = [(1, p, 1, 1, False) for p in (ROOT, b"a", b"a/x", b"b")]
+    h = run(rows, sets=[ds("s", ("*", 1))])
+    assert set(h.rbytes) == {b"a", b"a/x", b"b"}
+    assert (h.pruned, h.cut_level) == ([], None)
 
 
 def test_stored_count_is_distinct_paths_across_sets():
     rows = [(1, ROOT, 9, 9, False), (1, b"a", 1, 1, False), (1, b"b", 1, 1, False)]
-    h = run(rows, sets=[ds("s", ("a", 0)), ds("t", ("a", 0), ("b", 0))], cap=2)
+    h = run(rows, sets=[ds("s", ("a", 0)), ds("t", ("a", 0), ("b", 0))], budget=2)
     assert set(h.rbytes) == {b"a", b"b"}
 
 

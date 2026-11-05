@@ -25,22 +25,15 @@ trees: two trees with the same path (on different clusters or filesystems)
 cannot be told apart.
 """
 
-import heapq
 import os
 import tomllib
-from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections import defaultdict
+from collections.abc import Container, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
 IMPLICIT_NAME = "Top level"
-
-# Default most stored dirs per tree; more is an error. It guards a per-tree
-# file against a depth or pattern that stores far more than meant.
-MAX_DIRS = 100_000
-# Dirs per depth that TooManyDirs names as the busiest, to show what to cut.
-BUSIEST_TOP = 10
 
 # Path components, as bytes.
 type Parts = tuple[bytes, ...]
@@ -292,7 +285,6 @@ class Matcher:
         self._lo = min((len(parts) for _, _, parts, _ in self._entries), default=0)
         self._hi = max((len(parts) + d for _, _, parts, d in self._entries), default=-1)
         self._matches = [[set() for _ in s.patterns()] for s in sets]
-        self._covered: list[set[bytes]] = [set() for _ in sets]
         self._stored: dict[bytes, int] = {}
 
     @property
@@ -312,7 +304,6 @@ class Matcher:
             if n <= length <= n + depth and all(
                 fnmatchcase(c, p) for c, p in zip(parts, pattern, strict=False)
             ):
-                self._covered[i].add(path)
                 self._stored[path] = max(
                     self._stored.get(path, 0), depth - (length - n)
                 )
@@ -329,71 +320,31 @@ class Matcher:
         patterns that cover it."""
         return dict(self._stored)
 
-    def counts(self) -> list[int]:
-        """Return, per set, how many distinct stored paths its patterns cover."""
-        return [len(covered) for covered in self._covered]
-
 
 @dataclass(frozen=True, slots=True)
 class SetDirs:
     """A set's dirs.
 
     name: the set's. paths: in display order. found: per pattern, how many
-    paths it matched.
+    paths it matched, kept or not. dropped: how many of its dirs the budget
+    left out (see cut).
     """
 
     name: str
     paths: list[bytes]
     found: list[int]
+    dropped: int = 0
 
 
-def select(name: str, matches: list[list[bytes]]) -> SetDirs:
+def select(name: str, matches: list[list[bytes]], kept: Container[bytes]) -> SetDirs:
     """Return the dirs of the set NAME from MATCHES (per pattern, in file
-    order): a path matched by several patterns counts at its first."""
+    order) that are in KEPT: a path matched by several patterns counts at
+    its first."""
     ordered = list(dict.fromkeys(p for found in matches for p in found))
-    return SetDirs(name, ordered, [len(found) for found in matches])
-
-
-type Busiest = dict[int, list[tuple[bytes, int]]]
-
-
-def busiest(stored: Iterable[bytes], top: int = BUSIEST_TOP) -> Busiest:
-    """Return, by depth below the tree root (ascending), the TOP dirs with the
-    most STORED paths below them as (path, count), most first, ties by path.
-
-    A dir counts whether it is stored itself or only an ancestor of stored
-    paths (as under a pattern like `a/*`); dirs with none below are left out.
-    """
-    below: Counter[bytes] = Counter()
-    for path in stored:
-        parts = _components(path)
-        for k in range(1, len(parts)):
-            below[b"/".join(parts[:k])] += 1
-    by_depth: defaultdict[int, list[tuple[bytes, int]]] = defaultdict(list)
-    for path, n in below.items():
-        by_depth[path.count(b"/") + 1].append((path, n))
-    return {
-        depth: heapq.nsmallest(top, dirs, key=lambda d: (-d[1], d[0]))
-        for depth, dirs in sorted(by_depth.items())
-    }
-
-
-class TooManyDirs(ValueError):
-    """More distinct stored dirs (FOUND) than the cap (LIMIT). COUNTS are the
-    dirs each set covers, as (set name, count); BUSIEST, what busiest returns
-    for the stored dirs."""
-
-    def __init__(
-        self, found: int, limit: int, counts: list[tuple[str, int]], busiest: Busiest
-    ):
-        per_set = ", ".join(f"{name!r} {n}" for name, n in counts)
-        super().__init__(
-            f"{found} directories to store, more than {limit}; per set: {per_set}"
-        )
-        self.found = found
-        self.limit = limit
-        self.counts = counts
-        self.busiest = busiest
+    paths = [p for p in ordered if p in kept]
+    return SetDirs(
+        name, paths, [len(found) for found in matches], len(ordered) - len(paths)
+    )
 
 
 @dataclass(frozen=True, slots=True)

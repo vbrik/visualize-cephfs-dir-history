@@ -3,10 +3,11 @@
 Pure logic, no database: the caller supplies samples and dir_state rows.
 
 The series kept are two metrics of the *stored* directories, those the
-tree's sets cover (sets.Matcher): rbytes, and rentries (rfiles + rsubdirs,
-so a directory counts itself). The page derives the bands and cards it draws
-from them, including a directory's own-files amount (its value minus its
-stored subdirectories'), so no own amounts are computed here.
+tree's sets cover (sets.Matcher) within its budget (sets.cut): rbytes, and
+rentries (rfiles + rsubdirs, so a directory counts itself). The page
+derives the bands and cards it draws from them, including a directory's
+own-files amount (its value minus its stored subdirectories'), so no own
+amounts are computed here.
 """
 
 from collections.abc import Callable, Iterable, Sequence
@@ -14,13 +15,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from dirhistory.sets import (
-    MAX_DIRS,
     ROOT,
     DirSet,
     Matcher,
     SetDirs,
-    TooManyDirs,
-    busiest,
+    cut,
     parent,
     select,
 )
@@ -60,11 +59,14 @@ class Sample:
 @dataclass(frozen=True, slots=True)
 class TreeHistory:
     """A tree's chosen time points, its sets' dirs (in config order), the
-    rbytes and rentries series of every stored dir (the same keys), and the
-    dirs to split.
+    rbytes and rentries series of every stored dir (the same keys), the dirs
+    to split, and what the budget cut.
 
     split: the sorted dirs whose subdirectories are all stored, so the page
-    can replace such a dir by them.
+    can replace such a dir by them. pruned: the sorted dirs that would be
+    split but for the budget (sets.cut). candidates: how many dirs the sets
+    cover, stored or not. cut_level: the shallowest level with a covered dir
+    left out; None if none is.
     """
 
     times: list[datetime]
@@ -72,6 +74,9 @@ class TreeHistory:
     rentries: dict[bytes, Series]
     sets: list[SetDirs]
     split: list[bytes]
+    pruned: list[bytes]
+    candidates: int
+    cut_level: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +143,7 @@ def summarize(
     fetch: Callable[[set[bytes]], Iterable[Row]],
     resolution: Resolution = DEFAULT_RESOLUTION,
     sets: Sequence[DirSet] = (),
-    max_dirs: int = MAX_DIRS,
+    budget: int | None = None,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
 
@@ -148,10 +153,10 @@ def summarize(
     stream. RESOLUTION picks the time points.
 
     The stored dirs are the paths, among the first sample's and CHANGED, that
-    SETS cover (sets.Matcher). A path outside CHANGED has its single row in
-    the first sample, so a never-changed dir gets a constant series. More
-    than MAX_DIRS stored dirs raise sets.TooManyDirs before any series is
-    fetched.
+    SETS cover (sets.Matcher), cut to BUDGET (sets.cut; None: no cut) before
+    any series is fetched, so only the kept dirs are. A path outside CHANGED
+    has its single row in the first sample, so a never-changed dir gets a
+    constant series.
 
     A dir is split when it is stored with at least one level below it, i.e.
     all its subdirectories are stored too.
@@ -163,10 +168,9 @@ def summarize(
             matcher.add(path)
         for path in changed:
             matcher.add(path)
-    stored = matcher.stored()
-    if len(stored) > max_dirs:
-        counts = list(zip((s.name for s in sets), matcher.counts(), strict=True))
-        raise TooManyDirs(len(stored), max_dirs, counts, busiest(stored))
+    candidates = matcher.stored()
+    trimmed = None if budget is None else cut(candidates, budget)
+    stored = candidates if trimmed is None else trimmed.kept
     matches = matcher.matches()
     rbytes, rentries = _replay(samples, points, fetch(set(stored)))
     split = {parent(p) for p in stored if p != ROOT and stored.get(parent(p), -1) >= 1}
@@ -175,8 +179,11 @@ def summarize(
         [p.started for p in points],
         {p: rbytes.get(p, absent[:]) for p in sorted(stored)},
         {p: rentries.get(p, absent[:]) for p in sorted(stored)},
-        [select(s.name, m) for s, m in zip(sets, matches, strict=True)],
+        [select(s.name, m, stored) for s, m in zip(sets, matches, strict=True)],
         sorted(split),
+        [] if trimmed is None else trimmed.pruned,
+        len(candidates),
+        None if trimmed is None else trimmed.level,
     )
 
 
