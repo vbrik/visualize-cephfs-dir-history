@@ -4,6 +4,7 @@ import pytest
 
 from dirhistory.sets import (
     IMPLICIT,
+    Cut,
     DirGroup,
     DirSet,
     Matcher,
@@ -11,6 +12,8 @@ from dirhistory.sets import (
     TooManyDirs,
     TreeConfig,
     busiest,
+    cut,
+    level,
     load,
     parse_pattern,
     select,
@@ -364,3 +367,75 @@ def test_load_names_the_set_of_a_bad_pattern(tmp_path):
 def test_load_missing_file_is_an_oserror(tmp_path):
     with pytest.raises(OSError):
         load(tmp_path / "nope.toml")
+
+
+def _stored(**dirs):
+    """A Matcher.stored() result: DIRS maps a path (`__` for `/`, `_` for
+    the root `.`) to its depth left."""
+    return {
+        (b"." if k == "_" else k.replace("__", "/").encode()): d
+        for k, d in dirs.items()
+    }
+
+
+def test_level():
+    assert level(b".") == 0
+    assert level(b"a") == 1
+    assert level(b"a/b") == 2
+
+
+def test_cut_keeps_everything_within_budget():
+    stored = _stored(a=1, a__x=0, b=0)
+    assert cut(stored, 4) == Cut(stored, [], None)
+
+
+def test_cut_exact_budget_is_no_cut():
+    stored = _stored(a=1, a__x=0, b=0)
+    assert cut(stored, 3) == Cut(stored, [], None)
+    boundary = _stored(a=1, b=1, a__x=0, b__y=0)
+    assert cut(boundary, 4) == Cut(boundary, [], None)
+
+
+def test_cut_stops_between_levels():
+    c = cut(_stored(a=1, b=1, a__x=0, a__y=0, b__z=0), 2)
+    assert c == Cut({b"a": 1, b"b": 1}, [b"a", b"b"], 2)
+
+
+def test_cut_fills_a_level_by_whole_parents():
+    # a's 1 fits (1 left), b's 2 do not: filling stops, c/w (which fits) too
+    c = cut(_stored(a=1, b=1, c=1, a__x=0, b__y=0, b__z=0, c__w=0), 5)
+    assert sorted(c.kept) == [b"a", b"a/x", b"b", b"c"]
+    assert (c.pruned, c.level) == ([b"b", b"c"], 2)
+
+
+def test_cut_first_unit_too_big_keeps_none_of_the_level():
+    c = cut(_stored(a=1, a__x=0, a__y=0), 2)
+    assert c == Cut({b"a": 1}, [b"a"], 2)
+
+
+def test_cut_fills_unparented_set_dirs_one_by_one():
+    c = cut(_stored(a=0, b=0, c=0), 2)
+    assert c == Cut({b"a": 0, b"b": 0}, [], 1)
+
+
+def test_cut_does_not_prune_a_dir_stored_at_depth_0():
+    # q is stored for itself only; q/r is a set dir of its own
+    c = cut(_stored(q=0, q__r=0, a=0), 2)
+    assert c == Cut({b"a": 0, b"q": 0}, [], 2)
+
+
+def test_cut_never_prunes_dirs_without_candidate_subdirs():
+    # a/x has depth left, but the tree's max_depth stops it
+    stored = _stored(a=2, a__x=1)
+    assert cut(stored, 2) == Cut(stored, [], None)
+    assert cut(stored, 1) == Cut({b"a": 2}, [b"a"], 2)
+
+
+def test_cut_root_is_level_0():
+    c = cut(_stored(_=1, a=0, b=0), 2)
+    assert c == Cut({b".": 1}, [b"."], 1)
+
+
+def test_cut_orders_by_bytes():
+    stored = {b"caf\xe9": 0, b"cafe": 0, b"Z": 0}
+    assert sorted(cut(stored, 2).kept) == [b"Z", b"cafe"]

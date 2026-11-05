@@ -29,7 +29,7 @@ import heapq
 import os
 import tomllib
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -44,6 +44,20 @@ BUSIEST_TOP = 10
 
 # Path components, as bytes.
 type Parts = tuple[bytes, ...]
+
+# The tree root, as paths relative to it name it.
+ROOT = b"."
+
+
+def parent(path: bytes) -> bytes:
+    """Return the parent of PATH, which must not be ROOT."""
+    head, sep, _ = path.rpartition(b"/")
+    return head if sep else ROOT
+
+
+def level(path: bytes) -> int:
+    """Return how many components ROOT-relative PATH has (ROOT: 0)."""
+    return 0 if path == ROOT else path.count(b"/") + 1
 
 
 def _components(path: bytes) -> Parts:
@@ -289,7 +303,7 @@ class Matcher:
     def add(self, path: bytes) -> None:
         """Record PATH under every pattern that matches or covers it."""
         # Cheap: it sees every path of a tree's first sample, and most stop here.
-        length = 0 if path == b"." else path.count(b"/") + 1
+        length = level(path)
         if not self._lo <= length <= self._hi:
             return
         parts = _components(path)
@@ -380,3 +394,65 @@ class TooManyDirs(ValueError):
         self.limit = limit
         self.counts = counts
         self.busiest = busiest
+
+
+@dataclass(frozen=True, slots=True)
+class Cut:
+    """What cut kept of a tree's stored dirs.
+
+    kept: the kept paths, with their depth left (as Matcher.stored). pruned:
+    the kept dirs that would have been split but are not, sorted. level: the
+    partial level, the shallowest with a dir left out; None if none is.
+    """
+
+    kept: dict[bytes, int]
+    pruned: list[bytes]
+    level: int | None
+
+
+def cut(stored: Mapping[bytes, int], budget: int) -> Cut:
+    """Return the dirs of STORED (Matcher.stored) to keep within BUDGET,
+    breadth-first from the tree root.
+
+    Levels are kept whole, shallowest first, while they fit. The first level
+    that does not fit is filled by units in byte order of their first path,
+    up to the first unit that does not fit; nothing deeper is kept. A unit is
+    all the stored subdirs of a stored dir, so every kept dir has all of its
+    stored subdirs kept or none: a partly kept dir could neither be split
+    (the page needs all its subdirs) nor be told from a leaf. A dir whose
+    parent is not stored (a set dir) is a unit of its own.
+
+    A kept dir is pruned if it is stored with levels below it (depth left
+    >= 1, so without the cut it would be split) and its subdirs were left
+    out. A dir stored only for itself, whose subdir is a set dir of its own,
+    is not: raising the budget would not make it splittable.
+    """
+    by_level: defaultdict[int, list[bytes]] = defaultdict(list)
+    for path in stored:
+        by_level[level(path)].append(path)
+    kept: dict[bytes, int] = {}
+    left = budget
+    partial = None
+    for lvl in sorted(by_level):
+        paths = by_level[lvl]
+        if len(paths) <= left:
+            kept.update((p, stored[p]) for p in paths)
+            left -= len(paths)
+            continue
+        partial = lvl
+        units: dict[bytes, list[bytes]] = {}
+        for path in sorted(paths):
+            up = parent(path) if path != ROOT else path
+            units.setdefault(up if up in stored else path, []).append(path)
+        for unit in units.values():
+            if len(unit) > left:
+                break
+            kept.update((p, stored[p]) for p in unit)
+            left -= len(unit)
+        break
+    pruned = {
+        up
+        for path in stored.keys() - kept.keys()
+        if (up := parent(path)) in kept and stored[up] >= 1
+    }
+    return Cut(kept, sorted(pruned), partial)

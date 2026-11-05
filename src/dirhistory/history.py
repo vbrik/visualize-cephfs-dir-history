@@ -15,15 +15,15 @@ from datetime import datetime, timedelta
 
 from dirhistory.sets import (
     MAX_DIRS,
+    ROOT,
     DirSet,
     Matcher,
     SetDirs,
     TooManyDirs,
     busiest,
+    parent,
     select,
 )
-
-ROOT = b"."
 
 # Defaults of Resolution.
 # At most this many time points per tree, so its file and the page's render
@@ -72,12 +72,6 @@ class TreeHistory:
     rentries: dict[bytes, Series]
     sets: list[SetDirs]
     split: list[bytes]
-
-
-def parent(path: bytes) -> bytes:
-    """Return the parent of PATH, which must not be ROOT."""
-    head, sep, _ = path.rpartition(b"/")
-    return head if sep else ROOT
 
 
 @dataclass(frozen=True, slots=True)
