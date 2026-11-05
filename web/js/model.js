@@ -1,10 +1,17 @@
 // Pure data shaping for the charts; no DOM. See docs/terms.md for "set",
 // "stored dir", "metric" and "own-files band". A tree file holds, per time
 // point, the rbytes and rentries of every stored dir (a set dir, or one
-// within its depth below it), the tree's sets, and `split`: the stored dirs
-// whose subdirs are all stored.
+// within its depth below it), the tree's sets, `split`: the stored dirs
+// whose subdirs are all stored, and `pruned`: the stored dirs whose subdirs
+// the tree's budget left out.
 
 export const ROOT = ".";
+
+// The mark after a pruned dir's name, and what it means. Display only: a
+// band's label, which sorts and names it, has no mark (see markedLabel).
+export const PRUNED_MARK = "*";
+export const PRUNED_TITLE = "Subdirectories not stored: the tree's budget ran out";
+export const PRUNED_NOTE = `${PRUNED_MARK} ${PRUNED_TITLE}.`;
 
 // Most bands the Stack view draws (Top's max), and Top's default.
 export const MAX_BANDS = 512;
@@ -181,8 +188,9 @@ export const METRICS = {
 /**
  * RAW, a tree file as read, ready for the views: for each METRICS key, a
  * map from every stored dir to its series, a list of one value (or null:
- * absent) per time point; `split` a Set; and `children` a Map from each
- * split dir to its stored subdirs, sorted.
+ * absent) per time point; `split` and `pruned` Sets (a file written before
+ * `pruned` has none); and `children` a Map from each split dir to its
+ * stored subdirs, sorted.
  *
  * The file's `series` maps each dir to one series per metric, in the order
  * of its `metrics`; a series that never changed is one number. A metric the
@@ -207,7 +215,7 @@ export function normalize(raw) {
     if (p !== ROOT) children.get(parentOf(p))?.push(p);
   }
   for (const kids of children.values()) kids.sort();
-  return { ...rest, ...metrics, split, children };
+  return { ...rest, ...metrics, split, pruned: new Set(raw.pruned ?? []), children };
 }
 
 /**
@@ -329,6 +337,7 @@ export function stackBands(data, opts) {
       ...band,
       label: bandLabel(data, band, base ?? ROOT, METRICS[metric].own),
       drillable: !band.own && data.split.has(band.dir),
+      pruned: !band.own && data.pruned.has(band.dir),
     }));
   const key = by.replace(/^-/, "");
   // toSorted is stable, so ties stay in rank order.
@@ -349,6 +358,9 @@ export function stackBands(data, opts) {
   const of = new Map(withRates.map((band) => [band.key, band]));
   return { ...result, bands: withRates, byRank: bands.map((band) => of.get(band.key)) };
 }
+
+/** BAND's label (from stackBands) as shown: with PRUNED_MARK if pruned. */
+export const markedLabel = (band) => (band.pruned ? `${band.label}${PRUNED_MARK}` : band.label);
 
 /** BAND's label: its dir relative to BASE, where BASE itself (and ROOT) is
  * named, not "."; an own-files band adds "/ OWN" (see METRICS). */

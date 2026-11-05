@@ -1,6 +1,6 @@
 // The Stack view's chart: stacked area of its bands over time (ECharts).
 
-import { escapeHtml, formatBytes, formatDelta, formatRate, stepIndex } from "../model.js";
+import { escapeHtml, formatBytes, formatDelta, formatRate, markedLabel, stepIndex } from "../model.js";
 
 /**
  * Return the ECharts option for MODEL ({bands}: those of model.stackBands
@@ -30,7 +30,7 @@ export function stackedAreaOption(
   const times = data.times.map((t) => Date.parse(t));
   const layers = model.bands.map((b) => ({
     id: b.key,
-    name: b.label,
+    name: markedLabel(b),
     values: change ? b.rates.map((v) => v ?? 0) : b.values,
     color: colors.bands.get(b.key),
     gap: change ? 0 : (gaps.get(b.key) ?? GAP_PX),

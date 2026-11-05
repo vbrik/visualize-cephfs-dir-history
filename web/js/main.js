@@ -14,6 +14,9 @@ import {
   MAX_BANDS,
   METRICS,
   PALETTE_SIZE,
+  PRUNED_MARK,
+  PRUNED_NOTE,
+  PRUNED_TITLE,
   ROOT,
   decodeValue,
   encodeValue,
@@ -22,6 +25,7 @@ import {
   formatRate,
   indexRange,
   layerAt,
+  markedLabel,
   maxDepth,
   normalize,
   passes,
@@ -379,6 +383,8 @@ function renderStack(s, set) {
   renderLegend(c, s);
   renderTable();
   renderChips(s.hide);
+  $("pruned-note").textContent = PRUNED_NOTE;
+  $("pruned-note").hidden = !model.bands.some((band) => band.pruned);
   renderSummary(s, set, inPath);
 }
 
@@ -459,9 +465,11 @@ function renderLegend(c, s) {
     tick.checked = on;
     tick.setAttribute("aria-label", `Draw ${band.label}`);
     tick.addEventListener("change", () => pick(band.key, tick.checked, s));
-    const name = band.drillable ? button(band.label, () => drill(band.dir)) : text(band.label);
+    const label = markedLabel(band);
+    const name = band.drillable ? button(label, () => drill(band.dir)) : text(label);
     name.classList.add("label");
     if (band.drillable) name.title = `Split ${absolute(band.dir)} into its subdirectories`;
+    if (band.pruned) name.title = PRUNED_TITLE;
     const delta = text(formatChange(band.values[b] - band.values[a]));
     delta.className = "delta";
     li.append(tick, swatch(c.bands.get(band.key)), name, value(band.values[b]), delta, hideButton(band, s));
@@ -502,7 +510,9 @@ function nextLegendSort(current, by) {
 function renderTable() {
   const [a, b] = range;
   $("table-body").replaceChildren(
-    ...drawn.map(({ label, values, rates: rs }) => {
+    ...drawn.map((band) => {
+      const { values, rates: rs } = band;
+      const label = markedLabel(band);
       const tr = document.createElement("tr");
       const r = change ? rangeRates(values, rs) : null;
       const cells = change
@@ -529,7 +539,10 @@ function renderTable() {
 /** A hide-list key as a name: a dir's path, or e.g. `dir/ bytes` for a dir's
  * own files. */
 function hiddenName(key) {
-  if (!key.endsWith("/.")) return key === ROOT ? data.tree.fs_path : key;
+  if (!key.endsWith("/.")) {
+    const name = key === ROOT ? data.tree.fs_path : key;
+    return data.pruned.has(key) ? `${name}${PRUNED_MARK}` : name;
+  }
   const dir = key.slice(0, -2);
   return `${dir === ROOT ? data.tree.fs_path : dir}/ ${METRICS[metric].own}`;
 }
@@ -593,6 +606,8 @@ function renderTrends(s, set) {
   $("trends-hidden").textContent = cards.length === 0
     ? `All ${hidden} directories are filtered out (${why}); ${undo} to see them.`
     : `${hidden} director${hidden === 1 ? "y" : "ies"} filtered out (${why}).`;
+  $("trends-pruned").textContent = PRUNED_NOTE;
+  $("trends-pruned").hidden = !cards.some((card) => data.pruned.has(card.path));
 
   sparkX = sparkXs(data.times, range);
   const scale = change ? rateScale(cards, range) : null; // shared by the shown cards
@@ -604,8 +619,9 @@ function renderTrends(s, set) {
     cardOf.set(el, card);
     el.className = `trend-card ${trend(card)}`;
     const name = el.querySelector(".name");
-    name.textContent = card.path === ROOT ? data.tree.fs_path : card.path;
-    name.title = absolute(card.path);
+    const pruned = data.pruned.has(card.path);
+    name.textContent = `${card.path === ROOT ? data.tree.fs_path : card.path}${pruned ? PRUNED_MARK : ""}`;
+    name.title = pruned ? `${absolute(card.path)} — ${PRUNED_TITLE}` : absolute(card.path);
     el.querySelector(".size").textContent = change
       ? rate(card.rate)
       : card.values[b] === null

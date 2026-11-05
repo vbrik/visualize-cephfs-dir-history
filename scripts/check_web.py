@@ -295,6 +295,59 @@ def check_fixture(page: Page, base: str) -> None:
     )
 
 
+PRUNED_TITLE = "Subdirectories not stored: the tree's budget ran out"
+PRUNED_NOTE = "* Subdirectories not stored: the tree's budget ran out."
+
+
+def check_pruned(page: Page, base: str) -> None:
+    """Dirs in the file's `pruned` are marked * wherever they are named."""
+    # A file without `pruned` (written before it existed) marks nothing.
+    go(page, f"{base}#tree=1&sflat=1&smin=0")
+    assert not [b for b in bands(page) if b.endswith("*")], f"marked: {bands(page)}"
+    assert page.is_hidden("#pruned-note"), "pruned note shown with nothing pruned"
+
+    raw = json.loads((FIXTURE / "tree-1.json").read_text())
+    raw["pruned"] = ["Q"]
+    page.route("**/data/tree-1.json", lambda r: r.fulfill(json=raw))
+    act(page, page.reload)  # a goto that changes only the hash would not refetch
+    names = bands(page)
+    assert "Q*" in names and "A" in names and "Z" in names, f"marks: {names}"
+    label = page.locator("#legend .label", has_text=re.compile(r"^Q\*$"))
+    assert label.get_attribute("title") == PRUNED_TITLE, "no title on Q*"
+    assert page.is_visible("#pruned-note"), "no pruned note"
+    assert page.inner_text("#pruned-note") == PRUNED_NOTE, page.inner_text(
+        "#pruned-note"
+    )
+    rows = page.eval_on_selector_all(
+        "#table-body tr td:first-child", "els => els.map(e => e.textContent)"
+    )
+    assert "Q*" in rows, f"table: {rows}"
+
+    # The mark is not part of the name: sorting by Dir ignores it.
+    act(page, lambda: page.click("#legend-head .sort[data-sort=name]"))
+    by_name = bands(page)
+    plain = [b.removesuffix("*") for b in by_name]
+    assert plain in (sorted(plain), sorted(plain, reverse=True)), f"sort: {by_name}"
+
+    q_label = page.locator(".label", has_text=re.compile(r"^Q\*$"))
+    hide = page.locator("#legend li").filter(has=q_label).locator("button.hide")
+    act(page, hide.click)
+    chips = page.eval_on_selector_all(
+        "#hidden-list button", "els => els.map(e => e.textContent)"
+    )
+    assert chips == ["Q* \N{MULTIPLICATION X}"], f"chips: {chips}"
+
+    go(page, f"{base}#tree=1&view=trends&flat=1&min=0")
+    q = card(page, "Q*")
+    assert q.count() == 1, f"cards: {cards(page)}"
+    title = q.locator(".name").get_attribute("title")
+    assert title.startswith("/fixture/Q") and PRUNED_TITLE in title, title
+    assert page.is_visible("#trends-pruned"), "no Trends pruned note"
+    assert page.inner_text("#trends-pruned") == PRUNED_NOTE
+    go(page, f"{base}#tree=1&view=trends&flat=1&min=0&set=Mixed")
+    assert page.is_hidden("#trends-pruned"), "Trends note without a pruned card"
+
+
 def series(page: Page) -> dict[str, str]:
     """The Stack chart's series, bottom first, as {band key: color}."""
     return page.evaluate(
@@ -1838,6 +1891,7 @@ def main() -> int:
         for check in (
             check_model,
             check_fixture,
+            check_pruned,
             check_trends,
             check_sets,
             check_sort_and_unchanged,
