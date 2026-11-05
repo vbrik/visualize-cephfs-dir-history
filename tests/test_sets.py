@@ -9,6 +9,7 @@ from dirhistory.sets import (
     Matcher,
     SetDirs,
     TooManyDirs,
+    TreeConfig,
     busiest,
     load,
     parse_pattern,
@@ -22,10 +23,11 @@ def _set(name, *pairs):
     return DirSet(name, [DirGroup([parse_pattern(t)], d) for t, d in pairs])
 
 
-def _toml(tmp_path, text):
-    """Write TEXT to a sets file and return its path."""
+def _toml(tmp_path, text, budget=1):
+    """Write TEXT to a sets file, after a top-level `budget = BUDGET` unless
+    BUDGET is None, and return its path."""
     f = tmp_path / "sets.toml"
-    f.write_text(text)
+    f.write_text(text if budget is None else f"budget = {budget}\n{text}")
     return f
 
 
@@ -169,8 +171,8 @@ def test_implicit_is_the_top_level_dirs_only():
 def _texts(config):
     """CONFIG (a load result) as {root: {set name: [(pattern text, depth)]}}."""
     return {
-        root: {s.name: [(p.text, d) for p, d in s.patterns()] for s in sets}
-        for root, sets in config.items()
+        root: {s.name: [(p.text, d) for p, d in s.patterns()] for s in tree.sets}
+        for root, tree in config.items()
     }
 
 
@@ -180,7 +182,7 @@ def test_load_reads_groups_with_depths(tmp_path):
         '[tree."/exp".set."s"]\ndirs = [\n'
         '  { match = ["a", "b"], depth = 0 },\n  { match = ["x*"], depth = 3 },\n]\n',
     )
-    (s,) = load(f)[b"/exp"]
+    (s,) = load(f)[b"/exp"].sets
     assert s.name == "s"
     assert [(p.text, d) for p, d in s.patterns()] == [("a", 0), ("b", 0), ("x*", 3)]
     assert [g.depth for g in s.groups] == [0, 3]
@@ -202,7 +204,7 @@ def test_load_reads_the_sets_of_each_tree(tmp_path):
 
 def test_load_does_not_add_the_implicit_set(tmp_path):
     f = _toml(tmp_path, '[tree."/a".set]\n')
-    assert load(f) == {b"/a": []}
+    assert load(f) == {b"/a": TreeConfig(1, [])}
 
 
 def test_load_keeps_the_sets_in_file_order(tmp_path):
@@ -213,11 +215,73 @@ def test_load_keeps_the_sets_in_file_order(tmp_path):
             for n in "bca"
         ),
     )
-    assert [s.name for s in load(f)[b"/a"]] == ["b", "c", "a"]
+    assert [s.name for s in load(f)[b"/a"].sets] == ["b", "c", "a"]
 
 
-def test_load_accepts_a_file_without_trees(tmp_path):
-    assert load(_toml(tmp_path, "")) == {}
+T = '[tree."/a".set.s]\ndirs = [{ match = ["*"], depth = 0 }]\n'
+B = '[tree."/b".set.s]\ndirs = [{ match = ["*"], depth = 0 }]\n'
+
+
+def test_load_reads_a_top_level_budget(tmp_path):
+    assert load(_toml(tmp_path, T, budget=5))[b"/a"].budget == 5
+
+
+def test_load_tree_budget_overrides_the_top_level_one(tmp_path):
+    f = _toml(tmp_path, '[tree."/a"]\nbudget = 7\n' + T + B, budget=5)
+    assert {root: tree.budget for root, tree in load(f).items()} == {
+        b"/a": 7,
+        b"/b": 5,
+    }
+
+
+def test_load_reads_a_tree_budget_without_a_top_level_one(tmp_path):
+    f = _toml(tmp_path, '[tree."/a"]\nbudget = 7\n' + T, budget=None)
+    assert load(f)[b"/a"].budget == 7
+
+
+def test_load_rejects_missing_budget_and_names_both_places(tmp_path):
+    f = _toml(tmp_path, '[tree."/a"]\nbudget = 7\n' + T + B, budget=None)
+    with pytest.raises(ValueError) as e:
+        load(f)
+    message = str(e.value)
+    assert str(f) in message and "'/b'" in message and "'/a'" not in message
+    assert '[tree."/b"]' in message and "top of the file" in message
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "true", "1.5", '"10"'])
+@pytest.mark.parametrize("where", ["top", "tree"])
+def test_load_rejects_bad_budgets(tmp_path, value, where):
+    if where == "top":
+        f = _toml(tmp_path, T, budget=value)
+    else:
+        f = _toml(tmp_path, f'[tree."/a"]\nbudget = {value}\n' + T)
+    with pytest.raises(ValueError, match="'budget' must be an integer >= 1") as e:
+        load(f)
+    assert str(f) in str(e.value)
+    if where == "tree":
+        assert "tree '/a'" in str(e.value)
+
+
+@pytest.mark.parametrize("content", ["", "[tree]\n"])
+@pytest.mark.parametrize("budget", [None, 5])
+def test_load_rejects_a_file_without_trees(tmp_path, content, budget):
+    f = _toml(tmp_path, content, budget=budget)
+    with pytest.raises(ValueError, match="no trees") as e:
+        load(f)
+    assert str(f) in str(e.value)
+
+
+def test_load_rejects_a_tree_with_only_a_budget(tmp_path):
+    f = _toml(tmp_path, '[tree."/a"]\nbudget = 3\n', budget=5)
+    with pytest.raises(ValueError, match="'set' must be a table of sets"):
+        load(f)
+
+
+def test_load_rejects_unknown_keys_next_to_budget(tmp_path):
+    with pytest.raises(ValueError, match="unknown key 'budgets'"):
+        load(_toml(tmp_path, "budgets = 1\n" + T))
+    with pytest.raises(ValueError, match="unknown key 'budgets'"):
+        load(_toml(tmp_path, '[tree."/a"]\nbudgets = 1\n' + T))
 
 
 @pytest.mark.parametrize(

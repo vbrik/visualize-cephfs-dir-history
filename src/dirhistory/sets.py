@@ -16,6 +16,10 @@ tree root itself. There is no `**`: use `depth` to go deeper.
 Every tree also has the implicit set `Top level` (`*` at depth 0), first;
 a set of that name in the file replaces it.
 
+Every tree has a budget: the most dirs its file stores. A tree's own
+`budget` overrides the file's top-level one; a tree with neither is an
+error, as is a file with no trees.
+
 Trees are named by their root path, which is assumed to be unique among
 trees: two trees with the same path (on different clusters or filesystems)
 cannot be told apart.
@@ -118,16 +122,50 @@ def _tree_root(text: str) -> bytes:
     return os.fsencode(text)
 
 
-def _sets(tree: str, section: object) -> list[DirSet]:
-    """Return the sets of a sets file's `[tree.TREE]` SECTION."""
+@dataclass(frozen=True, slots=True)
+class TreeConfig:
+    """A tree's section of the sets file: its BUDGET (the most dirs its file
+    stores, resolved against the file's default) and its SETS, in file
+    order, without the implicit set."""
+
+    budget: int
+    sets: list[DirSet]
+
+
+def _budget(where: str, value: object) -> int:
+    """Return VALUE, a `budget`. Raises ValueError starting with WHERE unless
+    it is an integer >= 1."""
+    # bool is an int in Python, but `budget = true` is a mistake.
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"{where}: 'budget' must be an integer >= 1")
+    return value
+
+
+def _tree(tree: str, section: object, default: int | None) -> TreeConfig:
+    """Return the TreeConfig of a sets file's `[tree.TREE]` SECTION, whose
+    budget is DEFAULT (the file's) unless the section has its own."""
     if not isinstance(section, dict):
         raise ValueError(f"tree {tree!r} must be a table")
+    budget = default
+    if "budget" in section:
+        budget = _budget(f"tree {tree!r}", section["budget"])
+    dir_sets = _sets(tree, section)
+    if budget is None:
+        raise ValueError(
+            f'tree {tree!r} has no budget: add budget = N to its [tree."{tree}"]'
+            " section, or at the top of the file for every tree"
+        )
+    return TreeConfig(budget, dir_sets)
+
+
+def _sets(tree: str, section: dict) -> list[DirSet]:
+    """Return the sets of a sets file's `[tree.TREE]` SECTION."""
     if "watch" in section:
         raise ValueError(
             f"tree {tree!r}: 'watch' directly in a tree is the old format; put"
             f' dirs in a named set: [tree."{tree}".set."NAME"]'
         )
-    if extra := sorted(set(section) - {"set"}):
+    if extra := sorted(set(section) - {"set", "budget"}):
         raise ValueError(f"tree {tree!r}: unknown key {extra[0]!r}")
     sets = section.get("set")
     if not isinstance(sets, dict):
@@ -178,16 +216,18 @@ def _set(tree: str, name: str, section: object) -> DirSet:
     return DirSet(name, [_group(where, g) for g in groups])
 
 
-def load(path: Path) -> dict[bytes, list[DirSet]]:
-    """Return the sets per tree root of the TOML file at PATH, each tree's in
-    file order: `[tree."/fs/path".set."NAME"]` sections, each with
+def load(path: Path) -> dict[bytes, TreeConfig]:
+    """Return the config per tree root of the TOML file at PATH: a top-level
+    `budget = N` (optional), and per tree an optional `budget` and its sets,
+    in file order: `[tree."/fs/path".set."NAME"]` sections, each with
     `dirs = [{ match = ["a/*", ...], depth = N }, ...]`. The implicit set is
     not added; see with_implicit.
 
     Raises ValueError naming PATH for bad TOML, a top-level key other than
-    `tree`, a section that is not as above (the old `watch` formats get a
-    hint), a blank set name, a bad `depth`, or a bad tree path or pattern;
-    OSError if PATH cannot be read.
+    `tree` and `budget`, no trees, a tree without a budget (its own or the
+    file's), a section that is not as above (the old `watch` formats get a
+    hint), a blank set name, a bad `depth` or `budget`, or a bad tree path
+    or pattern; OSError if PATH cannot be read.
     """
     with path.open("rb") as f:
         try:
@@ -199,13 +239,21 @@ def load(path: Path) -> dict[bytes, list[DirSet]]:
             f"{path}: a top-level 'watch' is the old format; put the dirs,"
             ' relative to the tree root, in a [tree."/fs/path".set."NAME"] section'
         )
-    if extra := sorted(set(doc) - {"tree"}):
-        raise ValueError(f"{path}: unknown key {extra[0]!r}; the only key is 'tree'")
+    if extra := sorted(set(doc) - {"tree", "budget"}):
+        raise ValueError(
+            f"{path}: unknown key {extra[0]!r}; the only keys are 'tree' and 'budget'"
+        )
     trees = doc.get("tree", {})
     if not isinstance(trees, dict):
         raise ValueError(f"{path}: 'tree' must be a table of trees")
+    if not trees:
+        raise ValueError(
+            f'{path}: no trees: add a [tree."/fs/path".set."NAME"] section per tree'
+            " to generate"
+        )
     try:
-        return {_tree_root(t): _sets(t, s) for t, s in trees.items()}
+        default = _budget("top level", doc["budget"]) if "budget" in doc else None
+        return {_tree_root(t): _tree(t, s, default) for t, s in trees.items()}
     except ValueError as e:
         raise ValueError(f"{path}: {e}") from None
 

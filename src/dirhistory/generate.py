@@ -7,7 +7,7 @@ import re
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -35,6 +35,7 @@ from dirhistory.sets import (
     DirSet,
     SetDirs,
     TooManyDirs,
+    TreeConfig,
     with_implicit,
 )
 
@@ -57,9 +58,10 @@ database: one tree-ID.json per tree and the index trees.json, replaced
 atomically. Run it periodically (e.g. hourly, from a systemd timer); the page
 in web/ reads the files.
 
-The sets file (--sets, required; an empty file is valid) names, per tree,
-sets of directories. Each tree also gets the implicit set "Top level", its
-top-level directories. The page's Stack view charts the rbytes (or, toggled,
+The sets file (--sets, required) names the trees to generate and, per tree,
+sets of directories and a budget: the most directories its file stores.
+Each tree also gets the implicit set "Top level", its top-level
+directories. The page's Stack view charts the rbytes (or, toggled,
 the rentries: rfiles + rsubdirs) of a set's directories as bands, and can
 split a directory into its subdirectories, down to the depth the set stores.
 Its Trends view shows one card per directory of a set.
@@ -93,15 +95,24 @@ def resolution(args: argparse.Namespace) -> Resolution:
     return Resolution(args.recent, args.max_points)
 
 
-def select_trees(all_trees: Sequence[Tree], ids: Sequence[int]) -> list[Tree]:
-    """Return the trees with IDS, or all of them if IDS is empty.
+def select_trees(
+    all_trees: Sequence[Tree], configured: Collection[int], ids: Sequence[int]
+) -> list[Tree]:
+    """Return the trees of ALL_TREES with IDS, or all CONFIGURED ones (ids of
+    trees with a section in the sets file) if IDS is empty.
 
-    Raises ValueError naming any id without a tree.
+    Raises ValueError naming any id without a tree, else the first id of a
+    tree that is not configured.
     """
     if not ids:
-        return list(all_trees)
+        return [t for t in all_trees if t.id in configured]
     if unknown := sorted(set(ids) - {t.id for t in all_trees}):
         raise ValueError(f"no tree with id {', '.join(map(str, unknown))}")
+    if bare := [t for t in all_trees if t.id in ids and t.id not in configured]:
+        tree = bare[0]
+        raise ValueError(
+            f"tree {tree.id} ({display(tree.fs_path)}) has no section in --sets"
+        )
     return [t for t in all_trees if t.id in ids]
 
 
@@ -187,13 +198,13 @@ def read_tree(
     conn,
     tree: Tree,
     res: Resolution,
-    dir_sets: Sequence[DirSet],
+    config: TreeConfig,
     max_dirs: int,
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
     as of its latest sample, or None if it has no samples. Reads in one
-    transaction, i.e. one snapshot. DIR_SETS and MAX_DIRS go to summarize
-    (which raises TooManyDirs)."""
+    transaction, i.e. one snapshot. CONFIG's sets and MAX_DIRS go to
+    summarize (which raises TooManyDirs)."""
     with conn.transaction():
         samples = db.samples(conn, tree.id)
         if not samples:
@@ -206,7 +217,7 @@ def read_tree(
             db.sample_paths(conn, samples[0].id),
             lambda paths: db.path_rows(conn, tree.id, paths),
             res,
-            dir_sets,
+            config.sets,
             max_dirs,
         )
     return history, errors
@@ -253,18 +264,19 @@ def set_warnings(
     ]
 
 
-def tree_sets(
-    config: Mapping[bytes, Sequence[DirSet]], all_trees: Sequence[Tree]
-) -> dict[int, list[DirSet]]:
-    """Return the sets by tree id, for every tree of ALL_TREES: each section
-    of CONFIG (by tree root) goes to the tree with that fs_path, and every
-    tree has the implicit set (sets.with_implicit).
+def configured(
+    config: Mapping[bytes, TreeConfig], all_trees: Sequence[Tree]
+) -> dict[int, TreeConfig]:
+    """Return the config of each configured tree by id: each section of
+    CONFIG (by tree root) goes to the tree of ALL_TREES with that fs_path,
+    with the implicit set added (sets.with_implicit). Trees without a section
+    are left out.
 
     Raises ValueError for a section without a tree, or with several trees
     (tree roots are assumed unique, so they cannot be told apart).
     """
-    by_tree: dict[int, list[DirSet]] = {t.id: with_implicit([]) for t in all_trees}
-    for root, dir_sets in config.items():
+    by_tree: dict[int, TreeConfig] = {}
+    for root, tree in config.items():
         ids = [t.id for t in all_trees if t.fs_path == root]
         if not ids:
             raise ValueError(f"--sets: no tree has root {display(root)}")
@@ -273,19 +285,19 @@ def tree_sets(
                 f"--sets: trees {', '.join(map(str, ids))} all have root"
                 f" {display(root)}, so it cannot name one"
             )
-        by_tree[ids[0]] = with_implicit(dir_sets)
+        by_tree[ids[0]] = TreeConfig(tree.budget, with_implicit(tree.sets))
     return by_tree
 
 
-def merged_index(out: Path, entries: list[dict], all_trees: Sequence[Tree]) -> list:
+def merged_index(out: Path, entries: list[dict], live: Collection[int]) -> list:
     """Return trees.json's new entries: ENTRIES, plus those of the existing
-    index for trees not in ENTRIES that still exist, by tree id."""
+    index for trees not in ENTRIES that are LIVE (still exist and are
+    configured), by tree id."""
     try:
         old = json.loads((out / INDEX).read_text(encoding="ascii"))
     except FileNotFoundError:
         old = []
     fresh = {e["id"] for e in entries}
-    live = {t.id for t in all_trees}
     kept = [e for e in old if e["id"] in live and e["id"] not in fresh]
     return sorted(kept + entries, key=lambda e: e["id"])
 
@@ -315,9 +327,11 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         metavar="FILE",
-        help="TOML file of named sets of directories per tree:"
-        ' [tree."/tree/root".set."NAME"] dirs = [{ match = ["dir/*"], depth = N }];'
-        " see deploy/sets.toml.example",
+        help="TOML file of the trees to generate: per tree, named sets of"
+        ' directories, [tree."/tree/root".set."NAME"] dirs = [{ match = ["dir/*"],'
+        " depth = N }], and a budget, the most directories its file stores"
+        " (budget = N at the top for every tree, or in a tree's"
+        ' [tree."/tree/root"] section); see deploy/sets.toml.example',
     )
     p.add_argument(
         "--max-dirs",
@@ -391,8 +405,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _error(str(e).strip())
 
 
-def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> int:
-    """Write the data files ARGS ask for, with CONFIG's sets (by tree root,
+def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
+    """Write the data files ARGS ask for, of CONFIG's trees (by tree root,
     as sets.load returns them); return the exit status.
 
     Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree,
@@ -402,8 +416,10 @@ def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> i
     conn = db.connect(args.db)
     db.check_schema(conn)
     all_trees = db.trees(conn)
-    dir_sets = tree_sets(config, all_trees)
-    chosen = select_trees(all_trees, args.tree)
+    configs = configured(config, all_trees)
+    chosen = select_trees(all_trees, configs, args.tree)
+    if args.verbose and (n := len(all_trees) - len(configs)):
+        _note(f"{_count(n, 'tree')} without a section in --sets skipped")
     args.out.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(UTC)
     entries = []
@@ -412,7 +428,7 @@ def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> i
             start = perf_counter()
             try:
                 result = read_tree(
-                    conn, tree, resolution(args), dir_sets[tree.id], args.max_dirs
+                    conn, tree, resolution(args), configs[tree.id], args.max_dirs
                 )
             except TooManyDirs as e:
                 per_set = ", ".join(f"{name}: {n}" for name, n in e.counts)
@@ -439,7 +455,7 @@ def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> i
                     " directories could not be read in its latest sample. Below them,"
                     " changes go unseen and sizes may be stale."
                 )
-            for warning in set_warnings(tree, dir_sets[tree.id], history.sets):
+            for warning in set_warnings(tree, configs[tree.id].sets, history.sets):
                 _note(warning)
             if args.verbose:
                 _note(
@@ -449,7 +465,7 @@ def run(args: argparse.Namespace, config: Mapping[bytes, Sequence[DirSet]]) -> i
                     f" {perf_counter() - start:.1f} s"
                 )
     index = args.out / INDEX
-    write_json(index, merged_index(args.out, entries, all_trees))
+    write_json(index, merged_index(args.out, entries, configs))
     print(index)
     return 0
 
