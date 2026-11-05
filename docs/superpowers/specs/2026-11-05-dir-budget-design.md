@@ -1,6 +1,6 @@
 # Directory budget: partial trees instead of failing — design
 
-Status: approved, not implemented.
+Status: implemented (2026-11-05).
 
 ## Intent
 

@@ -61,3 +61,15 @@
   your commit. Before offering to rewrite a commit, check
   `git branch -r --contains <commit>`: if it is pushed, add a follow-up
   commit instead.
+- Page memory, not file size, limits how many stored dirs a tree can have:
+  about 3.2 KB of JS heap per stored dir (1 M dirs: 3.2 GB, from a 181 MB
+  file). The page holds the old tree while loading the next, so switching
+  between two such trees crashed Chrome's renderer. The generator peaked at
+  11 GB for that run. Measure heap (`performance.memory`) before raising a
+  budget past a few hundred thousand dirs.
+- A Playwright `page.goto` to a URL that differs only in its hash is a
+  same-document navigation: the page does not refetch its data. After
+  `page.route` replaces a file, `page.reload()` instead.
+- `scripts/check_web.py`'s `run_checks` catches only `AssertionError`: a
+  renderer crash (`Target crashed`) on a large real tree aborts the whole
+  run instead of being reported as one problem.

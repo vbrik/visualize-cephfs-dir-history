@@ -397,9 +397,15 @@ path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
 - **Large budgets make large files.** A broad pattern with a large `depth`
   stores every dir below it up to the budget, and every one that changes
   costs a number per time point; the page downloads the whole file. Most
-  dirs never change, so a file is about 64 bytes per stored dir (a real
-  227 k-dir tree, 337 points: 14.5 MB). The budget bounds a file's size, not
-  how fast the page handles it.
+  dirs never change, so a file costs 64 to 181 bytes per stored dir, more
+  for deeper (longer) paths. Measured on the real database (2026-11-05, 339
+  points, budget 1 M): a cut tree of 1 000 000 stored dirs (of 1.9 M
+  covered) wrote a 181 MB file, took the generator 160 s (11 GB peak for the
+  whole run), and loaded in the page in 4.4 s from localhost using 3.2 GB of
+  JS heap; an 855 k-dir tree, 92 MB and 2.7 GB. The page keeps the old
+  tree while loading the next, so switching between two such trees in one
+  tab crashed Chrome's renderer (out of memory). The budget bounds a file's
+  size, not what the page can hold.
 - **A partial tree hides depth unevenly.** In a cut tree's partial level,
   dirs early in path order are split and later ones are pruned (`*`),
   whatever their size: the cut follows path order, not where the bytes are.
