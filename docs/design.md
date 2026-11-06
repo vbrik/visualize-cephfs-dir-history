@@ -249,10 +249,14 @@ stored as deep as the budget allows and saved partial.
   ran out, and each view has a one-line note while one is on screen. The
   mark is display only: sorting by name and the URL use the plain name.
 - Filters first: bands whose peak in the zoomed range is under Min GiB
-  (`smin`, default 1), or that are unchanged in it unless *Show unchanged*
-  (`sflat=1`), are filtered out, picks excepted; the summary counts them
-  and says why. Hundreds of a level's bands are tiny or constant, and
-  would otherwise take Top's slots under a size or name sort. Unlike hide,
+  (`smin`, default 1), or, with *Show unchanged* off (`sflat=0`), that are
+  unchanged in it, are filtered out, picks excepted; the summary counts
+  them and says why. Hundreds of a level's bands are tiny or constant, and
+  would otherwise take Top's slots under a size or name sort. *Show
+  unchanged* is still on by default (the operator's choice): a drilled-into
+  dir whose subdirs are mostly frozen (e.g. one per past year) otherwise
+  looked as if most of them were missing. The default span sort lists the
+  constant bands last, and Min filters the tiny ones. Unlike hide,
   filtering subtracts no bytes from the bands above: it only leaves bands
   out.
 - The rest are ranked by span (max − min) over the zoomed range, so a dir that
@@ -323,7 +327,8 @@ stored as deep as the budget allows and saved partial.
   one level if it is in `split`, else at Depth 0.
 - A wildcard can match thousands of dirs (`/npx/user/*`), most of which
   never change. Cards unchanged in the shown range (constant, or absent
-  throughout) are hidden unless *Show unchanged* (`flat=1`) is on, as are
+  throughout) are hidden when *Show unchanged* is off (`flat=0`; on by
+  default, as in the Stack view), as are
   cards whose peak in the range is under Min GiB (`min`, default 1; Min
   entries, `minent`, default 1000; so a dir
   absent throughout needs `min=0` too), and the rest sort by span (max − min) by default, so the movers come first; also

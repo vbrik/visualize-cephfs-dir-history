@@ -62,12 +62,12 @@ const DEFAULTS = {
   // Show unchanged. Stack: smin, sminent, sflat; Trends: min, minent, flat.
   smin: 1,
   sminent: 1000,
-  sflat: false,
+  sflat: true,
   smooth: true, // Stack: remove lag outliers from subtracted bands (model.smoothLag)
   sort: "span",
   min: 1,
   minent: 1000,
-  flat: false,
+  flat: true,
 };
 // The Stack view's state keys, which its Reset restores.
 const STACK_KEYS = ["depth", "top", "in", "hide", "pick", "lsort", "smin", "sminent", "sflat", "smooth"];
@@ -123,12 +123,12 @@ function readState() {
     lsort: Object.hasOwn(LEGEND_SORTS, (p.get("lsort") ?? "").replace(/^-/, "")) ? p.get("lsort") : "",
     smin: atLeast0(p.get("smin"), DEFAULTS.smin),
     sminent: atLeast0(p.get("sminent"), DEFAULTS.sminent),
-    sflat: p.get("sflat") === "1",
+    sflat: p.get("sflat") !== "0",
     smooth: p.get("smooth") !== "0",
     sort: Object.hasOwn(CARD_SORTS, p.get("sort")) ? p.get("sort") : DEFAULTS.sort,
     min: atLeast0(p.get("min"), DEFAULTS.min),
     minent: atLeast0(p.get("minent"), DEFAULTS.minent),
-    flat: p.get("flat") === "1",
+    flat: p.get("flat") !== "0",
   };
 }
 
@@ -147,12 +147,12 @@ function writeState(changes) {
   if (s.lsort) p.push(["lsort", s.lsort]);
   if (s.smin !== DEFAULTS.smin) p.push(["smin", s.smin]);
   if (s.sminent !== DEFAULTS.sminent) p.push(["sminent", s.sminent]);
-  if (s.sflat) p.push(["sflat", "1"]);
+  if (!s.sflat) p.push(["sflat", "0"]);
   if (!s.smooth) p.push(["smooth", "0"]);
   if (s.sort !== DEFAULTS.sort) p.push(["sort", s.sort]);
   if (s.min !== DEFAULTS.min) p.push(["min", s.min]);
   if (s.minent !== DEFAULTS.minent) p.push(["minent", s.minent]);
-  if (s.flat) p.push(["flat", "1"]);
+  if (!s.flat) p.push(["flat", "0"]);
   location.hash = p.map(([k, v]) => `${k}=${encodeValue(String(v))}`).join("&");
 }
 

@@ -243,17 +243,25 @@ def check_fixture(page: Page, base: str) -> None:
     assert list(series(page)) == ["Q", "Z"], f"stack not by span: {series(page)}"
     assert "(raise Top)" in page.inner_text("#summary"), page.inner_text("#summary")
 
-    # By default the Stack view filters out unchanged bands (Q) and those
-    # under 1 GiB at peak (café's own files, 0 B, at Depth 1); a ticked band
-    # is never filtered out. (Playwright shows café's name with U+FFFD.)
+    # By default the Stack view shows unchanged bands (Q) and filters out
+    # those under 1 GiB at peak (café's own files, 0 B, at Depth 1).
+    # Unticking Show unchanged filters out Q too; a ticked band is never
+    # filtered out. (Playwright shows café's name with U+FFFD.)
     caf = "caf\ufffd"
     go(page, f"{base}#tree=1")
-    assert bands(page) == ["A", caf, "Z"], f"default filters: {bands(page)}"
+    assert page.is_checked("#sflat"), "Show unchanged off by default"
+    assert sorted(bands(page)) == sorted(["A", caf, "Z", "Q"]), (
+        f"default filters: {bands(page)}"
+    )
+    assert "filtered out" not in page.inner_text("#summary"), "default filtered"
+    act(page, lambda: page.uncheck("#sflat"))
+    assert "sflat=0" in state(page), state(page)
+    assert bands(page) == ["A", caf, "Z"], f"unchanged filtered: {bands(page)}"
     summary = page.inner_text("#summary")
     want = "1 filtered out (unchanged in this range, or under 1.00 GiB at peak)"
     assert want in summary, summary
     act(page, lambda: page.check("#sflat"))
-    assert "sflat=1" in state(page) and "Q" in bands(page), state(page)
+    assert "sflat" not in keys(page) and "Q" in bands(page), state(page)
     act(page, lambda: page.fill("#smin", "150"))
     act(page, lambda: page.press("#smin", "Enter"))
     assert bands(page) == ["A", caf], f"smin=150: {bands(page)}"
@@ -272,7 +280,7 @@ def check_fixture(page: Page, base: str) -> None:
     # Reset restores the Stack view's state.
     go(
         page,
-        f"{base}#tree=1&sflat=1&smin=0&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size"
+        f"{base}#tree=1&sflat=0&smin=0&depth=1&top=2&in=A&hide=Z&pick=A/b&lsort=-size"
         "&sort=size&sminent=5&metric=rentries",
     )
     act(page, lambda: page.click("#reset"))
@@ -411,7 +419,7 @@ def check_change_mode(page: Page, base: str) -> None:
     -1.17 TiB/d.
     """
     caf = "caf\ufffd"  # Playwright's view of café's name
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=0")
     act(page, lambda: page.click("#mode button[data-mode=change]"))
     assert "mode=change" in state(page), state(page)
     # The same bands as Size mode, stacked by rate span (A, café 0; Z 50
@@ -431,7 +439,7 @@ def check_change_mode(page: Page, base: str) -> None:
     assert "+3.52 TiB/d" not in tip, f"tooltip at 1.25 h: {tip!r}"
 
     # Switching keeps the view; back to Size drops only mode.
-    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=1&smin=0"
+    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=0&smin=0"
     go(page, f"{base}#{kept}")
     act(page, lambda: page.click("#mode button[data-mode=change]"))
     pairs = set(state(page).lstrip("#").split("&"))
@@ -1357,7 +1365,7 @@ def check_sets(page: Page, base: str) -> None:
     # An unknown set falls back to the first.
     go(page, f"{base}#tree=1&sflat=1&smin=0&view=trends&set=nope")
     assert page.input_value("#set") == "Top level", "unknown set not ignored"
-    assert len(cards(page)) == 3, "unknown set shows no cards"
+    assert len(cards(page)) == 4, "unknown set shows no cards"
 
     # Set names belong to a tree: changing the tree drops the set.
     act(page, lambda: page.select_option("#set", "Mixed"))
@@ -1369,11 +1377,16 @@ def check_sets(page: Page, base: str) -> None:
 
 
 def check_sort_and_unchanged(page: Page, base: str) -> None:
-    """Sorting cards, and hiding unchanged and small ones unless asked."""
+    """Sorting cards, and hiding small ones, and unchanged ones if asked."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["series"]["Z/y"][0] = 2**30
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     go(page, f"{base}#tree=1&view=trends&set=Mixed")
+    assert page.is_checked("#flat") and "Z/y" in cards(page), (
+        f"Show unchanged off by default: {cards(page)}"
+    )
+    act(page, lambda: page.uncheck("#flat"))
+    assert "flat=0" in state(page), state(page)
     assert len(cards(page)) == 2, f"unchanged card shown: {cards(page)}"
     hidden = page.inner_text("#trends-hidden")
     want = (
@@ -1382,7 +1395,7 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     assert hidden == want, hidden
 
     act(page, lambda: page.check("#flat"))
-    assert "flat=1" in state(page) and "Z/y" in cards(page), (
+    assert "flat" not in keys(page) and "Z/y" in cards(page), (
         "Show unchanged did nothing"
     )
     assert page.is_hidden("#trends-hidden"), "hidden count shown with none hidden"
@@ -1418,11 +1431,11 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     tree["series"]["A"][0] = 2**40
     caf = next(p for p in tree["series"] if p.startswith("caf") and "/" not in p)
     tree["series"][caf][0] = 2**30
-    page.goto(f"{base}#tree=1&view=trends&set=Mixed")
+    page.goto(f"{base}#tree=1&view=trends&set=Mixed&flat=0")
     act(page, page.reload)  # a hash change alone keeps the loaded file
     text = page.inner_text("#trends-hidden")
     assert cards(page) == [] and "Show unchanged" in text, f"all hidden: {text}"
-    go(page, f"{base}#tree=1&view=trends&sort=size&flat=1&min=2")
+    go(page, f"{base}#tree=1&view=trends&sort=size&flat=0&min=2")
 
     # Reset is the Stack view's: it keeps the Trends view's state.
     act(page, lambda: page.click("#view button[data-view=stack]"))
@@ -1438,10 +1451,11 @@ def check_metric(page: Page, base: str) -> None:
     10000 -> 15000; own entries A/ 1, Z/ 500, 100, 101.
     """
     caf = "caf�"  # Playwright's view of café's name
-    go(page, f"{base}#tree=1")
+    go(page, f"{base}#tree=1&sflat=0")
     act(page, lambda: page.click("#metric button[data-metric=rentries]"))
     assert "metric=rentries" in state(page), state(page)
-    # Min entries, default 1000: A and Q unchanged, Z under 1000 at peak.
+    # Min entries, default 1000 (and Show unchanged off): A and Q unchanged,
+    # Z under 1000 at peak.
     assert bands(page) == [caf], f"default entries filters: {bands(page)}"
     summary = page.inner_text("#summary")
     want = "3 filtered out (unchanged in this range, or under 1.00 k entries at peak)"
@@ -1473,7 +1487,7 @@ def check_metric(page: Page, base: str) -> None:
     assert "±0" in page.inner_text("#legend"), page.inner_text("#legend")
 
     # Switching keeps the tree, set, drill, Depth, hides and picks.
-    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=1&smin=0&sminent=0"
+    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=0&smin=0&sminent=0"
     go(page, f"{base}#{kept}")
     act(page, lambda: page.click("#metric button[data-metric=rentries]"))
     pairs = set(state(page).lstrip("#").split("&"))
@@ -1482,7 +1496,7 @@ def check_metric(page: Page, base: str) -> None:
     assert "A/c" in page.inner_text("#hidden-list"), "hide lost"
 
     # The Trends view: entry counts, with Min entries of its own (minent).
-    go(page, f"{base}#tree=1&view=trends&metric=rentries")
+    go(page, f"{base}#tree=1&view=trends&metric=rentries&flat=0")
     assert cards(page) == [caf], f"entry cards: {cards(page)}"
     card_text = page.locator("#cards .trend-card").first.inner_text()
     assert "15.0 k" in card_text and "+5.00 k" in card_text, card_text
@@ -1504,7 +1518,7 @@ def check_metric(page: Page, base: str) -> None:
     tree["rbytes"] = {p: pair[0] for p, pair in tree.pop("series").items()}
     del tree["metrics"]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
-    page.goto(f"{base}#tree=1&metric=rentries")
+    page.goto(f"{base}#tree=1&metric=rentries&sflat=0")
     act(page, page.reload)  # a hash change alone keeps the loaded file
     assert page.is_disabled("#metric button[data-metric=rentries]"), "not disabled"
     assert bands(page) == ["A", caf, "Z"], f"old file: {bands(page)}"
@@ -1813,9 +1827,9 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
     if shots:
         page.screenshot(path=shots / f"tree-{tree}-trends.png", full_page=True)
     for w in sets:
-        # Unchanged and small cards are filtered out, and counted, unless
-        # asked for.
-        go(page, f"{base}#tree={tree}&view=trends")
+        # Unchanged (with Show unchanged off) and small cards are filtered
+        # out, and counted.
+        go(page, f"{base}#tree={tree}&view=trends&flat=0")
         act(page, lambda name=w["name"]: page.select_option("#set", name))
         shown = page.locator("#cards .trend-card").count()
         hidden = page.eval_on_selector(

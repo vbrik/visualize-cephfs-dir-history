@@ -127,7 +127,7 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
 | Band (legend or chart) | Stack: click a band of a directory that can be split to show only what is inside it, one level down; the path above the chart goes back. |
 | hide | Stack: remove a band's bytes from the chart, at every Depth: a directory's, with everything in it, or `dir/ bytes`, the files directly in it. Click the chip to bring it back. |
 | Min GiB, Min entries | Both views, each its own, and per metric: hide bands (Stack) or cards (Trends) whose largest value in the shown range is under this many GiB (default 1) or entries (default 1000); 0 shows all. Ticked bands are never hidden. The summary (Stack) or the line above the cards (Trends) counts what was filtered out. |
-| Show unchanged | Both views, each its own: also show bands or cards whose value did not change in the shown range; off by default. |
+| Show unchanged | Both views, each its own: also show bands or cards whose value did not change in the shown range; on by default. |
 | Reset | Stack: restore Depth, Top, Min GiB and Min entries, Show unchanged, drill-down, hiding, ticks and the legend's order. |
 | Sort | Trends: card order in the shown range, growing dirs first, then shrinking, then those that end where they started; within each, largest first by *Span* (max − min), *Peak* (max) or *Current size* (at the range's end), or by *Name*. |
 | Slider under the chart | Zoom the time range; ranking, the table and changes follow it. Both views share the range. |
