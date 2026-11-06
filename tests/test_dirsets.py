@@ -2,13 +2,13 @@ import re
 
 import pytest
 
-from dirhistory.sets import (
+from dirhistory.dirsets import (
     IMPLICIT,
     Cut,
     DirGroup,
     DirSet,
+    DirSetDirs,
     Matcher,
-    SetDirs,
     TreeConfig,
     cut,
     level,
@@ -19,15 +19,15 @@ from dirhistory.sets import (
 )
 
 
-def _set(name, *pairs):
+def _dirset(name, *pairs):
     """A DirSet with one group per (pattern text, depth) in PAIRS."""
     return DirSet(name, [DirGroup([parse_pattern(t)], d) for t, d in pairs])
 
 
 def _toml(tmp_path, text, budget=1):
-    """Write TEXT to a sets file, after a top-level `budget = BUDGET` unless
+    """Write TEXT to a dirsets file, after a top-level `budget = BUDGET` unless
     BUDGET is None, and return its path."""
-    f = tmp_path / "sets.toml"
+    f = tmp_path / "dirsets.toml"
     f.write_text(text if budget is None else f"budget = {budget}\n{text}")
     return f
 
@@ -51,14 +51,14 @@ def test_parse_pattern_rejects(text):
 
 
 def test_matcher_matches_per_component():
-    m = Matcher([_set("s", ("*", 0), ("a/*", 0), (".", 0))])
+    m = Matcher([_dirset("s", ("*", 0), ("a/*", 0), (".", 0))])
     for path in [b".", b"a", b"a/b", b"a/b/c", b"z"]:
         m.add(path)
     assert m.matches() == [[[b"a", b"z"], [b"a/b"], [b"."]]]  # "*" never crosses "/"
 
 
 def test_matcher_matches_names_that_are_not_utf8():
-    m = Matcher([_set("s", ("caf*", 1))])
+    m = Matcher([_dirset("s", ("caf*", 1))])
     m.add(b"caf\xe9")
     m.add(b"caf\xe9/x")
     assert m.matches() == [[[b"caf\xe9"]]]
@@ -69,11 +69,11 @@ def test_matcher_wants_paths_only_with_patterns():
     # summarize skips offering millions of paths to a matcher that wants none
     assert not Matcher([]).wants
     assert not Matcher([DirSet("s", [])]).wants
-    assert Matcher([_set("s", ("a", 0))]).wants
+    assert Matcher([_dirset("s", ("a", 0))]).wants
 
 
 def test_matcher_stores_descendants_within_depth():
-    m = Matcher([_set("s", ("a", 2))])
+    m = Matcher([_dirset("s", ("a", 2))])
     for p in [b"a", b"a/x", b"a/x/y", b"a/x/y/z", b"b", b"b/x"]:
         m.add(p)
     assert m.stored() == {b"a": 2, b"a/x": 1, b"a/x/y": 0}
@@ -81,35 +81,35 @@ def test_matcher_stores_descendants_within_depth():
 
 
 def test_matcher_checks_the_pattern_prefix_of_descendants():
-    m = Matcher([_set("s", ("a/*", 1))])
+    m = Matcher([_dirset("s", ("a/*", 1))])
     for p in [b"a/b", b"a/b/c", b"x/b/c", b"x/y"]:
         m.add(p)
     assert m.stored() == {b"a/b": 1, b"a/b/c": 0}
 
 
-def test_matcher_largest_depth_wins_across_groups_and_sets():
-    m = Matcher([_set("s", ("a", 0)), _set("t", ("*", 1))])
+def test_matcher_largest_depth_wins_across_groups_and_dirsets():
+    m = Matcher([_dirset("s", ("a", 0)), _dirset("t", ("*", 1))])
     for p in [b"a", b"a/x"]:
         m.add(p)
     assert m.stored() == {b"a": 1, b"a/x": 0}
 
 
-def test_matcher_largest_depth_wins_within_a_set():
-    m = Matcher([_set("s", ("a", 0), ("a", 2))])
+def test_matcher_largest_depth_wins_within_a_dirset():
+    m = Matcher([_dirset("s", ("a", 0), ("a", 2))])
     for p in [b"a", b"a/x", b"a/x/y"]:
         m.add(p)
     assert m.stored() == {b"a": 2, b"a/x": 1, b"a/x/y": 0}
 
 
 def test_matcher_root_pattern_covers_children():
-    m = Matcher([_set("s", (".", 1))])
+    m = Matcher([_dirset("s", (".", 1))])
     for p in [b".", b"a", b"a/b"]:
         m.add(p)
     assert m.stored() == {b".": 1, b"a": 0}
 
 
 def test_matcher_ignores_repeated_adds():
-    m = Matcher([_set("s", ("*", 1))])
+    m = Matcher([_dirset("s", ("*", 1))])
     for p in [b"a", b"a", b"a/x", b"a/x"]:
         m.add(p)
     assert m.matches() == [[[b"a"]]]
@@ -118,7 +118,7 @@ def test_matcher_ignores_repeated_adds():
 
 def test_select_keeps_config_order_and_first_occurrence():
     w = select("s", [[b"b", b"c"], [b"a", b"b"]], {b"a", b"b", b"c"})
-    assert w == SetDirs("s", [b"b", b"c", b"a"], [2, 2], 0)
+    assert w == DirSetDirs("s", [b"b", b"c", b"a"], [2, 2], 0)
 
 
 def test_select_leaves_out_cut_paths():
@@ -132,7 +132,7 @@ def test_with_implicit_comes_first():
     assert with_implicit([]) == [IMPLICIT]
 
 
-def test_with_implicit_is_replaced_by_a_set_of_its_name():
+def test_with_implicit_is_replaced_by_a_dirset_of_its_name():
     mine = DirSet("s", [])
     top = DirSet("Top level", [DirGroup([parse_pattern("*")], 2)])
     assert with_implicit([mine, top]) == [top, mine]
@@ -144,9 +144,9 @@ def test_implicit_is_the_top_level_dirs_only():
 
 
 def _texts(config):
-    """CONFIG (a load result) as {root: {set name: [(pattern text, depth)]}}."""
+    """CONFIG (a load result) as {root: {dirset name: [(pattern text, depth)]}}."""
     return {
-        root: {s.name: [(p.text, d) for p, d in s.patterns()] for s in tree.sets}
+        root: {s.name: [(p.text, d) for p, d in s.patterns()] for s in tree.dirsets}
         for root, tree in config.items()
     }
 
@@ -154,21 +154,21 @@ def _texts(config):
 def test_load_reads_groups_with_depths(tmp_path):
     f = _toml(
         tmp_path,
-        '[tree."/exp".set."s"]\ndirs = [\n'
+        '[tree."/exp".dirset."s"]\ndirs = [\n'
         '  { match = ["a", "b"], depth = 0 },\n  { match = ["x*"], depth = 3 },\n]\n',
     )
-    (s,) = load(f)[b"/exp"].sets
+    (s,) = load(f)[b"/exp"].dirsets
     assert s.name == "s"
     assert [(p.text, d) for p, d in s.patterns()] == [("a", 0), ("b", 0), ("x*", 3)]
     assert [g.depth for g in s.groups] == [0, 3]
 
 
-def test_load_reads_the_sets_of_each_tree(tmp_path):
+def test_load_reads_the_dirsets_of_each_tree(tmp_path):
     f = _toml(
         tmp_path,
-        '[tree."/npx/user".set."Users"]\ndirs = [{ match = ["*"], depth = 1 }]\n'
-        '[tree."/npx/user".set."Subdirs"]\ndirs = [{ match = ["*/*"], depth = 0 }]\n'
-        '[tree."/npx/user/vbrik".set.x]\n'
+        '[tree."/npx/user".dirset."Users"]\ndirs = [{ match = ["*"], depth = 1 }]\n'
+        '[tree."/npx/user".dirset."Subdirs"]\ndirs = [{ match = ["*/*"], depth = 0 }]\n'
+        '[tree."/npx/user/vbrik".dirset.x]\n'
         'dirs = [{ match = ["IceCube/*/filtered", "."], depth = 2 }]\n',
     )
     assert _texts(load(f)) == {
@@ -177,24 +177,24 @@ def test_load_reads_the_sets_of_each_tree(tmp_path):
     }
 
 
-def test_load_does_not_add_the_implicit_set(tmp_path):
-    f = _toml(tmp_path, '[tree."/a".set]\n')
+def test_load_does_not_add_the_implicit_dirset(tmp_path):
+    f = _toml(tmp_path, '[tree."/a".dirset]\n')
     assert load(f) == {b"/a": TreeConfig(1, [])}
 
 
-def test_load_keeps_the_sets_in_file_order(tmp_path):
+def test_load_keeps_the_dirsets_in_file_order(tmp_path):
     f = _toml(
         tmp_path,
         "".join(
-            f'[tree."/a".set.{n}]\ndirs = [{{ match = ["a"], depth = 0 }}]\n'
+            f'[tree."/a".dirset.{n}]\ndirs = [{{ match = ["a"], depth = 0 }}]\n'
             for n in "bca"
         ),
     )
-    assert [s.name for s in load(f)[b"/a"].sets] == ["b", "c", "a"]
+    assert [s.name for s in load(f)[b"/a"].dirsets] == ["b", "c", "a"]
 
 
-T = '[tree."/a".set.s]\ndirs = [{ match = ["*"], depth = 0 }]\n'
-B = '[tree."/b".set.s]\ndirs = [{ match = ["*"], depth = 0 }]\n'
+T = '[tree."/a".dirset.s]\ndirs = [{ match = ["*"], depth = 0 }]\n'
+B = '[tree."/b".dirset.s]\ndirs = [{ match = ["*"], depth = 0 }]\n'
 
 
 def test_load_reads_a_top_level_budget(tmp_path):
@@ -248,7 +248,7 @@ def test_load_rejects_a_file_without_trees(tmp_path, content, budget):
 
 def test_load_rejects_a_tree_with_only_a_budget(tmp_path):
     f = _toml(tmp_path, '[tree."/a"]\nbudget = 3\n', budget=5)
-    with pytest.raises(ValueError, match="'set' must be a table of sets"):
+    with pytest.raises(ValueError, match="'dirset' must be a table of dirsets"):
         load(f)
 
 
@@ -278,18 +278,18 @@ def test_load_rejects_unknown_keys_next_to_budget(tmp_path):
         'dirs = [{ match = ["/abs"], depth = 0 }]',
         'dirs = [{ match = ["a/**"], depth = 0 }]',
         "",  # dirs missing
-        'dirs = [{ match = ["a"], depth = 0 }]\nextra = 1',  # unknown key in a set
+        'dirs = [{ match = ["a"], depth = 0 }]\nextra = 1',  # unknown key in a dirset
     ],
 )
 def test_load_rejects_bad_groups(tmp_path, content):
-    f = _toml(tmp_path, f'[tree."/exp".set."s"]\n{content}\n')
-    with pytest.raises(ValueError, match=r"tree '/exp', set 's'") as e:
+    f = _toml(tmp_path, f'[tree."/exp".dirset."s"]\n{content}\n')
+    with pytest.raises(ValueError, match=r"tree '/exp', dirset 's'") as e:
         load(f)
     assert str(f) in str(e.value)
 
 
 def test_load_points_watch_to_dirs(tmp_path):
-    f = _toml(tmp_path, '[tree."/exp".set."s"]\nwatch = ["a"]\n')
+    f = _toml(tmp_path, '[tree."/exp".dirset."s"]\nwatch = ["a"]\n')
     with pytest.raises(ValueError, match=re.escape("dirs = [{ match = [")):
         load(f)
 
@@ -300,17 +300,18 @@ def test_load_points_watch_to_dirs(tmp_path):
         'trees = ["/a"]\n',  # unknown top-level key
         "tree = 1\n",  # not a table
         "[tree]\na = 1\n",  # section is not a table
-        '[tree."/a"]\n',  # no set
-        '[tree."/a".set.s]\ndirs = [{ match = ["a"], depth = 0 }]\n[tree."/a"]\nx=1\n',
-        '[tree."/a"]\nset = 1\n',  # sets not a table
-        '[tree."/a"]\nset = {s = 1}\n',  # set not a table
-        '[tree."/a".set.""]\ndirs = [{ match = ["a"], depth = 0 }]\n',  # empty name
-        '[tree."/a".set." "]\ndirs = [{ match = ["a"], depth = 0 }]\n',  # blank name
-        '[tree."/a".set.s]\ndirs = [\n',  # TOML syntax
-        '[tree."a".set.s]\n',  # relative tree
-        '[tree."/a/".set.s]\n',  # trailing slash
-        '[tree."/a/../b".set.s]\n',  # .. component
-        '[tree."".set.s]\n',  # empty tree
+        '[tree."/a"]\n',  # no dirset
+        '[tree."/a".dirset.s]\ndirs = [{ match = ["a"], depth = 0 }]\n'
+        '[tree."/a"]\nx=1\n',
+        '[tree."/a"]\ndirset = 1\n',  # dirsets not a table
+        '[tree."/a"]\ndirset = {s = 1}\n',  # dirset not a table
+        '[tree."/a".dirset.""]\ndirs = [{ match = ["a"], depth = 0 }]\n',  # empty name
+        '[tree."/a".dirset." "]\ndirs = [{ match = ["a"], depth = 0 }]\n',  # blank name
+        '[tree."/a".dirset.s]\ndirs = [\n',  # TOML syntax
+        '[tree."a".dirset.s]\n',  # relative tree
+        '[tree."/a/".dirset.s]\n',  # trailing slash
+        '[tree."/a/../b".dirset.s]\n',  # .. component
+        '[tree."".dirset.s]\n',  # empty tree
     ],
 )
 def test_load_rejects(tmp_path, content):
@@ -320,19 +321,24 @@ def test_load_rejects(tmp_path, content):
 
 
 @pytest.mark.parametrize(
-    "content", ['watch = ["/a/*"]\n', '[tree."/a"]\nwatch = ["*"]\n']
+    "content",
+    [
+        'watch = ["/a/*"]\n',
+        '[tree."/a"]\nwatch = ["*"]\n',
+        '[tree."/a".set.s]\ndirs = [{ match = ["a"], depth = 0 }]\n',  # pre-dirset
+    ],
 )
 def test_load_points_old_formats_to_the_new_one(tmp_path, content):
     f = _toml(tmp_path, content)
-    with pytest.raises(ValueError, match=r'\[tree\."/.*"\.set\."NAME"\]'):
+    with pytest.raises(ValueError, match=r'\[tree\."/.*"\.dirset\."NAME"\]'):
         load(f)
 
 
-def test_load_names_the_set_of_a_bad_pattern(tmp_path):
+def test_load_names_the_dirset_of_a_bad_pattern(tmp_path):
     f = _toml(
-        tmp_path, '[tree."/a".set."Users"]\ndirs = [{ match = ["/x"], depth = 0 }]\n'
+        tmp_path, '[tree."/a".dirset."Users"]\ndirs = [{ match = ["/x"], depth = 0 }]\n'
     )
-    with pytest.raises(ValueError, match=r"tree '/a', set 'Users'"):
+    with pytest.raises(ValueError, match=r"tree '/a', dirset 'Users'"):
         load(f)
 
 
@@ -385,13 +391,13 @@ def test_cut_first_unit_too_big_keeps_none_of_the_level():
     assert c == Cut({b"a": 1}, [b"a"], 2)
 
 
-def test_cut_fills_unparented_set_dirs_one_by_one():
+def test_cut_fills_unparented_dirset_dirs_one_by_one():
     c = cut(_stored(a=0, b=0, c=0), 2)
     assert c == Cut({b"a": 0, b"b": 0}, [], 1)
 
 
 def test_cut_does_not_prune_a_dir_stored_at_depth_0():
-    # q is stored for itself only; q/r is a set dir of its own
+    # q is stored for itself only; q/r is a dirset dir of its own
     c = cut(_stored(q=0, q__r=0, a=0), 2)
     assert c == Cut({b"a": 0, b"q": 0}, [], 2)
 

@@ -1,20 +1,20 @@
-"""Sets of directories to chart, from the sets file.
+"""DirSets: named sets of directories to chart, from the dirsets file.
 
-A sets file lists, per tree, named sets of directories, e.g.
-`[tree."/npx/ana".set."Filtered"]`. Each set holds groups of patterns, each
+A dirsets file lists, per tree, named dirsets, e.g.
+`[tree."/npx/ana".dirset."Filtered"]`. Each dirset holds groups of patterns, each
 group with a `depth`: how many levels below every matched directory are
 stored too. Both views draw from the stored directories: Stack splits and
-drills by them, Trends shows a card for each of the current set's. The
-largest `depth` of the groups (of any set) that cover a directory decides
-how deep it is stored, so the file need not record it per set.
+drills by them, Trends shows a card for each of the current dirset's. The
+largest `depth` of the groups (of any dirset) that cover a directory decides
+how deep it is stored, so the file need not record it per dirset.
 
 A pattern is relative to the tree's root and may hold shell wildcards (`*`,
 `?`, `[...]`). It is matched component by component, so `*` never crosses
 `/`, and a match has exactly as many components as the pattern. `.` is the
 tree root itself. There is no `**`: use `depth` to go deeper.
 
-Every tree also has the implicit set `Top level` (`*` at depth 0), first;
-a set of that name in the file replaces it.
+Every tree also has the implicit dirset `Top level` (`*` at depth 0), first;
+a dirset of that name in the file replaces it.
 
 Every tree has a budget: the most dirs its file stores. A tree's own
 `budget` overrides the file's top-level one; a tree with neither is an
@@ -76,7 +76,7 @@ class DirGroup:
 
 @dataclass(frozen=True, slots=True)
 class DirSet:
-    """A tree's set: its NAME, as the page shows it, and its GROUPS."""
+    """A tree's dirset: its NAME, as the page shows it, and its GROUPS."""
 
     name: str
     groups: list[DirGroup]
@@ -111,11 +111,11 @@ def parse_pattern(text: str) -> Pattern:
 IMPLICIT = DirSet(IMPLICIT_NAME, [DirGroup([parse_pattern("*")], 0)])
 
 
-def with_implicit(sets: Sequence[DirSet]) -> list[DirSet]:
-    """Return SETS with the set named `Top level` first: the one in SETS if
+def with_implicit(dirsets: Sequence[DirSet]) -> list[DirSet]:
+    """Return DIRSETS with the dirset named `Top level` first: the one in DIRSETS if
     any, else IMPLICIT."""
-    top = next((s for s in sets if s.name == IMPLICIT_NAME), IMPLICIT)
-    return [top, *(s for s in sets if s is not top)]
+    top = next((s for s in dirsets if s.name == IMPLICIT_NAME), IMPLICIT)
+    return [top, *(s for s in dirsets if s is not top)]
 
 
 def _tree_root(text: str) -> bytes:
@@ -131,12 +131,12 @@ def _tree_root(text: str) -> bytes:
 
 @dataclass(frozen=True, slots=True)
 class TreeConfig:
-    """A tree's section of the sets file: its BUDGET (the most dirs its file
-    stores, resolved against the file's default) and its SETS, in file
-    order, without the implicit set."""
+    """A tree's section of the dirsets file: its BUDGET (the most dirs its file
+    stores, resolved against the file's default) and its DIRSETS, in file
+    order, without the implicit dirset."""
 
     budget: int
-    sets: list[DirSet]
+    dirsets: list[DirSet]
 
 
 def _budget(where: str, value: object) -> int:
@@ -149,35 +149,40 @@ def _budget(where: str, value: object) -> int:
 
 
 def _tree(tree: str, section: object, default: int | None) -> TreeConfig:
-    """Return the TreeConfig of a sets file's `[tree.TREE]` SECTION, whose
+    """Return the TreeConfig of a dirsets file's `[tree.TREE]` SECTION, whose
     budget is DEFAULT (the file's) unless the section has its own."""
     if not isinstance(section, dict):
         raise ValueError(f"tree {tree!r} must be a table")
     budget = default
     if "budget" in section:
         budget = _budget(f"tree {tree!r}", section["budget"])
-    dir_sets = _sets(tree, section)
+    dirsets = _dirsets(tree, section)
     if budget is None:
         raise ValueError(
             f'tree {tree!r} has no budget: add budget = N to its [tree."{tree}"]'
             " section, or at the top of the file for every tree"
         )
-    return TreeConfig(budget, dir_sets)
+    return TreeConfig(budget, dirsets)
 
 
-def _sets(tree: str, section: dict) -> list[DirSet]:
-    """Return the sets of a sets file's `[tree.TREE]` SECTION."""
+def _dirsets(tree: str, section: dict) -> list[DirSet]:
+    """Return the dirsets of a dirsets file's `[tree.TREE]` SECTION."""
     if "watch" in section:
         raise ValueError(
             f"tree {tree!r}: 'watch' directly in a tree is the old format; put"
-            f' dirs in a named set: [tree."{tree}".set."NAME"]'
+            f' dirs in a named dirset: [tree."{tree}".dirset."NAME"]'
         )
-    if extra := sorted(set(section) - {"set", "budget"}):
+    if "set" in section:
+        raise ValueError(
+            f"tree {tree!r}: 'set' is the old name; rename each"
+            f' [tree."{tree}".set."NAME"] section to [tree."{tree}".dirset."NAME"]'
+        )
+    if extra := sorted(set(section) - {"dirset", "budget"}):
         raise ValueError(f"tree {tree!r}: unknown key {extra[0]!r}")
-    sets = section.get("set")
-    if not isinstance(sets, dict):
-        raise ValueError(f"tree {tree!r}: 'set' must be a table of sets")
-    return [_set(tree, name, s) for name, s in sets.items()]
+    dirsets = section.get("dirset")
+    if not isinstance(dirsets, dict):
+        raise ValueError(f"tree {tree!r}: 'dirset' must be a table of dirsets")
+    return [_dirset(tree, name, s) for name, s in dirsets.items()]
 
 
 def _group(where: str, group: object) -> DirGroup:
@@ -203,11 +208,11 @@ def _group(where: str, group: object) -> DirGroup:
         raise ValueError(f"{where}: {e}") from None
 
 
-def _set(tree: str, name: str, section: object) -> DirSet:
-    """Return the set NAME of TREE from its SECTION."""
-    where = f"tree {tree!r}, set {name!r}"
+def _dirset(tree: str, name: str, section: object) -> DirSet:
+    """Return the dirset NAME of TREE from its SECTION."""
+    where = f"tree {tree!r}, dirset {name!r}"
     if not name.strip():
-        raise ValueError(f"tree {tree!r}: a set name must not be blank")
+        raise ValueError(f"tree {tree!r}: a dirset name must not be blank")
     if not isinstance(section, dict):
         raise ValueError(f"{where} must be a table")
     if "watch" in section:
@@ -225,15 +230,15 @@ def _set(tree: str, name: str, section: object) -> DirSet:
 
 def load(path: Path) -> dict[bytes, TreeConfig]:
     """Return the config per tree root of the TOML file at PATH: a top-level
-    `budget = N` (optional), and per tree an optional `budget` and its sets,
-    in file order: `[tree."/fs/path".set."NAME"]` sections, each with
-    `dirs = [{ match = ["a/*", ...], depth = N }, ...]`. The implicit set is
+    `budget = N` (optional), and per tree an optional `budget` and its dirsets,
+    in file order: `[tree."/fs/path".dirset."NAME"]` sections, each with
+    `dirs = [{ match = ["a/*", ...], depth = N }, ...]`. The implicit dirset is
     not added; see with_implicit.
 
     Raises ValueError naming PATH for bad TOML, a top-level key other than
     `tree` and `budget`, no trees, a tree without a budget (its own or the
-    file's), a section that is not as above (the old `watch` formats get a
-    hint), a blank set name, a bad `depth` or `budget`, or a bad tree path
+    file's), a section that is not as above (the old `watch` and `set` formats get a
+    hint), a blank dirset name, a bad `depth` or `budget`, or a bad tree path
     or pattern; OSError if PATH cannot be read.
     """
     with path.open("rb") as f:
@@ -244,7 +249,7 @@ def load(path: Path) -> dict[bytes, TreeConfig]:
     if "watch" in doc:
         raise ValueError(
             f"{path}: a top-level 'watch' is the old format; put the dirs,"
-            ' relative to the tree root, in a [tree."/fs/path".set."NAME"] section'
+            ' relative to the tree root, in a [tree."/fs/path".dirset."NAME"] section'
         )
     if extra := sorted(set(doc) - {"tree", "budget"}):
         raise ValueError(
@@ -255,7 +260,7 @@ def load(path: Path) -> dict[bytes, TreeConfig]:
         raise ValueError(f"{path}: 'tree' must be a table of trees")
     if not trees:
         raise ValueError(
-            f'{path}: no trees: add a [tree."/fs/path".set."NAME"] section per tree'
+            f'{path}: no trees: add a [tree."/fs/path".dirset."NAME"] section per tree'
             " to generate"
         )
     try:
@@ -266,25 +271,25 @@ def load(path: Path) -> dict[bytes, TreeConfig]:
 
 
 class Matcher:
-    """Collects the paths covered by a tree's sets.
+    """Collects the paths covered by a tree's dirsets.
 
     A pattern of P components with depth D covers a path of L components when
     P <= L <= P + D and the path's first P components match; it matches the
-    path exactly when L == P. SETS' patterns are all matched; paths are
+    path exactly when L == P. DIRSETS' patterns are all matched; paths are
     relative to the tree's ROOT (`.` has no components).
     """
 
-    def __init__(self, sets: Sequence[DirSet]):
-        # (set, pattern within its set, pattern components, depth)
+    def __init__(self, dirsets: Sequence[DirSet]):
+        # (dirset, pattern within its dirset, pattern components, depth)
         self._entries = [
             (i, j, p.parts, depth)
-            for i, s in enumerate(sets)
+            for i, s in enumerate(dirsets)
             for j, (p, depth) in enumerate(s.patterns())
         ]
         # Bounds of the covered path lengths; the cheap first filter in add.
         self._lo = min((len(parts) for _, _, parts, _ in self._entries), default=0)
         self._hi = max((len(parts) + d for _, _, parts, d in self._entries), default=-1)
-        self._matches = [[set() for _ in s.patterns()] for s in sets]
+        self._matches = [[set() for _ in s.patterns()] for s in dirsets]
         self._stored: dict[bytes, int] = {}
 
     @property
@@ -311,7 +316,7 @@ class Matcher:
                     self._matches[i][j].add(path)
 
     def matches(self) -> list[list[list[bytes]]]:
-        """Return, per set and pattern, the paths that match it exactly, sorted."""
+        """Return, per dirset and pattern, the paths that match it exactly, sorted."""
         return [[sorted(found) for found in s] for s in self._matches]
 
     def stored(self) -> dict[bytes, int]:
@@ -322,10 +327,10 @@ class Matcher:
 
 
 @dataclass(frozen=True, slots=True)
-class SetDirs:
-    """A set's dirs.
+class DirSetDirs:
+    """A dirset's dirs.
 
-    name: the set's. paths: in display order. found: per pattern, how many
+    name: the dirset's. paths: in display order. found: per pattern, how many
     paths it matched, kept or not. dropped: how many of its dirs the budget
     left out (see cut).
     """
@@ -336,13 +341,13 @@ class SetDirs:
     dropped: int = 0
 
 
-def select(name: str, matches: list[list[bytes]], kept: Container[bytes]) -> SetDirs:
-    """Return the dirs of the set NAME from MATCHES (per pattern, in file
+def select(name: str, matches: list[list[bytes]], kept: Container[bytes]) -> DirSetDirs:
+    """Return the dirs of the dirset NAME from MATCHES (per pattern, in file
     order) that are in KEPT: a path matched by several patterns counts at
     its first."""
     ordered = list(dict.fromkeys(p for found in matches for p in found))
     paths = [p for p in ordered if p in kept]
-    return SetDirs(
+    return DirSetDirs(
         name, paths, [len(found) for found in matches], len(ordered) - len(paths)
     )
 
@@ -371,11 +376,11 @@ def cut(stored: Mapping[bytes, int], budget: int) -> Cut:
     all the stored subdirs of a stored dir, so every kept dir has all of its
     stored subdirs kept or none: a partly kept dir could neither be split
     (the page needs all its subdirs) nor be told from a leaf. A dir whose
-    parent is not stored (a set dir) is a unit of its own.
+    parent is not stored (a dirset dir) is a unit of its own.
 
     A kept dir is pruned if it is stored with levels below it (depth left
     >= 1, so without the cut it would be split) and its subdirs were left
-    out. A dir stored only for itself, whose subdir is a set dir of its own,
+    out. A dir stored only for itself, whose subdir is a dirset dir of its own,
     is not: raising the budget would not make it splittable.
     """
     by_level: defaultdict[int, list[bytes]] = defaultdict(list)

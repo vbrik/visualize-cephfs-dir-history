@@ -1,7 +1,7 @@
-// Pure data shaping for the charts; no DOM. See docs/terms.md for "set",
+// Pure data shaping for the charts; no DOM. See docs/terms.md for "dirset",
 // "stored dir", "metric" and "own-files band". A tree file holds, per time
-// point, the rbytes and rentries of every stored dir (a set dir, or one
-// within its depth below it), the tree's sets, `split`: the stored dirs
+// point, the rbytes and rentries of every stored dir (a dirset dir, or one
+// within its depth below it), the tree's dirsets, `split`: the stored dirs
 // whose subdirs are all stored, and `pruned`: the stored dirs whose subdirs
 // the tree's budget left out.
 
@@ -222,7 +222,7 @@ export function normalize(raw) {
  * The Stack view's bands for DATA (from normalize).
  *
  * opts: metric (a METRICS key, default "rbytes": the series to stack),
- * roots (the dirs to show: a set's dirs, or the drilled-into dir),
+ * roots (the dirs to show: a dirset's dirs, or the drilled-into dir),
  * base (labels are relative to it; null: the tree root), depth (levels to
  * split below each root), top (most bands returned), hidden (band keys; see
  * below), range ([first, last] point indexes), by (optional; a legend sort,
@@ -236,7 +236,7 @@ export function normalize(raw) {
  * its subdirs', at least 0) plus the bands of its stored subdirs, likewise;
  * any other dir is one band of its value (key: the dir). Absent counts as
  * 0. Bands with the same key appear once (ECharts series ids must be
- * unique). That does not make a set holding a dir and its subdir safe: the
+ * unique). That does not make a dirset holding a dir and its subdir safe: the
  * subdir's bytes are counted in both. Keys do not depend on the metric.
  *
  * HIDDEN holds band keys, and hiding removes the key's bytes at every
@@ -381,7 +381,7 @@ export function maxDepth(data, roots) {
 }
 
 /** The deepest of PATHS that PATH is under (or is), or null if none. */
-export function setDirOf(paths, path) {
+export function dirSetDirOf(paths, path) {
   let best = null;
   for (const p of paths) {
     if (isUnder(path, p) && (best === null || depth(p) > depth(best))) best = p;
@@ -389,7 +389,7 @@ export function setDirOf(paths, path) {
   return best;
 }
 
-/** Whether drilling can reach PATH from the set dirs PATHS: PATH is one of
+/** Whether drilling can reach PATH from the dirset dirs PATHS: PATH is one of
  * them, or a stored subdir of a split dir that drilling can reach. So an
  * untrusted PATH (e.g. from the URL) is safe to look up in a metric's series. */
 export function reachable(data, paths, path) {
@@ -400,7 +400,7 @@ export function reachable(data, paths, path) {
 }
 
 /**
- * Shape the set dirs PATHS (a set's, in DATA.sets) into trend cards of
+ * Shape the dirset dirs PATHS (a dirset's, in DATA.dirsets) into trend cards of
  * METRIC (a METRICS key) for RANGE ([first, last] point indexes), in PATHS
  * order.
  *

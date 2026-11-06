@@ -14,9 +14,14 @@
   `model.METRICS`; the metric's name is its tree-file name (`rbytes`,
   `rentries`) in the URL hash and in code.
 - Times in JSON are UTC ISO 8601 to the second (`2026-10-21T19:19:45Z`).
-- `history.py` and `sets.py` are pure (no database; only `sets.load` reads
-  its file) and hold the logic; `db.py` only queries; `generate.py` wires
-  them and writes files. Tests target `history.py`, `sets.py` and the pure
+- The term [dirset](terms.md) is one word: `dirset` wherever names are
+  lowercase (snake_case, the TOML section, JSON keys, the URL hash,
+  `--dirsets`, HTML ids, prose) and `DirSet` in CamelCase and page labels
+  (`DirSet`, `DirSetDirs`, `currentDirSet`, `dirSetDirOf`). Never a bare
+  *set*: that is Python's `set` and JS's `Set`.
+- `history.py` and `dirsets.py` are pure (no database; only `dirsets.load`
+  reads its file) and hold the logic; `db.py` only queries; `generate.py` wires
+  them and writes files. Tests target `history.py`, `dirsets.py` and the pure
   parts of `generate.py` and need no database.
 - `dirhistory-generate` prints the files it wrote to stdout; notes,
   `WARNING:` and `ERROR:` messages go to stderr.

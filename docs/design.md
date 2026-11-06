@@ -20,7 +20,7 @@ outside this application.
 
 rbytes covers a whole subtree, so stacking a directory and its ancestors
 counts the same bytes once per level. The Stack view avoids it by stacking
-dirs that do not nest: a set's dirs (see [Sets](#sets)), and, where the
+dirs that do not nest: a dirset's dirs (see [DirSets](#dirsets)), and, where the
 reader asks for more detail (Depth, drilling), a dir *replaced* by its
 parts. A split dir X becomes `X/ bytes`, the files directly in it (rbytes(X)
 minus its subdirs' rbytes, at least 0), plus one band per stored subdir,
@@ -28,12 +28,12 @@ recursively, so the bands add up to X's rbytes and no bytes go missing.
 Absent counts as 0.
 
 Dirs are chosen, not computed: people look at a tree through particular
-dirs at particular depths, and the sets file says which.
+dirs at particular depths, and the dirsets file says which.
 
 ### Only stored dirs are read
 
 The generator streams the paths of the first sample once (up to ~2 M rows)
-through a matcher for all the tree's sets, adds the paths with later rows (dirs
+through a matcher for all the tree's dirsets, adds the paths with later rows (dirs
 created later), and fetches the history of the stored dirs only. A stored
 dir with no row after the first sample is constant, so it is not stored as a
 list (see [Data files](#data-files)). The first sample and the stored dirs'
@@ -157,18 +157,22 @@ that fits the remaining points: at the defaults 1 h up to about 7 months,
 not fit, it gets the smallest multiple of 1 w that does. The generator
 refuses a `--recent` that alone needs `--max-points`.
 
-### Sets
+### DirSets
 
 People track chosen dirs, usually above the depth where bytes change
 (`IceCube/2026/filtered`), and want both the stack of a few of them and each
-one's shape. A **set** is a named list of such dirs; the Stack and Trends
-views each show one set at a time.
+one's shape. A **dirset** is a named list of such dirs; the Stack and Trends
+views each show one dirset at a time.
 
-- The sets are a TOML file read by the generator (`--sets`, required), not
+- The name is *dirset*, not *set*: on the page a bare "Set" (the menu, the
+  "Set Top level" crumb) did not say what it is a set of. The config
+  section, `--dirsets`, the data files' key and `dirset=` in the URL use the
+  same word, so one term names the concept everywhere.
+- The dirsets are a TOML file read by the generator (`--dirsets`, required), not
   edited in the page: the site is static, and the list is the operator's
   decision.
-- The list is per tree: `[tree."/fs/path".set."NAME"]` sections, named by
-  the tree's root and a set's name, hold `dirs`, a list of groups
+- The list is per tree: `[tree."/fs/path".dirset."NAME"]` sections, named by
+  the tree's root and a dirset's name, hold `dirs`, a list of groups
   `{ match = [patterns], depth = N }`. Patterns are relative to the root.
   Trees may overlap (`/npx/user` and `/npx/user/vbrik`), and a global list
   would apply `/npx/user/*` to the inner tree too. `.` matches the root.
@@ -179,38 +183,39 @@ views each show one set at a time.
   `--tree` naming a tree without a section is an error, and `trees.json`
   keeps only the file's trees: a tree removed from the file drops out of the
   index on the next run.
-- Every tree has the implicit set **Top level** (`*`, depth 0), always
-  first, so a tree is browsable with an empty set table (`[tree."/x".set]`). A set of that name in the
+- Every tree has the implicit dirset **Top level** (`*`, depth 0), always
+  first, so a tree is browsable with an empty dirset table (`[tree."/x".dirset]`). A dirset of that name in the
   file replaces it, still first, e.g. to give the top-level dirs depth 2.
-  The file's other sets follow in its order.
-  `watch`, the format before sets, is an error with a hint.
-- Sets are shown one at a time because dirs at different depths do not
+  The file's other dirsets follow in its order.
+  `watch`, the format before named sets, and `set`, the section name before
+  dirsets, are errors with a hint.
+- DirSets are shown one at a time because dirs at different depths do not
   compare: `*` and `*/*` side by side mix a dir with its own subdirs. A
-  set's name, not a pattern's depth, decides what is compared.
+  dirset's name, not a pattern's depth, decides what is compared.
 - `depth` is how many levels below each matched dir the data file stores, so
   the page can split and drill into it; 0 is the dir only. A dir matched by
-  several groups, in one set or several, is stored to the largest `depth`,
-  and the page splits and drills by what is stored, not by the current set's
-  own depths: if set B stores `X` 3 levels deep, set A, which gives `X`
+  several groups, in one dirset or several, is stored to the largest `depth`,
+  and the page splits and drills by what is stored, not by the current dirset's
+  own depths: if dirset B stores `X` 3 levels deep, dirset A, which gives `X`
   depth 1, can go 3 deep too. Wildcards are matched per component, so `*`
   never crosses `/` and next year's dir joins without an edit. No `**`: use
   `depth` to go deeper, since a recursive pattern could store thousands of
   dirs by accident.
 - Matching rides the generator's single pass over the first sample (one
-  matcher for all of a tree's sets), plus the paths with later rows. Stored
+  matcher for all of a tree's dirsets), plus the paths with later rows. Stored
   dirs' histories are fetched explicitly, since a dir that never changed is
   otherwise never read.
 - Config mistakes are errors. A pattern that matches nothing is a warning,
-  for the trees read; the implicit set never warns.
+  for the trees read; the implicit dirset never warns.
 
 ### Budget: partial trees
 
 A broad pattern with a large `depth` can cover millions of dirs: on the
-real database, one tree's sets covered 1.9 M. Rather than fail, each tree
+real database, one tree's dirsets covered 1.9 M. Rather than fail, each tree
 has a **budget**, the most dirs its file stores, and a tree over it is
 stored as deep as the budget allows and saved partial.
 
-- The budget is in the sets file only: a top-level `budget = N` for every
+- The budget is in the dirsets file only: a top-level `budget = N` for every
   tree, which a tree's own `[tree."/x"] budget = N` overrides. There is no
   default, so a tree with neither is an error: the right size depends on the
   tree, and a forgotten budget should not silently pick one.
@@ -220,18 +225,18 @@ stored as deep as the budget allows and saved partial.
   that does not fit; nothing deeper is kept. A unit is all the stored
   subdirs of one stored dir, all or none, so no dir is partly stored: it
   could neither be split (the page needs all its subdirs) nor be told from a
-  leaf. A set dir whose parent is not stored is a unit of its own, so a
-  budget below a tree's top-level count still keeps that many set dirs.
+  leaf. A dirset dir whose parent is not stored is a unit of its own, so a
+  budget below a tree's top-level count still keeps that many dirset dirs.
   Which dirs of the partial level are kept does not matter, as long as
   every shallower level is complete; path order is reproducible.
 - A **pruned** dir is a kept dir that would have been split but for the
   budget: stored with levels below it, its subdirs left out. A dir stored
-  for itself only, whose subdir is a set dir of its own, is not pruned: a
+  for itself only, whose subdir is a dirset dir of its own, is not pruned: a
   bigger budget would not make it splittable.
 - The cut is applied before any history is fetched, so the budget bounds
   the query as well as the file. A cut tree is a warning (stored of covered
   dirs, the depth above which every level is whole, how many pruned), not an
-  error. A set dir below the cut is left out of its set, with a warning; a
+  error. A dirset dir below the cut is left out of its dirset, with a warning; a
   pattern's "matches no directory" counts matches before the cut.
 
 ### Page
@@ -239,11 +244,11 @@ stored as deep as the budget allows and saved partial.
 - ECharts (vendored, pinned): a stacked area with a zoom slider today;
   treemap, heatmap and bar charts for the next views.
 - **Stack** bands are rbytes (or rentries, see
-  [Two metrics](#two-metrics-rbytes-and-rentries)). Each set dir is one band, or, at Depth N, is
+  [Two metrics](#two-metrics-rbytes-and-rentries)). Each dirset dir is one band, or, at Depth N, is
   split N levels (only dirs in the file's `split` list: those with all their
   subdirs stored; any other stays whole). Depth counts levels below the shown
-  dirs, which are the set's, or the drilled-into dir's. A band reached from
-  two roots, as when a set holds a dir and its own subdir, is drawn once.
+  dirs, which are the dirset's, or the drilled-into dir's. A band reached from
+  two roots, as when a dirset holds a dir and its own subdir, is drawn once.
 - A pruned dir's name ends in `*` wherever it is shown (legend, tooltip,
   table, hidden chips, Trends cards), with a title saying the tree's budget
   ran out, and each view has a one-line note while one is on screen. The
@@ -273,8 +278,8 @@ stored as deep as the budget allows and saved partial.
   tooltip lists the 30 largest at the pointer and sums the rest in one row.
 - Drilling: clicking a band whose dir is in `split` (legend or chart) shows
   that dir split one level (`in=dir`, Depth 1). `in` is used only if the
-  set's dirs reach it through `split`; otherwise the page shows the set.
-  Changing the tree or the set clears it.
+  dirset's dirs reach it through `split`; otherwise the page shows the dirset.
+  Changing the tree or the dirset clears it.
 - Hiding takes a dir band (`hide=dir`) or an own-files band (`hide=dir/.`,
   shown as `dir/ bytes`) and removes those bytes at every Depth. A dir
   removes its whole subtree: the bands under it go, and a drawn band that
@@ -290,7 +295,7 @@ stored as deep as the budget allows and saved partial.
   Picks are listed even if a zoom or a sort ranks them past Top, and listed bands
   keep their colors when unticked. The chart, its click hit-testing, the
   summary's total and the table cover the ticked bands. Picks are one
-  level's band keys, so changing the tree, set or Depth, or drilling,
+  level's band keys, so changing the tree, dirset or Depth, or drilling,
   clears them; hiding a band drops its pick.
 - The legend sorts by name, size at the range's end, or change over the
   range (`lsort=name|size|delta`, `-` before it reversed); its default is
@@ -300,27 +305,27 @@ stored as deep as the budget allows and saved partial.
   (see Top above); the chart's stacking stays by span. Ticked bands
   come first, each group in that order, so the few picked stay in view in a
   long list.
-- View state is in the URL hash (`view`, `metric`, `mode`, `set`, `depth`,
+- View state is in the URL hash (`view`, `metric`, `mode`, `dirset`, `depth`,
   `top`, `in`, `hide`, `pick`, `lsort`, `smin`, `sminent`, `sflat`,
   `smooth`, `sort`, `min`, `minent`, `flat`), so a view can be
   bookmarked or shared. Hash values carry
   paths as their file-name bytes, percent-encoded, so names that are not
   UTF-8 survive (`model.encodeValue`). Keys and views of older pages are
   ignored.
-- A set that matches no dir shows one note in both views: "No directories
-  match this set's patterns."
+- A dirset that matches no dir shows one note in both views: "No directories
+  match this dirset's patterns."
 - The Trends view (`view=trends`) is a separate view, not a section under the
   chart: the Stack controls do not apply to it, so it hides them. It has its
   own slider, pinned to the window's bottom while the cards scroll; its
-  shadow is the set's total. The zoomed range is shared, so switching views
-  keeps it. The Set control and `set=` are shared too; Sort, Min GiB, *Show
-  unchanged* and the range are shared by all sets. Min GiB and *Show
+  shadow is the dirset's total. The zoomed range is shared, so switching views
+  keeps it. The DirSet control and `dirset=` are shared too; Sort, Min GiB, *Show
+  unchanged* and the range are shared by all dirsets. Min GiB and *Show
   unchanged* are per view (Stack `smin`, `sflat`; Trends `min`, `flat`, its
-  older key): a threshold that suits a level's bands need not suit set dirs.
+  older key): a threshold that suits a level's bands need not suit dirset dirs.
   Min entries likewise (`sminent`, `minent`).
-- Trends cards are the current set's dirs, not their stored descendants. A
+- Trends cards are the current dirset's dirs, not their stored descendants. A
   card shows rbytes (or rentries), the whole dir, not its own files: it asks "how big is this",
-  and set dirs may nest, since cards are never added up. A card's change and
+  and dirset dirs may nest, since cards are never added up. A card's change and
   scale follow the range, so zooming reveals a shape. Cards color by
   direction (growth warm, shrinkage cool), so their number is not tied to
   the 64-slot palette. Clicking a card opens the Stack view in its dir, split
@@ -351,9 +356,9 @@ stored as deep as the budget allows and saved partial.
 ## Data files
 
 `web/data/trees.json` lists the trees:
-`[{id, label, detail, file, last_sample, generated, sets}]`; `generated` is
-the tree file's, so the page refetches a file only when it changed; `sets`
-lists the tree's sets as `{name, dirs}`, `dirs` counting the set's dirs, in
+`[{id, label, detail, file, last_sample, generated, dirsets}]`; `generated` is
+the tree file's, so the page refetches a file only when it changed; `dirsets`
+lists the tree's dirsets as `{name, dirs}`, `dirs` counting the dirset's dirs, in
 the file's order, "Top level" first.
 
 `web/data/tree-<id>.json`:
@@ -364,14 +369,14 @@ the file's order, "Top level" first.
 | `tree` | `{id, fs_path, fs_name, cluster, max_depth}`. |
 | `times` | Time points, oldest first. |
 | `metrics` | The metrics of each `series` pair, in order: `["rbytes", "rentries"]`. |
-| `series` | `{path: [rbytes, rentries]}` for every stored dir: a set dir, or one within its `depth` below a set dir. Each series is a list (a value or null per point, null: absent) if it changed, else one number or null, its constant value. The page reads a file without `series` (written before rentries) from its `rbytes`, `{path: series}`, and disables Entries. |
-| `sets` | The tree's sets in `--sets` order, "Top level" first: `[{name, paths}]`, a set's dirs in pattern order, by path within a pattern. The page sorts the Trends cards itself. |
-| `split` | The stored dirs whose subdirs are all stored (each less than its `depth` below a set dir, and above `max_depth`), sorted. Only these can be split or drilled into. |
+| `series` | `{path: [rbytes, rentries]}` for every stored dir: a dirset dir, or one within its `depth` below a dirset dir. Each series is a list (a value or null per point, null: absent) if it changed, else one number or null, its constant value. The page reads a file without `series` (written before rentries) from its `rbytes`, `{path: series}`, and disables Entries. |
+| `dirsets` | The tree's dirsets in `--dirsets` order, "Top level" first: `[{name, paths}]`, a dirset's dirs in pattern order, by path within a pattern. The page sorts the Trends cards itself. |
+| `split` | The stored dirs whose subdirs are all stored (each less than its `depth` below a dirset dir, and above `max_depth`), sorted. Only these can be split or drilled into. |
 | `pruned` | The stored dirs that would be in `split` but for the tree's budget, sorted; `[]` if the tree fit. The page marks them `*`, and reads a file without `pruned` as none. |
 
 Most stored dirs never change, so one number instead of a list keeps files
 small: on a real database 2 866 of the 2 995 series of the largest Top level
-set are one number, and its file is 0.3 MB; a 10 678-dir set measured 99.5 %
+dirset are one number, and its file is 0.3 MB; a 10 678-dir dirset measured 99.5 %
 unchanged. Then paths are most of a file: of a 205 MB rbytes-only file of
 1.9 M stored dirs, 143 MB were path keys. Pairing rentries with rbytes per
 path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
@@ -383,10 +388,10 @@ path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
   leaves its children unprobed. They then look constant, and the directory's
   NULL rbytes are carried forward, so changes below it go unseen. The
   generator warns when a tree's samples have errors.
-- **Nested set dirs count twice.** A set that holds a dir and its own
+- **Nested dirset dirs count twice.** A dirset that holds a dir and its own
   subdir as separate dirs can draw their bytes twice: the outer dir whole
   and the inner one as its own band. A band reached from two roots is drawn
-  once, which does not prevent this. Nothing guards against it; the set's
+  once, which does not prevent this. Nothing guards against it; the dirset's
   author chooses.
 - **Lag dips in own-files bands.** A split dir's `X/ bytes` or
   `X/ entries` can dip for a point when a child's value is ahead of its
@@ -419,5 +424,5 @@ path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
   show the change, and a Trends card has its own scale; a net-change view
   (design 2c) will show it in the stack.
 - **Lost trees.** Data files of trees removed from the database or from the
-  sets file stay in `web/data/` (no longer listed in `trees.json`) until
+  dirsets file stay in `web/data/` (no longer listed in `trees.json`) until
   deleted by hand.

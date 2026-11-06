@@ -3,7 +3,7 @@
 Pure logic, no database: the caller supplies samples and dir_state rows.
 
 The series kept are two metrics of the *stored* directories, those the
-tree's sets cover (sets.Matcher) within its budget (sets.cut): rbytes, and
+tree's dirsets cover (dirsets.Matcher) within its budget (dirsets.cut): rbytes, and
 rentries (rfiles + rsubdirs, so a directory counts itself). The page
 derives the bands and cards it draws from them, including a directory's
 own-files amount (its value minus its stored subdirectories'), so no own
@@ -14,11 +14,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from dirhistory.sets import (
+from dirhistory.dirsets import (
     ROOT,
     DirSet,
+    DirSetDirs,
     Matcher,
-    SetDirs,
     cut,
     parent,
     select,
@@ -58,13 +58,13 @@ class Sample:
 
 @dataclass(frozen=True, slots=True)
 class TreeHistory:
-    """A tree's chosen time points, its sets' dirs (in config order), the
+    """A tree's chosen time points, its dirsets' dirs (in config order), the
     rbytes and rentries series of every stored dir (the same keys), the dirs
     to split, and what the budget cut.
 
     split: the sorted dirs whose subdirectories are all stored, so the page
     can replace such a dir by them. pruned: the sorted dirs that would be
-    split but for the budget (sets.cut). candidates: how many dirs the sets
+    split but for the budget (dirsets.cut). candidates: how many dirs the dirsets
     cover, stored or not. cut_level: the shallowest level with a covered dir
     left out; None if none is.
     """
@@ -72,7 +72,7 @@ class TreeHistory:
     times: list[datetime]
     rbytes: dict[bytes, Series]
     rentries: dict[bytes, Series]
-    sets: list[SetDirs]
+    dirsets: list[DirSetDirs]
     split: list[bytes]
     pruned: list[bytes]
     candidates: int
@@ -142,7 +142,7 @@ def summarize(
     first: Iterable[bytes],
     fetch: Callable[[set[bytes]], Iterable[Row]],
     resolution: Resolution = DEFAULT_RESOLUTION,
-    sets: Sequence[DirSet] = (),
+    dirsets: Sequence[DirSet] = (),
     budget: int | None = None,
 ) -> TreeHistory:
     """Return the history of a tree with SAMPLES, ordered by (started, id).
@@ -153,7 +153,7 @@ def summarize(
     stream. RESOLUTION picks the time points.
 
     The stored dirs are the paths, among the first sample's and CHANGED, that
-    SETS cover (sets.Matcher), cut to BUDGET (sets.cut; None: no cut) before
+    DIRSETS cover (dirsets.Matcher), cut to BUDGET (dirsets.cut; None: no cut) before
     any series is fetched, so only the kept dirs are. A path outside CHANGED
     has its single row in the first sample, so a never-changed dir gets a
     constant series.
@@ -162,7 +162,7 @@ def summarize(
     all its subdirectories are stored too.
     """
     points = choose_points(samples, resolution)
-    matcher = Matcher(sets)
+    matcher = Matcher(dirsets)
     if matcher.wants:
         for path in first:
             matcher.add(path)
@@ -179,7 +179,7 @@ def summarize(
         [p.started for p in points],
         {p: rbytes.get(p, absent[:]) for p in sorted(stored)},
         {p: rentries.get(p, absent[:]) for p in sorted(stored)},
-        [select(s.name, m, stored) for s, m in zip(sets, matches, strict=True)],
+        [select(s.name, m, stored) for s, m in zip(dirsets, matches, strict=True)],
         sorted(split),
         [] if trimmed is None else trimmed.pruned,
         len(candidates),

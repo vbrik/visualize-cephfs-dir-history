@@ -8,16 +8,16 @@ records in PostgreSQL from CephFS recursive statistics (`ceph.dir.rbytes`,
 
 - `dirhistory-generate` reads the trackdir database and writes JSON data
   files. Run it periodically.
-- `web/` is the page, per tree, with two views of a **set** of directories:
-  *Stack*, a stacked area chart of the set's directories, split into their
+- `web/` is the page, per tree, with two views of a **dirset** of directories:
+  *Stack*, a stacked area chart of the dirset's directories, split into their
   subdirectories by Depth, with drill-down, hiding, a zoomable time range and
   a table; and *Trends*, a card per directory with its size over time. Any
   static web server can serve it.
 
-Sets are lists of directories you choose in a TOML file (`--sets`); every tree
-also has the set **Top level**, its top-level directories. Stack bands are the
+DirSets are lists of directories you choose in a TOML file (`--dirsets`); every tree
+also has the dirset **Top level**, its top-level directories. Stack bands are the
 directories' rbytes, the size of the whole subtree; `dir/ bytes` is the
-files directly in a split directory. Bands add up, unless a set holds a
+files directly in a split directory. Bands add up, unless a dirset holds a
 directory and one of its own subdirectories: those bytes can count twice.
 The *Entries* toggle charts rentries instead, the number of files and
 directories in the subtree (rfiles + rsubdirs, the directory itself
@@ -43,24 +43,25 @@ known risks.
 ## Generate and view
 
     export TRACKDIR_DB=postgresql://trackdir@db.example.org/trackdir
-    cat > sets.toml <<'EOF'                   # or copy deploy/sets.toml.example and edit
+    cat > dirsets.toml <<'EOF'                   # or copy deploy/dirsets.toml.example and edit
     budget = 100000
-    [tree."/fs/path".set."Top"]
+    [tree."/fs/path".dirset."Top"]
     dirs = [{ match = ["*"], depth = 1 }]
     EOF
-    dirhistory-generate --sets sets.toml -v   # writes web/data/
+    dirhistory-generate --dirsets dirsets.toml -v   # writes web/data/
     python -m http.server -d web 8000         # then open http://localhost:8000/
 
 Put the database password in `~/.pgpass` or `PGPASSWORD`, never in `--db`.
 The database is only read. See `dirhistory-generate --help` for the options:
-sets file, trees, output directory, and time resolution.
+dirsets file, trees, output directory, and time resolution.
 
-`--sets FILE` is required and names the trees to generate; other trees are
-skipped. Per tree, it gives sets of directories (patterns relative to the
-tree root), how many levels below each the page can split and drill, and a
+`--dirsets FILE` is required and names the trees to generate; other trees are
+skipped. Per tree, it gives dirsets, named sets of directories (patterns
+relative to the tree root), how many levels below each the page can split
+and drill, and a
 **budget**: the most directories the tree's data file stores, set at the top
 of the file for every tree or in a tree's own section. See
-[deploy/sets.toml.example](deploy/sets.toml.example). A tree whose sets
+[deploy/dirsets.toml.example](deploy/dirsets.toml.example). A tree whose dirsets
 cover more directories than its budget is stored breadth-first, every level
 from the tree root whole until the budget runs out, and saved partial, with
 a warning; the page marks a directory whose subdirectories were left out
@@ -87,10 +88,10 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
        install -d -m 755 /etc/dirhistory
        install -o dirhistory -g dirhistory -m 600 /dev/null /etc/dirhistory/pgpass
        # then add a line to it: db.example.org:5432:trackdir:trackdir:PASSWORD
-       install -m 644 deploy/sets.toml.example /etc/dirhistory/sets.toml
+       install -m 644 deploy/dirsets.toml.example /etc/dirhistory/dirsets.toml
        # then edit it: a section naming no tree is an error, so replace the
        # example's trees with yours (only they are generated), each with a
-       # budget; the service passes --sets, and fails if the file is missing
+       # budget; the service passes --dirsets, and fails if the file is missing
 
 3. Copy [deploy/dirhistory.service](deploy/dirhistory.service) and
    [deploy/dirhistory.timer](deploy/dirhistory.timer) to
@@ -100,29 +101,37 @@ The page needs HTTP: opened as a `file://` URL, it cannot fetch its data.
    [deploy/nginx.conf.example](deploy/nginx.conf.example). Put access
    control in front of it: directory names and sizes are internal data.
 5. Upgrading an install that passes `--watch`: edit `ExecStart` to pass
-   `--sets` (and `systemctl daemon-reload`), and convert the file: a
-   `watch = [...]` list becomes a set's
+   `--dirsets` (and `systemctl daemon-reload`), and convert the file: a
+   `watch = [...]` list becomes a dirset's
    `dirs = [{ match = [...], depth = 0 }]` (the generator's error shows the
    form). Then run the service once for all trees (no `--tree`). Until it
    succeeds, the new page cannot read the old data files, and a `--tree N`
    run leaves the other trees' old files.
-6. Upgrading an install from before budgets: add `budget = N` to the sets
+6. Upgrading an install from before budgets: add `budget = N` to the dirsets
    file (at the top, or per tree; `--max-dirs` was 100000), give every tree
-   to chart a section (an empty `[tree."/fs/path".set]` gives it only Top
+   to chart a section (an empty `[tree."/fs/path".dirset]` gives it only Top
    level), and drop `--max-dirs` from any script: it is no longer an option.
    Until then every run fails.
+7. Upgrading an install from before dirsets: rename
+   `/etc/dirhistory/sets.toml` to `dirsets.toml`, rename each
+   `[tree."/fs/path".set."NAME"]` section to `[tree."/fs/path".dirset."NAME"]`
+   (the generator's error names the form), and edit `ExecStart` to pass
+   `--dirsets /etc/dirhistory/dirsets.toml` (and `systemctl daemon-reload`).
+   Then run the service once for all trees (no `--tree`): the new page cannot
+   read the old data files, and old links lose their chosen dirset (`set=`
+   is now `dirset=`).
 
 ## Using the page
 
 | Control | Effect |
 |---|---|
-| Tree | Which sampled tree to show. Changing it shows the tree's first set. |
-| View | *Stack*: the stacked chart of the set's directories. *Trends*: a card per set directory, each on its own scale; click one to open it in Stack. |
+| Tree | Which sampled tree to show. Changing it shows the tree's first dirset. |
+| View | *Stack*: the stacked chart of the dirset's directories. *Trends*: a card per dirset directory, each on its own scale; click one to open it in Stack. |
 | Bytes, Entries | Both views: chart rbytes (sizes) or rentries (files plus directories, each directory counting itself; the own-files band is then `dir/ entries`, the files directly in a directory plus 1). Everything else stays as it is; Min has a separate value per metric. Entries is disabled for a data file written before it existed, until the next `dirhistory-generate`. |
-| Set | Which of the tree's sets to show, with its number of directories: Top level, then the sets of the `--sets` file. |
+| DirSet | Which of the tree's dirsets to show, with its number of directories: Top level, then the dirsets of the `--dirsets` file. |
 | Depth | Stack: split each directory this many levels into its subdirectories; the files directly in a split directory are the band `dir/ bytes`. The most is the levels the data file stores below the shown directories. A name ending in `*` cannot be split: the tree's budget ran out before its subdirectories. |
 | Top | Stack: draw only this many bands (1–512, default 64): the first in the legend's sort, by default those whose size changed most in the shown range; the summary counts the rest. Past 64 bands, colors repeat. |
-| Legend tick boxes, None, All | Stack: draw only the ticked bands; *None* unticks all, to tick just the few to compare. Unticked bands stay listed, below the ticked ones, with their size and change; the chart's scale, the summary and the table follow the ticked ones. Changing Tree, Set or Depth, or drilling, ticks all again. |
+| Legend tick boxes, None, All | Stack: draw only the ticked bands; *None* unticks all, to tick just the few to compare. Unticked bands stay listed, below the ticked ones, with their size and change; the chart's scale, the summary and the table follow the ticked ones. Changing Tree, DirSet or Depth, or drilling, ticks all again. |
 | Legend Dir, Size (Entries), Δ | Stack: sort the legend by name, by value at the shown range's end, or by change (Δ) over the shown range; click again to reverse, a third time for chart order (the top of the stack first: the chart stacks the least changed at the bottom, the biggest movers on top). When there are more bands than Top, the sort also chooses which are drawn: e.g. Δ reversed draws the most shrunk. The chart's stacking does not change. |
 | Band (legend or chart) | Stack: click a band of a directory that can be split to show only what is inside it, one level down; the path above the chart goes back. |
 | hide | Stack: remove a band's bytes from the chart, at every Depth: a directory's, with everything in it, or `dir/ bytes`, the files directly in it. Click the chip to bring it back. |
@@ -141,8 +150,8 @@ or shared.
     ruff format && ruff check
     python scripts/check_web.py     # headless Chrome checks of web/: fixture + web/data
 
-Conventions are in [docs/conventions.md](docs/conventions.md). The sets
-file's format and pattern matching are in `src/dirhistory/sets.py`. To add a
+Conventions are in [docs/conventions.md](docs/conventions.md). The dirsets
+file's format and pattern matching are in `src/dirhistory/dirsets.py`. To add a
 view, add a chart module under `web/js/charts/` that builds an ECharts
 option (or, for many small charts, SVG path data, as `trendCard.js` does)
 from `model.js` output, as `stackedArea.js` does, and a switch in

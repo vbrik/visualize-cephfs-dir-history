@@ -1,5 +1,5 @@
 // Page controller: loads data files, keeps view state in the URL hash, and
-// renders the controls and the shown view of the chosen set: Stack (the
+// renders the controls and the shown view of the chosen dirset: Stack (the
 // stacked chart of its dirs' bands, its legend and its table) or Trends (its
 // dirs' trend cards and their range slider).
 
@@ -33,7 +33,7 @@ import {
   rates,
   reachable,
   relative,
-  setDirOf,
+  dirSetDirOf,
   sortCards,
   sortLegend,
   stackBands,
@@ -48,10 +48,10 @@ const DEFAULTS = {
   view: "stack",
   metric: "rbytes", // a model.METRICS key: what both views chart
   mode: "size", // "size": values; "change": their rates per day, in both views
-  set: null, // the tree's first set, "Top level"
+  dirset: null, // the tree's first dirset, "Top level"
   depth: 0,
   top: DEFAULT_TOP,
-  in: "", // the drilled-into dir; "": none, the set's dirs are shown
+  in: "", // the drilled-into dir; "": none, the dirset's dirs are shown
   hide: [],
   // The legend's ticked band keys; null: all are ticked (no picking).
   pick: null,
@@ -98,7 +98,7 @@ const slots = new Map(); // view key -> Map(band key -> palette slot)
 // The Trends view's slider, made when it is first shown: ECharts sizes a
 // chart from its element, which is 0×0 while hidden.
 let slider = null;
-const cardEls = new Map(); // set dir -> its card element
+const cardEls = new Map(); // dirset dir -> its card element
 const cardOf = new WeakMap(); // shown card element -> its card (model.trendCards)
 let sparkX = []; // the sparklines' point x's, from sparkXs
 
@@ -112,7 +112,7 @@ function readState() {
     view: p.get("view") === "trends" ? "trends" : "stack",
     metric: Object.hasOwn(METRICS, p.get("metric")) ? p.get("metric") : DEFAULTS.metric,
     mode: p.get("mode") === "change" ? "change" : DEFAULTS.mode,
-    set: p.get("set") ?? DEFAULTS.set,
+    dirset: p.get("dirset") ?? DEFAULTS.dirset,
     // Clamped to the levels stored when rendering, which needs the data.
     depth: clampInt(p.get("depth"), 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth),
     top: clampInt(p.get("top"), 1, MAX_BANDS, DEFAULTS.top),
@@ -138,7 +138,7 @@ function writeState(changes) {
   if (s.view !== DEFAULTS.view) p.push(["view", s.view]);
   if (s.metric !== DEFAULTS.metric) p.push(["metric", s.metric]);
   if (s.mode !== DEFAULTS.mode) p.push(["mode", s.mode]);
-  if (s.set !== DEFAULTS.set) p.push(["set", s.set]);
+  if (s.dirset !== DEFAULTS.dirset) p.push(["dirset", s.dirset]);
   if (s.depth !== DEFAULTS.depth) p.push(["depth", s.depth]);
   if (s.top !== DEFAULTS.top) p.push(["top", s.top]);
   if (s.in) p.push(["in", s.in]);
@@ -284,8 +284,8 @@ function colors() {
   };
 }
 
-/** The loaded tree's set that S names, else its first ("Top level"). */
-const currentSet = (s) => data.sets.find((set) => set.name === s.set) ?? data.sets[0];
+/** The loaded tree's dirset that S names, else its first ("Top level"). */
+const currentDirSet = (s) => data.dirsets.find((dirSet) => dirSet.name === s.dirset) ?? data.dirsets[0];
 
 /** Colors per band key: survivors keep their slot, newcomers take the least
  * used (a free one while there is one; lowest first). While the bands fit
@@ -318,25 +318,25 @@ function render() {
   document.body.dataset.mode = s.mode;
   renderControls(s);
   if (!data) return;
-  const set = currentSet(s);
-  $("stack-empty").hidden = set.paths.length > 0;
-  if (s.view === "trends") renderTrends(s, set);
-  else renderStack(s, set);
+  const dirSet = currentDirSet(s);
+  $("stack-empty").hidden = dirSet.paths.length > 0;
+  if (s.view === "trends") renderTrends(s, dirSet);
+  else renderStack(s, dirSet);
 }
 
-/** The Stack view of SET: its dirs' bands, or those of S.in if drilling
+/** The Stack view of DIRSET: its dirs' bands, or those of S.in if drilling
  * can reach it from them. */
-function renderStack(s, set) {
-  const inPath = s.in && reachable(data, set.paths, s.in) ? s.in : null;
-  renderCrumbs(set, inPath);
-  $("stack-body").hidden = set.paths.length === 0;
-  if (!set.paths.length) {
+function renderStack(s, dirSet) {
+  const inPath = s.in && reachable(data, dirSet.paths, s.in) ? s.in : null;
+  renderCrumbs(dirSet, inPath);
+  $("stack-body").hidden = dirSet.paths.length === 0;
+  if (!dirSet.paths.length) {
     model = null;
     drawn = [];
     return;
   }
   chart.resize(); // it may have been hidden, and so 0×0
-  const roots = inPath === null ? set.paths : [inPath];
+  const roots = inPath === null ? dirSet.paths : [inPath];
   const levels = maxDepth(data, roots);
   const depth = Math.min(s.depth, levels);
   $("depth").max = levels;
@@ -364,7 +364,7 @@ function renderStack(s, set) {
   // change; over the listed bands, so a band keeps its color when unticked.
   // In rank order (Size mode's stack, top first, in both modes): the
   // biggest movers get the palette's first, most distinct, slots.
-  c.bands = bandColors(`${data.tree.id}|${set.name}|${inPath}`, model.byRank.toReversed(), c.palette);
+  c.bands = bandColors(`${data.tree.id}|${dirSet.name}|${inPath}`, model.byRank.toReversed(), c.palette);
 
   // A tooltip left open over series that are being replaced would throw.
   chart.dispatchAction({ type: "hideTip" });
@@ -385,7 +385,7 @@ function renderStack(s, set) {
   renderChips(s.hide);
   $("pruned-note").textContent = PRUNED_NOTE;
   $("pruned-note").hidden = !model.bands.some((band) => band.pruned);
-  renderSummary(s, set, inPath);
+  renderSummary(s, dirSet, inPath);
 }
 
 function renderControls(s) {
@@ -418,23 +418,23 @@ function renderControls(s) {
   $("sflat").checked = s.sflat;
   $("smin").value = s[minKey("stack")];
   for (const label of document.querySelectorAll(".min-label")) label.textContent = `Min ${MINS[metric].label}`;
-  $("set").replaceChildren(
-    ...(data?.sets ?? []).map((set) => {
-      const n = set.paths.length;
-      return new Option(`${set.name} — ${n} dir${n === 1 ? "" : "s"}`, set.name);
+  $("dirset").replaceChildren(
+    ...(data?.dirsets ?? []).map((dirSet) => {
+      const n = dirSet.paths.length;
+      return new Option(`${dirSet.name} — ${n} dir${n === 1 ? "" : "s"}`, dirSet.name);
     }),
   );
-  $("set").value = data ? currentSet(s).name : "";
+  $("dirset").value = data ? currentDirSet(s).name : "";
 }
 
-/** Crumbs: the set, then (when drilled) the set dir holding INPATH, as one
+/** Crumbs: the dirset, then (when drilled) the dirset dir holding INPATH, as one
  * crumb, and each component below it. */
-function renderCrumbs(set, inPath) {
+function renderCrumbs(dirSet, inPath) {
   const crumbs = [
-    button(`Set ${set.name}`, () => writeState({ in: "", depth: 0, ...NEW_LEVEL }), inPath === null),
+    button(`DirSet ${dirSet.name}`, () => writeState({ in: "", depth: 0, ...NEW_LEVEL }), inPath === null),
   ];
   if (inPath !== null) {
-    const top = setDirOf(set.paths, inPath);
+    const top = dirSetDirOf(dirSet.paths, inPath);
     const below = relative(inPath, top);
     const parts = below === ROOT ? [] : below.split("/");
     const name = top === ROOT ? data.tree.fs_path : top;
@@ -563,12 +563,12 @@ function absolute(path) {
   return path === ROOT ? data.tree.fs_path : `${data.tree.fs_path}/${path}`;
 }
 
-function renderSummary(s, set, inPath) {
+function renderSummary(s, dirSet, inPath) {
   const b = range[1];
   const total = drawn.reduce((sum, band) => sum + (change ? (band.rates[b] ?? 0) : band.values[b]), 0);
   const n = drawn.length;
-  const k = set.paths.length;
-  const where = inPath === null ? set.name : absolute(inPath);
+  const k = dirSet.paths.length;
+  const where = inPath === null ? dirSet.name : absolute(inPath);
   // At Top's max, raising it cannot help; hiding bands or drilling in can.
   const cut = model.cut ? `, ${model.cut} more not shown${s.top < MAX_BANDS ? " (raise Top)" : ""}` : "";
   const why = filterReason(filters(s, "stack"), amount);
@@ -577,7 +577,7 @@ function renderSummary(s, set, inPath) {
   $("summary").textContent =
     `${where}: ${change ? `net ${amountRate(total)} at the end` : amount(total)} in `
     + `${n}${of} band${n === 1 && !of ? "" : "s"}${cut}${filtered}; `
-    + `set ${set.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
+    + `dirset ${dirSet.name}: ${k} dir${k === 1 ? "" : "s"}. Data generated ${new Date(data.generated).toLocaleString()}.`;
   $("chart").setAttribute(
     "aria-label",
     change
@@ -586,11 +586,11 @@ function renderSummary(s, set, inPath) {
   );
 }
 
-/** The Trends view: the cards of SET's dirs that pass its filters (Min,
+/** The Trends view: the cards of DIRSET's dirs that pass its filters (Min,
  * S.flat). */
-function renderTrends(s, set) {
+function renderTrends(s, dirSet) {
   const [a, b] = range;
-  const all = trendCards(data, set.paths, range, metric, { change });
+  const all = trendCards(data, dirSet.paths, range, metric, { change });
   const filter = filters(s, "trends");
   const cards = sortCards(all.filter((card) => passes(card, filter)), s.sort);
   const hidden = all.length - cards.length;
@@ -644,7 +644,7 @@ function renderTrends(s, set) {
     slider.on("datazoom", () => followZoom(slider));
   }
   slider.resize();
-  const total = setTotal(set);
+  const total = dirSetTotal(dirSet);
   const shadow = change ? rates(total, data.times).map((v) => v ?? 0) : total;
   slider.setOption(rangeSliderOption(data, { colors: colors(), shadow }), {
     replaceMerge: ["series"],
@@ -652,10 +652,10 @@ function renderTrends(s, set) {
   zoomTo(slider);
 }
 
-/** SET's dirs' summed values per point (absent as 0): the slider's shadow. */
-function setTotal(set) {
+/** DIRSET's dirs' summed values per point (absent as 0): the slider's shadow. */
+function dirSetTotal(dirSet) {
   const total = new Array(data.times.length).fill(0);
-  for (const path of set.paths) data[metric][path].forEach((v, i) => (total[i] += v ?? 0));
+  for (const path of dirSet.paths) data[metric][path].forEach((v, i) => (total[i] += v ?? 0));
   return total;
 }
 
@@ -828,11 +828,11 @@ function hideButton(band, s) {
 
 // Enter in a field would submit the form and reload the page.
 $("controls").addEventListener("submit", (e) => e.preventDefault());
-// Set names, dirs and hides belong to a tree; a dir drilled into, to a set.
+// DirSet names, dirs and hides belong to a tree; a dir drilled into, to a dirset.
 $("tree").addEventListener("change", (e) =>
-  writeState({ tree: Number(e.target.value), in: "", hide: [], set: null, ...NEW_LEVEL }),
+  writeState({ tree: Number(e.target.value), in: "", hide: [], dirset: null, ...NEW_LEVEL }),
 );
-$("set").addEventListener("change", (e) => writeState({ set: e.target.value, in: "", ...NEW_LEVEL }));
+$("dirset").addEventListener("change", (e) => writeState({ dirset: e.target.value, in: "", ...NEW_LEVEL }));
 $("depth").addEventListener("change", (e) =>
   writeState({ depth: clampInt(e.target.value, 0, Number.MAX_SAFE_INTEGER, DEFAULTS.depth), ...NEW_LEVEL }),
 );

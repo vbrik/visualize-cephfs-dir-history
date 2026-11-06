@@ -17,10 +17,10 @@
       directly in</span><span class="rentries-only">whole count of files and directories
       (rentries: rfiles + rsubdirs, itself included), or, as <code>dir/ entries</code>, the
       files directly in, plus 1 for</span> a directory that Depth splits. Bands add up unless
-      the set holds a directory and its own subdirectory.<span class="change-only"> Change shows
+      the dirset holds a directory and its own subdirectory.<span class="change-only"> Change shows
       each band's rate of change per day instead: growth above zero, shrinkage below, each
       time point's rate drawn across the interval it covers.</span></p>
-    <p class="muted trends-only">Each card is a set directory's whole
+    <p class="muted trends-only">Each card is a dirset directory's whole
       <span class="rbytes-only">size (rbytes, including its subdirectories)</span><span
       class="rentries-only">count of files and directories (rentries: rfiles + rsubdirs,
       itself included)</span> over the shown range.<span class="size-only"> Each card has its
@@ -42,9 +42,9 @@
       title="Chart sizes, or how fast they change (per day)">
       <button type="button" data-mode="size">Size</button><button type="button" data-mode="change">Change</button>
     </div>
-    <label>Set <select id="set"></select></label>
+    <label>DirSet <select id="dirset"></select></label>
     <label class="stack-only"
-      title="Levels below the set's directories (or the one drilled into) to split into subdirectories">Depth
+      title="Levels below the dirset's directories (or the one drilled into) to split into subdirectories">Depth
       <input id="depth" type="number" min="0" step="1" inputmode="numeric"></label>
     <label class="stack-only"
       title="Most bands to draw: the first in the legend's sort, by default the largest spans in the shown range">Top
@@ -67,7 +67,7 @@
   <p id="error" class="error" role="alert" hidden></p>
 
   <main class="card">
-   <p id="stack-empty" hidden>No directories match this set's patterns.</p>
+   <p id="stack-empty" hidden>No directories match this dirset's patterns.</p>
    <div class="stack-only">
     <nav id="crumbs" class="crumbs" aria-label="Directory"></nav>
     <div id="stack-body">

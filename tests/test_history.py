@@ -3,6 +3,7 @@ from itertools import pairwise
 
 import pytest
 
+from dirhistory.dirsets import DirGroup, DirSet, parse_pattern
 from dirhistory.history import (
     MAX_POINTS,
     ROOT,
@@ -11,7 +12,6 @@ from dirhistory.history import (
     choose_points,
     summarize,
 )
-from dirhistory.sets import DirGroup, DirSet, parse_pattern
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 GiB = 2**30
@@ -22,13 +22,13 @@ def samples(n: int, step: timedelta = timedelta(hours=1)) -> list[Sample]:
 
 
 def ds(name: str, *pairs: tuple[str, int]) -> DirSet:
-    """The set NAME with one group per (pattern text, depth) of PAIRS."""
+    """The dirset NAME with one group per (pattern text, depth) of PAIRS."""
     return DirSet(name, [DirGroup([parse_pattern(t)], d) for t, d in pairs])
 
 
-def run(rows, n=None, step=timedelta(hours=1), sets=(), budget=None):
+def run(rows, n=None, step=timedelta(hours=1), dirsets=(), budget=None):
     """Summarize a tree given as rows (sample_id, path, rbytes, rentries, deleted),
-    storing the dirs of SETS (DirSets) within BUDGET (None: all).
+    storing the dirs of DIRSETS (DirSets) within BUDGET (None: all).
 
     Rows of sample 1 form the first sample; the rest are later changes.
     """
@@ -39,7 +39,9 @@ def run(rows, n=None, step=timedelta(hours=1), sets=(), budget=None):
     def fetch(paths):
         return [r for r in rows if r[1] in paths]
 
-    return summarize(samples(n, step), changed, first, fetch, sets=sets, budget=budget)
+    return summarize(
+        samples(n, step), changed, first, fetch, dirsets=dirsets, budget=budget
+    )
 
 
 def test_choose_points_keeps_every_sample_when_few():
@@ -127,7 +129,7 @@ def test_null_rbytes_keeps_previous_value():
         (3, ROOT, 200, 200, False),
         (3, b"a", 200, 200, False),
     ]
-    h = run(rows, sets=[ds("s", ("a", 0), (".", 0))])
+    h = run(rows, dirsets=[ds("s", ("a", 0), (".", 0))])
     assert h.rbytes[b"a"] == [100, 100, 200]
     assert h.rbytes[ROOT] == [100, 100, 200]
 
@@ -143,7 +145,7 @@ def test_rentries_are_carried_forward_apart_from_rbytes():
         (4, b"a", None, None, True),
         (5, b"a", 7, 2, False),
     ]
-    h = run(rows, sets=[ds("s", ("a", 0))])
+    h = run(rows, dirsets=[ds("s", ("a", 0))])
     assert h.rbytes[b"a"] == [100, 100, 120, None, 7]
     assert h.rentries[b"a"] == [10, 15, 15, None, 2]
 
@@ -155,7 +157,7 @@ def test_rentries_have_the_same_dirs_as_rbytes():
         set(),
         [ROOT, b"a", b"a/x"],
         lambda paths: [(1, b"a", 5, 3, False)],
-        sets=[ds("s", ("a", 1))],
+        dirsets=[ds("s", ("a", 1))],
     )
     assert h.rentries == {b"a": [3, 3], b"a/x": [None, None]}
     assert h.rentries.keys() == h.rbytes.keys()
@@ -163,7 +165,7 @@ def test_rentries_have_the_same_dirs_as_rbytes():
 
 def test_times_are_the_chosen_samples():
     rows = [(1, ROOT, 1, 1, False), (3, ROOT, 3, 3, False)]
-    h = run(rows, sets=[ds("s", (".", 0))])
+    h = run(rows, dirsets=[ds("s", (".", 0))])
     assert h.times == [T0, T0 + timedelta(hours=1), T0 + timedelta(hours=2)]
     assert h.rbytes[ROOT] == [1, 1, 3]
 
@@ -180,7 +182,7 @@ def test_rows_are_read_in_one_pass():
         return (r for r in rows if r[1] in paths)  # an iterator: one pass only
 
     h = summarize(
-        samples(2), {ROOT, b"a"}, iter([ROOT, b"a"]), fetch, sets=[ds("s", ("a", 0))]
+        samples(2), {ROOT, b"a"}, iter([ROOT, b"a"]), fetch, dirsets=[ds("s", ("a", 0))]
     )
     assert h.rbytes[b"a"] == [100, 200]
 
@@ -189,11 +191,11 @@ def test_rows_out_of_sample_order_are_rejected():
     rows = [(2, b"a", 200, 200, False), (1, b"a", 100, 100, False)]
     with pytest.raises(ValueError, match="sample 1"):
         summarize(
-            samples(2), {b"a"}, [b"a"], lambda paths: rows, sets=[ds("s", ("a", 0))]
+            samples(2), {b"a"}, [b"a"], lambda paths: rows, dirsets=[ds("s", ("a", 0))]
         )
 
 
-def test_stored_dirs_reach_depth_below_each_set_dir():
+def test_stored_dirs_reach_depth_below_each_dirset_dir():
     rows = [
         (1, ROOT, 9, 9, False),
         (1, b"a", 5, 5, False),
@@ -201,27 +203,27 @@ def test_stored_dirs_reach_depth_below_each_set_dir():
         (1, b"a/x/y", 1, 1, False),
         (1, b"b", 4, 4, False),
     ]
-    h = run(rows, sets=[ds("s", ("a", 1))])
+    h = run(rows, dirsets=[ds("s", ("a", 1))])
     assert set(h.rbytes) == {b"a", b"a/x"}
     assert h.split == [b"a"]
 
 
 def test_split_needs_all_subdirs_stored():
-    # Set t stores a/x only, and a is in set s at depth 0: a is not split.
+    # DirSet t stores a/x only, and a is in dirset s at depth 0: a is not split.
     rows = [
         (1, ROOT, 9, 9, False),
         (1, b"a", 5, 5, False),
         (1, b"a/x", 3, 3, False),
         (1, b"a/y", 2, 2, False),
     ]
-    h = run(rows, sets=[ds("s", ("a", 0)), ds("t", ("a/x", 0))])
+    h = run(rows, dirsets=[ds("s", ("a", 0)), ds("t", ("a/x", 0))])
     assert h.split == []
     assert set(h.rbytes) == {b"a", b"a/x"}
 
 
-def test_depth_of_another_set_makes_a_dir_splittable():
+def test_depth_of_another_dirset_makes_a_dir_splittable():
     rows = [(1, ROOT, 9, 9, False), (1, b"a", 5, 5, False), (1, b"a/x", 3, 3, False)]
-    h = run(rows, sets=[ds("s", ("a", 0)), ds("t", ("a", 1))])
+    h = run(rows, dirsets=[ds("s", ("a", 0)), ds("t", ("a", 1))])
     assert h.split == [b"a"]
 
 
@@ -229,11 +231,11 @@ def test_split_is_sorted_and_includes_deeper_levels():
     rows = [(1, ROOT, 9, 9, False)] + [
         (1, p, 1, 1, False) for p in (b"b", b"b/x", b"a", b"a/y", b"a/y/z")
     ]
-    h = run(rows, sets=[ds("s", ("*", 2))])
+    h = run(rows, dirsets=[ds("s", ("*", 2))])
     assert h.split == [b"a", b"a/y", b"b"]
 
 
-def test_unchanged_set_dir_gets_a_constant_series():
+def test_unchanged_dirset_dir_gets_a_constant_series():
     rows = [
         (1, ROOT, 100, 100, False),
         (1, b"p", 40, 40, False),
@@ -242,20 +244,20 @@ def test_unchanged_set_dir_gets_a_constant_series():
         (2, ROOT, 110, 110, False),
         (2, b"z", 20, 20, False),
     ]
-    h = run(rows, sets=[ds("s", ("p/*", 0))])
-    assert h.sets[0].paths == [b"p/q"]
+    h = run(rows, dirsets=[ds("s", ("p/*", 0))])
+    assert h.dirsets[0].paths == [b"p/q"]
     assert h.rbytes == {b"p/q": [30, 30]}
 
 
-def test_deleted_set_dir_turns_absent():
+def test_deleted_dirset_dir_turns_absent():
     rows = [
         (1, ROOT, 100, 100, False),
         (1, b"d", 50, 50, False),
         (2, ROOT, 50, 50, False),
         (2, b"d", None, None, True),
     ]
-    h = run(rows, sets=[ds("s", ("d", 0))])
-    assert h.sets[0].paths == [b"d"]
+    h = run(rows, dirsets=[ds("s", ("d", 0))])
+    assert h.dirsets[0].paths == [b"d"]
     assert h.rbytes[b"d"] == [50, None]
 
 
@@ -266,43 +268,45 @@ def test_dir_created_later_is_stored():
         (2, b"new", 50, 50, False),
         (2, b"new/x", 20, 20, False),
     ]
-    h = run(rows, sets=[ds("s", ("*", 1))])
-    assert h.sets[0].paths == [b"new"]
+    h = run(rows, dirsets=[ds("s", ("*", 1))])
+    assert h.dirsets[0].paths == [b"new"]
     assert h.rbytes == {b"new": [None, 50], b"new/x": [None, 20]}
     assert h.split == [b"new"]
 
 
-def test_set_dirs_order_and_found():
+def test_dirset_dirs_order_and_found():
     rows = [(1, ROOT, 9, 9, False)] + [(1, p, 1, 1, False) for p in (b"a", b"b", b"c")]
-    h = run(rows, n=1, sets=[ds("s", ("c", 0), ("*", 0), ("z", 0))], budget=3)
-    assert h.sets[0].paths == [b"c", b"a", b"b"]
-    assert h.sets[0].found == [1, 3, 0]
+    h = run(rows, n=1, dirsets=[ds("s", ("c", 0), ("*", 0), ("z", 0))], budget=3)
+    assert h.dirsets[0].paths == [b"c", b"a", b"b"]
+    assert h.dirsets[0].found == [1, 3, 0]
 
 
-def test_sets_are_separate():
+def test_dirsets_are_separate():
     rows = [(1, ROOT, 9, 9, False)] + [
         (1, p, 1, 1, False) for p in (b"a", b"a/x", b"b", b"b/y", b"c")
     ]
     h = run(
         rows,
         n=1,
-        sets=[
+        dirsets=[
             ds("Top", ("*", 0)),
             ds("Second", ("*/*", 0), ("a", 0)),
             ds("None", ("q", 0)),
         ],
     )
-    assert [(s.name, s.paths, s.found) for s in h.sets] == [
+    assert [(s.name, s.paths, s.found) for s in h.dirsets] == [
         ("Top", [b"a", b"b", b"c"], [3]),
-        ("Second", [b"a/x", b"b/y", b"a"], [2, 1]),  # a is in both sets
+        ("Second", [b"a/x", b"b/y", b"a"], [2, 1]),  # a is in both dirsets
         ("None", [], [0]),
     ]
     assert h.rbytes[b"a"] == [1]
 
 
-def test_root_set_dir_splits():
-    h = run([(1, ROOT, 9, 9, False), (1, b"a", 5, 5, False)], sets=[ds("r", (".", 1))])
-    assert h.sets[0].paths == [ROOT]
+def test_root_dirset_dir_splits():
+    h = run(
+        [(1, ROOT, 9, 9, False), (1, b"a", 5, 5, False)], dirsets=[ds("r", (".", 1))]
+    )
+    assert h.dirsets[0].paths == [ROOT]
     assert h.split == [ROOT]
     assert set(h.rbytes) == {ROOT, b"a"}
     assert (h.pruned, h.candidates, h.cut_level) == ([], 2, None)
@@ -316,17 +320,19 @@ def test_budget_cuts_before_fetching_and_fetches_only_kept_dirs():
         fetched.append(paths)
         return []
 
-    h = summarize(samples(1), set(), first, fetch, sets=[ds("s", ("*", 1))], budget=3)
+    h = summarize(
+        samples(1), set(), first, fetch, dirsets=[ds("s", ("*", 1))], budget=3
+    )
     # level 1 fits (1 left); a's 2 subdirs do not
     assert fetched == [{b"a", b"b"}]
     assert set(h.rbytes) == {b"a", b"b"}
     assert (h.pruned, h.split, h.candidates, h.cut_level) == ([b"a"], [], 4, 2)
 
 
-def test_budget_drops_set_dirs_below_the_cut():
+def test_budget_drops_dirset_dirs_below_the_cut():
     rows = [(1, p, 1, 1, False) for p in (ROOT, b"a", b"b", b"a/x", b"b/y")]
-    h = run(rows, sets=[ds("Top", ("*", 0)), ds("Deep", ("*/*", 0))], budget=3)
-    assert [(s.name, s.paths, s.found, s.dropped) for s in h.sets] == [
+    h = run(rows, dirsets=[ds("Top", ("*", 0)), ds("Deep", ("*/*", 0))], budget=3)
+    assert [(s.name, s.paths, s.found, s.dropped) for s in h.dirsets] == [
         ("Top", [b"a", b"b"], [2], 0),
         ("Deep", [b"a/x"], [2], 1),
     ]
@@ -334,17 +340,17 @@ def test_budget_drops_set_dirs_below_the_cut():
 
 def test_no_budget_keeps_everything():
     rows = [(1, p, 1, 1, False) for p in (ROOT, b"a", b"a/x", b"b")]
-    h = run(rows, sets=[ds("s", ("*", 1))])
+    h = run(rows, dirsets=[ds("s", ("*", 1))])
     assert set(h.rbytes) == {b"a", b"a/x", b"b"}
     assert (h.pruned, h.cut_level) == ([], None)
 
 
-def test_stored_count_is_distinct_paths_across_sets():
+def test_stored_count_is_distinct_paths_across_dirsets():
     rows = [(1, ROOT, 9, 9, False), (1, b"a", 1, 1, False), (1, b"b", 1, 1, False)]
-    h = run(rows, sets=[ds("s", ("a", 0)), ds("t", ("a", 0), ("b", 0))], budget=2)
+    h = run(rows, dirsets=[ds("s", ("a", 0)), ds("t", ("a", 0), ("b", 0))], budget=2)
     assert set(h.rbytes) == {b"a", b"b"}
 
 
-def test_no_sets_stores_nothing():
+def test_no_dirsets_stores_nothing():
     h = run([(1, ROOT, 9, 9, False), (2, ROOT, 10, 10, False)])
-    assert h.rbytes == {} and h.sets == [] and h.split == [] and len(h.times) == 2
+    assert h.rbytes == {} and h.dirsets == [] and h.split == [] and len(h.times) == 2

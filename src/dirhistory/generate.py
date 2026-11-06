@@ -13,8 +13,15 @@ from time import perf_counter
 
 import psycopg
 
-from dirhistory import __version__, db, sets
+from dirhistory import __version__, db, dirsets
 from dirhistory.db import Tree
+from dirhistory.dirsets import (
+    IMPLICIT,
+    DirSet,
+    DirSetDirs,
+    TreeConfig,
+    with_implicit,
+)
 from dirhistory.history import (
     BUCKET_WIDTHS,
     MAX_POINTS,
@@ -24,13 +31,6 @@ from dirhistory.history import (
     Series,
     TreeHistory,
     summarize,
-)
-from dirhistory.sets import (
-    IMPLICIT,
-    DirSet,
-    SetDirs,
-    TreeConfig,
-    with_implicit,
 )
 
 INDEX = "trees.json"
@@ -52,15 +52,15 @@ database: one tree-ID.json per tree and the index trees.json, replaced
 atomically. Run it periodically (e.g. hourly, from a systemd timer); the page
 in web/ reads the files.
 
-The sets file (--sets, required) names the trees to generate and, per tree,
-sets of directories and a budget: the most directories its file stores.
-Each tree also gets the implicit set "Top level", its top-level
-directories. The page's Stack view charts the rbytes (or, toggled, the
-rentries: rfiles + rsubdirs) of a set's directories as bands, and can split
-a directory into its subdirectories, down to the depth the set stores. Its
-Trends view shows one card per directory of a set.
+The dirsets file (--dirsets, required) names the trees to generate and, per
+tree, dirsets (named sets of directories) and a budget: the most directories
+its file stores. Each tree also gets the implicit dirset "Top level", its
+top-level directories. The page's Stack view charts the rbytes (or, toggled,
+the rentries: rfiles + rsubdirs) of a dirset's directories as bands, and can
+split a directory into its subdirectories, down to the depth the dirset
+stores. Its Trends view shows one card per directory of a dirset.
 
-A tree whose sets cover more directories than its budget is stored
+A tree whose dirsets cover more directories than its budget is stored
 breadth-first, each level from the tree root whole until the budget runs
 out, and saved partial with a warning; the page marks a directory whose
 subdirectories were left out with *. Raise the budget to store more.
@@ -98,7 +98,7 @@ def select_trees(
     all_trees: Sequence[Tree], configured: Collection[int], ids: Sequence[int]
 ) -> list[Tree]:
     """Return the trees of ALL_TREES with IDS, or all CONFIGURED ones (ids of
-    trees with a section in the sets file) if IDS is empty.
+    trees with a section in the dirsets file) if IDS is empty.
 
     Raises ValueError naming any id without a tree, else the first id of a
     tree that is not configured.
@@ -110,7 +110,7 @@ def select_trees(
     if bare := [t for t in all_trees if t.id in ids and t.id not in configured]:
         tree = bare[0]
         raise ValueError(
-            f"tree {tree.id} ({display(tree.fs_path)}) has no section in --sets"
+            f"tree {tree.id} ({display(tree.fs_path)}) has no section in --dirsets"
         )
     return [t for t in all_trees if t.id in ids]
 
@@ -150,9 +150,9 @@ def tree_document(tree: Tree, history: TreeHistory, generated: datetime) -> dict
             os.fsdecode(p): [compact(s), compact(history.rentries[p])]
             for p, s in history.rbytes.items()
         },
-        "sets": [
+        "dirsets": [
             {"name": s.name, "paths": [os.fsdecode(p) for p in s.paths]}
-            for s in history.sets
+            for s in history.dirsets
         ],
         "split": [os.fsdecode(p) for p in history.split],
         "pruned": [os.fsdecode(p) for p in history.pruned],
@@ -169,7 +169,7 @@ def index_entry(tree: Tree, history: TreeHistory, generated: datetime) -> dict:
         "file": f"tree-{tree.id}.json",
         "last_sample": iso(history.times[-1]),
         "generated": iso(generated),
-        "sets": [{"name": s.name, "dirs": len(s.paths)} for s in history.sets],
+        "dirsets": [{"name": s.name, "dirs": len(s.paths)} for s in history.dirsets],
     }
 
 
@@ -202,7 +202,7 @@ def read_tree(
 ) -> tuple[TreeHistory, int] | None:
     """Return a tree's history and how many of its directories are in error
     as of its latest sample, or None if it has no samples. Reads in one
-    transaction, i.e. one snapshot. CONFIG's sets and budget go to
+    transaction, i.e. one snapshot. CONFIG's dirsets and budget go to
     summarize."""
     with conn.transaction():
         samples = db.samples(conn, tree.id)
@@ -216,22 +216,23 @@ def read_tree(
             db.sample_paths(conn, samples[0].id),
             lambda paths: db.path_rows(conn, tree.id, paths),
             res,
-            config.sets,
+            config.dirsets,
             config.budget,
         )
     return history, errors
 
 
-def set_warnings(
-    tree: Tree, dir_sets: Sequence[DirSet], found: Sequence[SetDirs]
+def dirset_warnings(
+    tree: Tree, defined: Sequence[DirSet], found: Sequence[DirSetDirs]
 ) -> list[str]:
-    """Return, per set of TREE's DIR_SETS, a warning per pattern that matched
-    no directory, then one if the budget left out some of its dirs (FOUND,
-    per set, counts both). The implicit set never warns of a pattern: it is
-    no one's mistake if a tree has no subdirectories."""
-    head = f"WARNING: tree {tree.id} ({display(tree.fs_path)}): set"
+    """Return, per dirset of TREE's DEFINED (as configured), a warning per
+    pattern that matched no directory, then one if the budget left out some
+    of its dirs (FOUND, per dirset, counts both). The implicit dirset never
+    warns of a pattern: it is no one's mistake if a tree has no
+    subdirectories."""
+    head = f"WARNING: tree {tree.id} ({display(tree.fs_path)}): dirset"
     warnings = []
-    for s, f in zip(dir_sets, found, strict=True):
+    for s, f in zip(defined, found, strict=True):
         if s is not IMPLICIT:
             warnings += [
                 f"{head} {s.name!r}: pattern {p.text!r} matches no directory"
@@ -262,7 +263,7 @@ def cut_warning(tree: Tree, history: TreeHistory, budget: int) -> str | None:
         f"WARNING: tree {tree.id} ({display(tree.fs_path)}): budget {budget}"
         f" reached: stored {len(history.rbytes)} of {history.candidates}"
         f" directories, every level above depth {history.cut_level} in full"
-        f"{pruned}. Raise the tree's budget in the sets file to store more."
+        f"{pruned}. Raise the tree's budget in the dirsets file to store more."
     )
 
 
@@ -271,7 +272,7 @@ def configured(
 ) -> dict[int, TreeConfig]:
     """Return the config of each configured tree by id: each section of
     CONFIG (by tree root) goes to the tree of ALL_TREES with that fs_path,
-    with the implicit set added (sets.with_implicit). Trees without a section
+    with the implicit dirset added (dirsets.with_implicit). Trees without a section
     are left out.
 
     Raises ValueError for a section without a tree, or with several trees
@@ -281,13 +282,13 @@ def configured(
     for root, tree in config.items():
         ids = [t.id for t in all_trees if t.fs_path == root]
         if not ids:
-            raise ValueError(f"--sets: no tree has root {display(root)}")
+            raise ValueError(f"--dirsets: no tree has root {display(root)}")
         if len(ids) > 1:
             raise ValueError(
-                f"--sets: trees {', '.join(map(str, ids))} all have root"
+                f"--dirsets: trees {', '.join(map(str, ids))} all have root"
                 f" {display(root)}, so it cannot name one"
             )
-        by_tree[ids[0]] = TreeConfig(tree.budget, with_implicit(tree.sets))
+        by_tree[ids[0]] = TreeConfig(tree.budget, with_implicit(tree.dirsets))
     return by_tree
 
 
@@ -325,15 +326,15 @@ def parser() -> argparse.ArgumentParser:
         help="directory for the data files (default: %(default)s)",
     )
     p.add_argument(
-        "--sets",
+        "--dirsets",
         type=Path,
         required=True,
         metavar="FILE",
-        help="TOML file of the trees to generate: per tree, named sets of"
-        ' directories, [tree."/tree/root".set."NAME"] dirs = [{ match = ["dir/*"],'
+        help="TOML file of the trees to generate: per tree, dirsets (named sets of"
+        ' directories), [tree."/tree/root".dirset."NAME"] dirs = [{ match = ["dir/*"],'
         " depth = N }], and a budget, the most directories its file stores"
         " (budget = N at the top for every tree, or in a tree's"
-        ' [tree."/tree/root"] section); see deploy/sets.toml.example',
+        ' [tree."/tree/root"] section); see deploy/dirsets.toml.example',
     )
     p.add_argument(
         "--recent",
@@ -359,7 +360,7 @@ def parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="ID",
-        help="only this tree; repeatable (default: every tree in --sets)",
+        help="only this tree; repeatable (default: every tree in --dirsets)",
     )
     p.add_argument("-v", "--verbose", action="store_true", help="report per-tree stats")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -394,14 +395,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.db:
         return _error("no database: pass --db or set TRACKDIR_DB")
     try:
-        return run(args, sets.load(args.sets))
+        return run(args, dirsets.load(args.dirsets))
     except (db.DbError, psycopg.Error, OSError, ValueError) as e:
         return _error(str(e).strip())
 
 
 def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
     """Write the data files ARGS ask for, of CONFIG's trees (by tree root,
-    as sets.load returns them); return the exit status.
+    as dirsets.load returns them); return the exit status.
 
     Raises DbError, psycopg.Error, OSError, or ValueError for a bad --tree
     or a CONFIG section that names no single tree.
@@ -412,7 +413,7 @@ def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
     configs = configured(config, all_trees)
     chosen = select_trees(all_trees, configs, args.tree)
     if args.verbose and (n := len(all_trees) - len(configs)):
-        _note(f"{_count(n, 'tree')} without a section in --sets skipped")
+        _note(f"{_count(n, 'tree')} without a section in --dirsets skipped")
     args.out.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(UTC)
     entries = []
@@ -439,13 +440,13 @@ def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
                 )
             if warning := cut_warning(tree, history, tree_config.budget):
                 _note(warning)
-            for warning in set_warnings(tree, tree_config.sets, history.sets):
+            for warning in dirset_warnings(tree, tree_config.dirsets, history.dirsets):
                 _note(warning)
             if args.verbose:
                 _note(
                     f"tree {tree.id} ({display(tree.fs_path)}):"
                     f" {len(history.times)} points, {len(history.rbytes)} stored"
-                    f" dirs in {_count(len(history.sets), 'set')},"
+                    f" dirs in {_count(len(history.dirsets), 'dirset')},"
                     f" {len(history.pruned)} pruned, {perf_counter() - start:.1f} s"
                 )
     index = args.out / INDEX
@@ -455,7 +456,7 @@ def run(args: argparse.Namespace, config: Mapping[bytes, TreeConfig]) -> int:
 
 
 def _count(n: int, noun: str) -> str:
-    """Return N NOUNs, e.g. "1 set" or "2 sets"."""
+    """Return N NOUNs, e.g. "1 dirset" or "2 dirsets"."""
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 

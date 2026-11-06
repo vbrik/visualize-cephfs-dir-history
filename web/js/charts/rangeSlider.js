@@ -1,5 +1,5 @@
 // The Trends view's time-range slider: an ECharts dataZoom on its own,
-// with a series of the caller's (the set's total) as its data shadow. It applies a drag on release
+// with a series of the caller's (the dirset's total) as its data shadow. It applies a drag on release
 // (realtime: false): cards are sorted and filtered by the range, so they
 // would reorder and come and go under the pointer while it moves.
 

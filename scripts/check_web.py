@@ -7,14 +7,14 @@ Serves web/ on a free local port with two data sets:
   both views and both metrics (rbytes, rentries). Tree 1 has split dirs (A,
   Z, and a name that is not UTF-8), an unsplit dir Q stored with one subdir,
   a dir absent at the first point (Z/y), dirs stored as one number, and four
-  sets: Top level, Mixed (a subdir and two top-level dirs), Partial (Q/r
+  dirsets: Top level, Mixed (a subdir and two top-level dirs), Partial (Q/r
   only) and Empty. Tree 2 has one dir and only Top level. Some checks serve
   altered copies.
 - web/data (if present), the real data written by dirhistory-generate: for
   every tree, in light and dark mode, the Stack view at Depth 0 and 1,
   drilling into the first drillable band, hiding a band, reloading from
   the URL hash and unhiding it, ticking one band after None; the Stack view
-  of rentries; then each set's Trends cards.
+  of rentries; then each dirset's Trends cards.
 
 Pages are served with the Content-Security-Policy of
 deploy/nginx.conf.example, so anything it blocks is a console error.
@@ -130,12 +130,12 @@ def check_fixture(page: Page, base: str) -> None:
         )
 
     # Out-of-range state from an old or edited URL is ignored: a dir named
-    # like an Object property, a dir drilling cannot reach from the set (Q
+    # like an Object property, a dir drilling cannot reach from the dirset (Q
     # is not split), an old view name.
-    for bad in ("in=constructor", "set=Top%20level&in=Q/r", "view=watched"):
+    for bad in ("in=constructor", "dirset=Top%20level&in=Q/r", "view=watched"):
         act(page, lambda b=bad: page.evaluate(f"location.hash = 'tree=1&{b}'"))
         assert page.is_hidden("#error"), f"{bad} broke the page"
-        assert page.inner_text("#crumbs") == "Set Top level", f"{bad} not ignored"
+        assert page.inner_text("#crumbs") == "DirSet Top level", f"{bad} not ignored"
         assert page.is_visible("#chart"), f"{bad}: Stack view not shown"
     go(page, f"{base}#tree=1&sflat=1&smin=0&depth=9")
     assert page.input_value("#depth") == "1", "depth not clamped to the split levels"
@@ -146,7 +146,9 @@ def check_fixture(page: Page, base: str) -> None:
     act(page, lambda: link(page, "A").click())
     assert "in=A" in state(page) and "depth=1" in state(page), f"drill: {state(page)}"
     assert page.input_value("#depth") == "1", "drilling did not show Depth 1"
-    assert page.inner_text("#crumbs") == "Set Top level / A", page.inner_text("#crumbs")
+    assert page.inner_text("#crumbs") == "DirSet Top level / A", page.inner_text(
+        "#crumbs"
+    )
     assert set(bands(page)) == {"A/ bytes", "b", "c"}, f"in A: {bands(page)}"
 
     # The URL codec round-trips any name, including ones TextDecoder alters.
@@ -200,7 +202,7 @@ def check_fixture(page: Page, base: str) -> None:
                 const dir = "caf\\uDCE9";
                 const want = [`${dir}/ bytes`, "x"].sort();
                 return [
-                  crumbs === `Set Top level / ${dir}`,
+                  crumbs === `DirSet Top level / ${dir}`,
                   JSON.stringify(labels) === JSON.stringify(want),
                 ];
             }"""
@@ -352,7 +354,7 @@ def check_pruned(page: Page, base: str) -> None:
     assert title.startswith("/fixture/Q") and PRUNED_TITLE in title, title
     assert page.is_visible("#trends-pruned"), "no Trends pruned note"
     assert page.inner_text("#trends-pruned") == PRUNED_NOTE
-    go(page, f"{base}#tree=1&view=trends&flat=1&min=0&set=Mixed")
+    go(page, f"{base}#tree=1&view=trends&flat=1&min=0&dirset=Mixed")
     assert page.is_hidden("#trends-pruned"), "Trends note without a pruned card"
 
 
@@ -439,7 +441,7 @@ def check_change_mode(page: Page, base: str) -> None:
     assert "+3.52 TiB/d" not in tip, f"tooltip at 1.25 h: {tip!r}"
 
     # Switching keeps the view; back to Size drops only mode.
-    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=0&smin=0"
+    kept = "tree=1&dirset=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=0&smin=0"
     go(page, f"{base}#{kept}")
     act(page, lambda: page.click("#mode button[data-mode=change]"))
     pairs = set(state(page).lstrip("#").split("&"))
@@ -610,8 +612,8 @@ def check_model(page: Page, base: str) -> None:
             const m = await import("./js/model.js");
             const raw = await (await fetch("data/tree-1.json")).json();
             const data = m.normalize(raw);
-            const set = (name) => data.sets.find((s) => s.name === name).paths;
-            const top = set("Top level");
+            const dirSet = (name) => data.dirsets.find((s) => s.name === name).paths;
+            const top = dirSet("Top level");
             const opts = {roots: top, base: null, depth: 0, top: m.MAX_BANDS,
               hidden: [], range: [0, 2]};
             const run = (o) => m.stackBands(data, {...opts, ...o});
@@ -624,7 +626,7 @@ def check_model(page: Page, base: str) -> None:
             const rooted = m.normalize({...raw,
               series: {".": [300, 9], a: [100, 5], "a/x": [40, 2],
                 b: [[50, 100, 150], 1]},
-              sets: [{name: "Root", paths: ["."]}], split: [".", "a"]});
+              dirsets: [{name: "Root", paths: ["."]}], split: [".", "a"]});
             const rootValues = (hidden) => m.stackBands(rooted,
               {...opts, roots: ["."], hidden}).bands[0].values;
             return JSON.stringify({
@@ -694,10 +696,10 @@ def check_model(page: Page, base: str) -> None:
               rootLess: [["a/x"], ["a", "a/x"], ["a/x", "a"], ["a/."], ["a", "a/."],
                 ["./."], ["nope", "nope/.", "b/."]].map(rootValues),
               maxTop: m.maxDepth(data, top),
-              maxPartial: m.maxDepth(data, set("Partial")),
+              maxPartial: m.maxDepth(data, dirSet("Partial")),
               root: info(m.stackBands(rooted, {...opts, roots: ["."], depth: 1}).bands),
-              setDirOf: [m.setDirOf([".", "A"], "A/b"), m.setDirOf(["A", "."], "Q"),
-                m.setDirOf(["Z"], "A")],
+              dirSetDirOf: [m.dirSetDirOf([".", "A"], "A/b"),
+                m.dirSetDirOf(["A", "."], "Q"), m.dirSetDirOf(["Z"], "A")],
               reachable: ["A", "A/b", "caf\\uDCE9/x", "Q", "Q/r", "constructor",
                 "Z/y/q"].filter((p) => m.reachable(data, top, p)),
             });
@@ -745,7 +747,7 @@ def check_model(page: Page, base: str) -> None:
         caf: [f"{caf}/x"],
     }, f"children: {got['children']}"
 
-    # Depth 0: the set dirs, bottom first: least span first (Q 0, Z 50,
+    # Depth 0: the dirset dirs, bottom first: least span first (Q 0, Z 50,
     # café 100, A 200 GiB), so the movers ride on a steady base.
     assert got["d0"] == {"keys": ["Q", "Z", caf, "A"], "cut": 0}, (
         f"depth 0: {got['d0']}"
@@ -839,7 +841,7 @@ def check_model(page: Page, base: str) -> None:
     assert (got["maxTop"], got["maxPartial"]) == (1, 0), "maxDepth"
     assert got["root"]["./."]["label"] == "/fixture/ bytes", f"ROOT: {got['root']}"
     assert got["root"]["./."]["values"] == [150, 100, 50], f"ROOT: {got['root']}"
-    assert got["setDirOf"] == ["A", ".", None], f"setDirOf: {got['setDirOf']}"
+    assert got["dirSetDirOf"] == ["A", ".", None], f"dirSetDirOf: {got['dirSetDirOf']}"
     assert got["reachable"] == ["A", "A/b", f"{caf}/x", "Q"], got["reachable"]
 
     check_rates(page)
@@ -987,7 +989,7 @@ def check_rates(page: Page) -> None:
             const tree = (times, series, paths, split) => m.normalize({...raw, times,
               series: Object.fromEntries(
                 Object.entries(series).map(([p, v]) => [p, [v, 1]])),
-              sets: [{name: "S", paths}], split});
+              dirsets: [{name: "S", paths}], split});
             const lag = (parent, kid) =>
               m.smoothLag(parent.map((v, i) => v - kid[i]), [kid]);
             const lagTree = tree(hours(0, 1, 2),
@@ -1234,16 +1236,16 @@ def card(page: Page, name: str) -> Locator:
 
 def check_trends(page: Page, base: str) -> None:
     """The Trends view: switching, order, click-through, shared range."""
-    go(page, f"{base}#tree=1&set=Mixed")
+    go(page, f"{base}#tree=1&dirset=Mixed")
     act(page, lambda: page.click("#view button[data-view=trends]"))
     assert "view=trends" in state(page), "switching did not change the URL"
     names = cards(page)
     # Largest span first: A 200 GiB, café 100 GiB, Z/y 80 GiB (absent = 0).
     assert names[0] == "A" and names[2] == "Z/y", f"card order: {names}"
-    assert names[1].startswith("caf"), "non-UTF-8 set dir not shown"
+    assert names[1].startswith("caf"), "non-UTF-8 dirset dir not shown"
     for stack_only in ("#depth", "#top", "#smin", "#sflat", "#reset", "#legend"):
         assert page.is_hidden(stack_only), f"{stack_only} shown in the Trends view"
-    assert page.is_visible("#set"), "Set hidden in the Trends view"
+    assert page.is_visible("#dirset"), "DirSet hidden in the Trends view"
     a = card(page, "A")
     assert "+200 GiB" in a.inner_text(), f"change of A: {a.inner_text()}"
     # The scale's span shows even when its ends round alike (e.g. 108 TiB).
@@ -1274,7 +1276,7 @@ def check_trends(page: Page, base: str) -> None:
     page.mouse.up()
     page.wait_for_timeout(SETTLE_MS)
     assert page.inner_text("#trends-range") != before, "no render on release"
-    go(page, f"{base}#tree=1&view=trends&set=Mixed")
+    go(page, f"{base}#tree=1&view=trends&dirset=Mixed")
 
     # Zooming here is the Stack view's range too.
     times = json.loads((FIXTURE / "tree-1.json").read_text())["times"]
@@ -1287,7 +1289,9 @@ def check_trends(page: Page, base: str) -> None:
     act(page, lambda: card(page, "Z/y").click())
     assert "view=" not in state(page) and "in=Z/y" in state(page), state(page)
     assert "depth=" not in state(page), f"unsplit Z/y at Depth 1: {state(page)}"
-    assert page.inner_text("#crumbs") == "Set Mixed / Z/y", page.inner_text("#crumbs")
+    assert page.inner_text("#crumbs") == "DirSet Mixed / Z/y", page.inner_text(
+        "#crumbs"
+    )
     # The drilled-into dir is named, not "."; Z/y is unsplit: one band.
     assert bands(page) == ["y"], f"bands of Z/y: {bands(page)}"
     go(page, f"{base}#tree=1&view=trends&flat=1")
@@ -1319,11 +1323,11 @@ def check_trends(page: Page, base: str) -> None:
         assert page.is_hidden(trends_only), f"{trends_only} shown in the Stack view"
 
 
-def check_sets(page: Page, base: str) -> None:
-    """The Set menu: one set at a time in both views, kept in the URL."""
+def check_dirsets(page: Page, base: str) -> None:
+    """The DirSet menu: one dirset at a time in both views, kept in the URL."""
 
     def options() -> list[str]:
-        return page.eval_on_selector_all("#set option", "os => os.map(o => o.text)")
+        return page.eval_on_selector_all("#dirset option", "os => os.map(o => o.text)")
 
     go(page, f"{base}#tree=1&sflat=1&smin=0&in=A&depth=1")
     assert options() == [
@@ -1331,49 +1335,51 @@ def check_sets(page: Page, base: str) -> None:
         "Mixed — 3 dirs",
         "Partial — 1 dir",
         "Empty — 0 dirs",
-    ], f"sets: {options()}"
-    assert page.input_value("#set") == "Top level", "not on the first set"
+    ], f"dirsets: {options()}"
+    assert page.input_value("#dirset") == "Top level", "not on the first dirset"
 
-    # Changing the set clears the drilled-into dir; the set survives a reload.
-    act(page, lambda: page.select_option("#set", "Mixed"))
-    assert "set=Mixed" in state(page) and "in" not in keys(page), state(page)
+    # Changing the dirset clears the drilled-into dir; the dirset survives a reload.
+    act(page, lambda: page.select_option("#dirset", "Mixed"))
+    assert "dirset=Mixed" in state(page) and "in" not in keys(page), state(page)
     act(page, page.reload)
-    assert page.input_value("#set") == "Mixed", "set lost on reload"
+    assert page.input_value("#dirset") == "Mixed", "dirset lost on reload"
     names = sorted(bands(page))
     assert names[:4] == ["A/ bytes", "A/b", "A/c", "Z/y"], f"Mixed at Depth 1: {names}"
     assert len(names) == 6, f"caf at Depth 1: {names}"
 
     # Partial: a stored subdir of an unsplit dir.
-    go(page, f"{base}#tree=1&sflat=1&smin=0&set=Partial")
+    go(page, f"{base}#tree=1&sflat=1&smin=0&dirset=Partial")
     assert bands(page) == ["Q/r"], f"Partial: {bands(page)}"
     assert page.get_attribute("#depth", "max") == "0", "Depth max for Partial"
 
-    # A set matching nothing says so, in both views.
+    # A dirset matching nothing says so, in both views.
     for view in ("stack", "trends"):
-        go(page, f"{base}#tree=1&sflat=1&smin=0&set=Empty&view={view}")
+        go(page, f"{base}#tree=1&sflat=1&smin=0&dirset=Empty&view={view}")
         assert page.inner_text("#stack-empty") == (
-            "No directories match this set's patterns."
-        ), f"{view}: no empty-set note"
-        assert page.is_visible("#stack-empty"), f"{view}: empty-set note hidden"
+            "No directories match this dirset's patterns."
+        ), f"{view}: no empty-dirset note"
+        assert page.is_visible("#stack-empty"), f"{view}: empty-dirset note hidden"
     assert cards(page) == [] and page.is_hidden("#trends-range"), "range for Empty"
     act(page, lambda: page.click("#view button[data-view=stack]"))
     assert page.is_hidden("#chart"), "empty chart shown"
-    assert page.is_hidden("#legend"), "legend shown for an empty set"
-    act(page, lambda: page.select_option("#set", "Top level"))
+    assert page.is_hidden("#legend"), "legend shown for an empty dirset"
+    act(page, lambda: page.select_option("#dirset", "Top level"))
     assert page.is_hidden("#stack-empty") and page.is_visible("#chart"), "note stuck"
 
-    # An unknown set falls back to the first.
-    go(page, f"{base}#tree=1&sflat=1&smin=0&view=trends&set=nope")
-    assert page.input_value("#set") == "Top level", "unknown set not ignored"
-    assert len(cards(page)) == 4, "unknown set shows no cards"
+    # An unknown dirset falls back to the first.
+    go(page, f"{base}#tree=1&sflat=1&smin=0&view=trends&dirset=nope")
+    assert page.input_value("#dirset") == "Top level", "unknown dirset not ignored"
+    assert len(cards(page)) == 4, "unknown dirset shows no cards"
 
-    # Set names belong to a tree: changing the tree drops the set.
-    act(page, lambda: page.select_option("#set", "Mixed"))
+    # DirSet names belong to a tree: changing the tree drops the dirset.
+    act(page, lambda: page.select_option("#dirset", "Mixed"))
     act(page, lambda: page.select_option("#tree", "2"))
-    assert "set=" not in state(page), f"set kept across trees: {state(page)}"
-    assert options() == ["Top level — 1 dir"], f"tree 2 sets: {options()}"
+    assert "dirset=" not in state(page), f"dirset kept across trees: {state(page)}"
+    assert options() == ["Top level — 1 dir"], f"tree 2 dirsets: {options()}"
     act(page, lambda: page.select_option("#tree", "1"))
-    assert page.input_value("#set") == "Top level", "tree 1 not back on its first set"
+    assert page.input_value("#dirset") == "Top level", (
+        "tree 1 not back on its first dirset"
+    )
 
 
 def check_sort_and_unchanged(page: Page, base: str) -> None:
@@ -1381,7 +1387,7 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
     tree["series"]["Z/y"][0] = 2**30
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
-    go(page, f"{base}#tree=1&view=trends&set=Mixed")
+    go(page, f"{base}#tree=1&view=trends&dirset=Mixed")
     assert page.is_checked("#flat") and "Z/y" in cards(page), (
         f"Show unchanged off by default: {cards(page)}"
     )
@@ -1431,7 +1437,7 @@ def check_sort_and_unchanged(page: Page, base: str) -> None:
     tree["series"]["A"][0] = 2**40
     caf = next(p for p in tree["series"] if p.startswith("caf") and "/" not in p)
     tree["series"][caf][0] = 2**30
-    page.goto(f"{base}#tree=1&view=trends&set=Mixed&flat=0")
+    page.goto(f"{base}#tree=1&view=trends&dirset=Mixed&flat=0")
     act(page, page.reload)  # a hash change alone keeps the loaded file
     text = page.inner_text("#trends-hidden")
     assert cards(page) == [] and "Show unchanged" in text, f"all hidden: {text}"
@@ -1486,8 +1492,8 @@ def check_metric(page: Page, base: str) -> None:
     assert sorted(values) == ["1", "2.00 k", "999"], f"legend values: {values}"
     assert "±0" in page.inner_text("#legend"), page.inner_text("#legend")
 
-    # Switching keeps the tree, set, drill, Depth, hides and picks.
-    kept = "tree=1&set=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=0&smin=0&sminent=0"
+    # Switching keeps the tree, dirset, drill, Depth, hides and picks.
+    kept = "tree=1&dirset=Mixed&in=A&depth=1&hide=A/c&pick=A/b&sflat=0&smin=0&sminent=0"
     go(page, f"{base}#{kept}")
     act(page, lambda: page.click("#metric button[data-metric=rentries]"))
     pairs = set(state(page).lstrip("#").split("&"))
@@ -1546,7 +1552,7 @@ def check_absent_in_range(page: Page, base: str) -> None:
     tree["series"]["Z/y"][0] = [2**30, None, None]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     times = tree["times"]
-    go(page, f"{base}#tree=1&view=trends&set=Mixed&flat=1&min=0")
+    go(page, f"{base}#tree=1&view=trends&dirset=Mixed&flat=1&min=0")
     act(page, lambda: zoom(page, "trends-slider", times[1], times[2]))
     text = card(page, "Z/y").inner_text()
     assert "absent in this range" in text, f"absent card: {text}"
@@ -1597,7 +1603,9 @@ def refresh_with(page: Page, index: list, tree: dict) -> None:
 def check_refresh_after_regeneration(page: Page, base: str) -> None:
     """A regenerated tree file is fetched even with no new sample."""
     tree = json.loads((FIXTURE / "tree-1.json").read_text())
-    tree["sets"].append({"name": "New", "paths": ["A"]})  # e.g. an edited sets file
+    tree["dirsets"].append(
+        {"name": "New", "paths": ["A"]}
+    )  # e.g. an edited dirsets file
     tree["generated"] = "2026-10-01T04:00:00Z"
     index = json.loads((FIXTURE / "trees.json").read_text())
     index[0]["generated"] = tree["generated"]
@@ -1605,8 +1613,8 @@ def check_refresh_after_regeneration(page: Page, base: str) -> None:
     page.clock.install()
     go(page, f"{base}#tree=1")
     refresh_with(page, index, tree)
-    sets = page.eval_on_selector_all("#set option", "os => os.map(o => o.value)")
-    assert "New" in sets, f"regenerated file not fetched: {sets}"
+    dirsets = page.eval_on_selector_all("#dirset option", "os => os.map(o => o.value)")
+    assert "New" in dirsets, f"regenerated file not fetched: {dirsets}"
 
 
 def check_refresh_keeps_zoom(page: Page, base: str) -> None:
@@ -1646,7 +1654,7 @@ def check_click_between_points(page: Page, base: str) -> None:
     tree["series"] = {
         p: [v, 1] for p, v in {"G": g, "G/x": g, "H": h, "H/y": h}.items()
     }
-    tree["sets"] = [{"name": "Top level", "paths": ["G", "H"]}]
+    tree["dirsets"] = [{"name": "Top level", "paths": ["G", "H"]}]
     tree["split"] = ["G", "H"]
     page.route("**/data/tree-1.json", lambda r: r.fulfill(json=tree))
     go(page, f"{base}#tree=1&sflat=1&smin=0")
@@ -1822,15 +1830,15 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         page.screenshot(path=shots / f"tree-{tree}-change-trends.png")
 
     entries = page.evaluate("fetch('data/trees.json').then((r) => r.json())")
-    sets = next(t["sets"] for t in entries if t["id"] == tree)
+    dirsets = next(t["dirsets"] for t in entries if t["id"] == tree)
     go(page, f"{base}#tree={tree}&view=trends")
     if shots:
         page.screenshot(path=shots / f"tree-{tree}-trends.png", full_page=True)
-    for w in sets:
+    for w in dirsets:
         # Unchanged (with Show unchanged off) and small cards are filtered
         # out, and counted.
         go(page, f"{base}#tree={tree}&view=trends&flat=0")
-        act(page, lambda name=w["name"]: page.select_option("#set", name))
+        act(page, lambda name=w["name"]: page.select_option("#dirset", name))
         shown = page.locator("#cards .trend-card").count()
         hidden = page.eval_on_selector(
             "#trends-hidden",
@@ -1840,17 +1848,17 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         act(page, lambda: page.fill("#min", "0"))
         act(page, lambda: page.press("#min", "Enter"))
         n = page.locator("#cards .trend-card").count()
-        where = f"tree {tree}, set {w['name']!r}"
+        where = f"tree {tree}, dirset {w['name']!r}"
         assert n == w["dirs"], f"{where}: {n} cards, trees.json says {w['dirs']}"
         assert shown + hidden == n, f"{where}: {shown} shown + {hidden} hidden != {n}"
         if not n:
             assert page.is_visible("#stack-empty"), f"{where}: no note without cards"
-    if not any(w["dirs"] for w in sets):
+    if not any(w["dirs"] for w in dirsets):
         return
-    # The rest needs cards: the first set with any.
-    first = next(w["name"] for w in sets if w["dirs"])
+    # The rest needs cards: the first dirset with any.
+    first = next(w["name"] for w in dirsets if w["dirs"])
     go(page, f"{base}#tree={tree}&view=trends&flat=1")
-    act(page, lambda: page.select_option("#set", first))
+    act(page, lambda: page.select_option("#dirset", first))
 
     # Drag the slider's left handle a third of the way; cards follow.
     before = page.inner_text("#trends-range")
@@ -1868,7 +1876,7 @@ def check_tree(page: Page, base: str, tree: int, shots: Path | None) -> None:
         act(page, lambda: page.select_option("#tree", str(other)))
         assert "view=trends" in state(page), f"tree {tree}: tree change left Trends"
         go(page, f"{base}#tree={tree}&view=trends&flat=1")
-        act(page, lambda: page.select_option("#set", first))
+        act(page, lambda: page.select_option("#dirset", first))
     act(page, page.locator("#cards .trend-card").first.click)
     assert "view=" not in state(page), f"tree {tree}: click-through stayed in Trends"
     assert bands(page), f"tree {tree}: Stack view not shown"
@@ -1907,7 +1915,7 @@ def main() -> int:
             check_fixture,
             check_pruned,
             check_trends,
-            check_sets,
+            check_dirsets,
             check_sort_and_unchanged,
             check_trends_resize,
             check_absent_in_range,
