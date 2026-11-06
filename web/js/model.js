@@ -187,26 +187,28 @@ export const METRICS = {
 
 /**
  * RAW, a tree file as read, ready for the views: for each METRICS key, a
- * map from every stored dir to its series, a list of one value (or null:
- * absent) per time point; `split` and `pruned` Sets (a file written before
- * `pruned` has none); and `children` a Map from each split dir to its
- * stored subdirs, sorted.
+ * map from every stored dir to its series as the file has it (read it with
+ * valuesOf); `split` and `pruned` Sets (a file written before `pruned` has
+ * none); and `children` a Map from each split dir to its stored subdirs,
+ * sorted.
  *
  * The file's `series` maps each dir to one series per metric, in the order
- * of its `metrics`; a series that never changed is one number. A metric the
- * file lacks is null. A file written before `series` has `rbytes` instead,
- * the map of rbytes series alone.
+ * of its `metrics`; a series that never changed is one number (or null). A
+ * metric the file lacks is null. A file written before `series` has
+ * `rbytes` instead, the map of rbytes series alone.
+ *
+ * Constant series stay one value: most of a large tree's are (98 % of a
+ * 1 M-dir tree's), and a list per series would overflow Chrome's per-page
+ * JS heap (about 3.5 GB, a build-time limit no flag raises).
  */
 export function normalize(raw) {
-  const n = raw.times.length;
-  const expand = (v) => (Array.isArray(v) ? v : new Array(n).fill(v));
   const { series = null, metrics: order = [], ...rest } = raw;
   const pairs = series ? Object.entries(series) : Object.entries(raw.rbytes).map(([p, v]) => [p, [v]]);
   const at = series ? order : ["rbytes"];
   const metrics = Object.fromEntries(
     Object.keys(METRICS).map((m) => {
       const i = at.indexOf(m);
-      return [m, i < 0 ? null : Object.fromEntries(pairs.map(([p, v]) => [p, expand(v[i])]))];
+      return [m, i < 0 ? null : Object.fromEntries(pairs.map(([p, v]) => [p, v[i]]))];
     }),
   );
   const split = new Set(raw.split);
@@ -216,6 +218,17 @@ export function normalize(raw) {
   }
   for (const kids of children.values()) kids.sort();
   return { ...rest, ...metrics, split, pruned: new Set(raw.pruned ?? []), children };
+}
+
+/**
+ * DATA's (from normalize) METRIC series of stored dir PATH: a list of one
+ * value (or null: absent) per time point. Do not change it: a series that
+ * changed is the stored list itself. PATH must be stored (an untrusted one,
+ * see reachable), or it may name an Object property.
+ */
+export function valuesOf(data, metric, path) {
+  const v = data[metric][path];
+  return Array.isArray(v) ? v : new Array(data.times.length).fill(v);
 }
 
 /**
@@ -280,7 +293,7 @@ export function stackBands(data, opts) {
   const { metric = "rbytes", roots, base, depth, top, hidden, range, keep = [], by = "", min = 0, flat = true } = opts;
   const { smooth = false, change = false } = opts;
   const series = data[metric];
-  const zeroed = (dir) => series[dir].map((v) => v ?? 0);
+  const zeroed = (dir) => valuesOf(data, metric, dir).map((v) => v ?? 0);
   // VALUES less each of SUBTRACTED, smoothed if asked, at least 0.
   const minus = (values, subtracted) => {
     const diff = values.map((v, i) => subtracted.reduce((rest, s) => rest - s[i], v));
@@ -419,7 +432,7 @@ export function trendCards(data, paths, range, metric = "rbytes", { change = fal
   const [a, b] = range;
   const days = (Date.parse(data.times[b]) - Date.parse(data.times[a])) / DAY_MS;
   return paths.map((path) => {
-    const values = data[metric][path];
+    const values = valuesOf(data, metric, path);
     const inRange = values.slice(a, b + 1);
     const present = inRange.filter((v) => v !== null);
     const zeroed = inRange.map((v) => v ?? 0);

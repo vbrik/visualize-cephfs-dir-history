@@ -11,8 +11,10 @@
 # while it fits, then as many whole directories' subdirectories of the next
 # level as fit, in path order, nothing deeper. The run warns, and the page
 # marks a directory whose subdirectories were left out with *. Size it for
-# the browser: the page needs about 3 KB of memory per stored directory
-# (see docs/design.md, "Large budgets make large files").
+# the browser: a 1 M-directory tree whose directories mostly never change
+# took about 0.2 KB of page memory per directory; one that changes costs a
+# value per time point (see docs/design.md, "Large budgets make large
+# files").
 #
 # Sections are named by the tree's root path (its fs_path) and the dirset's
 # name. The page lists a tree's dirsets in its DirSet menu, in this order,

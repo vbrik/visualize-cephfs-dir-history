@@ -631,8 +631,12 @@ def check_model(page: Page, base: str) -> None:
               {...opts, roots: ["."], hidden}).bands[0].values;
             return JSON.stringify({
               n: [m.MAX_BANDS, m.DEFAULT_TOP, m.PALETTE_SIZE],
-              rbytes: data.rbytes,
-              rentries: data.rentries,
+              // Read through valuesOf; constant series stay one value.
+              rbytes: Object.fromEntries(Object.keys(data.rbytes).map(
+                (p) => [p, m.valuesOf(data, "rbytes", p)])),
+              rentries: Object.fromEntries(Object.keys(data.rentries).map(
+                (p) => [p, m.valuesOf(data, "rentries", p)])),
+              compact: [data.rbytes["A/c"], data.rentries["A/c"]],
               children: [...data.children],
               d0: keys({}),
               d1: keys({depth: 1}),
@@ -737,7 +741,8 @@ def check_model(page: Page, base: str) -> None:
     assert got["deltas"] == ["±0", "+2.50 k", "±0 B", f"{MINUS}1.00 KiB"], got["deltas"]
     assert got["noEntries"] is None, f"file without rentries: {got['noEntries']}"
     assert got["old"] == [True, None, False], f"file with rbytes only: {got['old']}"
-    assert got["rentries"]["A/c"] == [999] * 3, "rentries scalars not expanded"
+    assert got["compact"] == [100 * gib, 999], f"constants stored: {got['compact']}"
+    assert got["rentries"]["A/c"] == [999] * 3, "rentries constants not read as lists"
     rb = got["rbytes"]
     assert rb["A/c"] == [100 * gib] * 3 and rb["Q/r"] == [10 * gib] * 3, "scalars"
     assert rb["Z/y"][0] is None, "null not kept"

@@ -411,11 +411,17 @@ path made the 4 real tree files (2 474 to 72 069 stored dirs, 272 points)
   for deeper (longer) paths. Measured on the real database (2026-11-05, 339
   points, budget 1 M): a cut tree of 1 000 000 stored dirs (of 1.9 M
   covered) wrote a 181 MB file, took the generator 160 s (11 GB peak for the
-  whole run), and loaded in the page in 4.4 s from localhost using 3.2 GB of
-  JS heap; an 855 k-dir tree, 92 MB and 2.7 GB. The page keeps the old
-  tree while loading the next, so switching between two such trees in one
-  tab crashed Chrome's renderer (out of memory). The budget bounds a file's
-  size, not what the page can hold.
+  whole run), and loaded in the page from localhost. 98 % of its 2 M
+  series (two metrics per dir) are constant, and the page keeps those as
+  one value (`model.valuesOf` expands one when read): the tree takes 213
+  MiB of JS heap after GC, and an 855 k-dir tree (92 MB) 147 MiB
+  (2026-11-06). Expanded to a list per series they took 2.9 and 2.5 GB,
+  and since the page holds the old tree while loading the next, switching
+  between such trees in one tab crashed Chrome's renderer: Chrome caps a
+  page's JS heap at about 3.5 GB, a build-time limit (pointer compression)
+  that `--max-old-space-size` cannot raise. A tree whose dirs mostly change
+  costs a list per series, so it holds far fewer dirs. The budget bounds a
+  file's size, not what the page can hold.
 - **A partial tree hides depth unevenly.** In a cut tree's partial level,
   dirs early in path order are split and later ones are pruned (`*`),
   whatever their size: the cut follows path order, not where the bytes are.

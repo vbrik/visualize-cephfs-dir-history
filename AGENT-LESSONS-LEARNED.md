@@ -61,12 +61,17 @@
   your commit. Before offering to rewrite a commit, check
   `git branch -r --contains <commit>`: if it is pushed, add a follow-up
   commit instead.
-- Page memory, not file size, limits how many stored dirs a tree can have:
-  about 3.2 KB of JS heap per stored dir (1 M dirs: 3.2 GB, from a 181 MB
-  file). The page holds the old tree while loading the next, so switching
-  between two such trees crashed Chrome's renderer. The generator peaked at
-  11 GB for that run. Measure heap (`performance.memory`) before raising a
+- Page memory, not file size, limits how many stored dirs a tree can have.
+  Chrome caps a page's JS heap at about 3.5 GB (`--max-old-space-size` can
+  lower it but not raise it), and the page holds the old tree while loading
+  the next. Keep constant series compact (`model.valuesOf`): expanded to a
+  list each, a 1 M-dir tree took 2.9 GB and switching trees crashed the
+  renderer; compact, 213 MiB. The generator peaked at 11 GB for that run.
+  Measure heap (`performance.memory`, after `gc()`, with Chrome flags
+  `--enable-precise-memory-info --js-flags=--expose-gc`) before raising a
   budget past a few hundred thousand dirs.
+- To diagnose a Playwright `Target crashed`, run with `DEBUG=pw:browser`
+  and look for `v8_oom` in Chrome's stderr.
 - A Playwright `page.goto` to a URL that differs only in its hash is a
   same-document navigation: the page does not refetch its data. After
   `page.route` replaces a file, `page.reload()` instead.

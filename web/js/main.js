@@ -19,6 +19,7 @@ import {
   PRUNED_TITLE,
   ROOT,
   decodeValue,
+  dirSetDirOf,
   encodeValue,
   filterReason,
   formatDelta,
@@ -33,12 +34,12 @@ import {
   rates,
   reachable,
   relative,
-  dirSetDirOf,
   sortCards,
   sortLegend,
   stackBands,
   trend,
   trendCards,
+  valuesOf,
 } from "./model.js";
 
 // How often to look for regenerated data files, in ms.
@@ -655,7 +656,7 @@ function renderTrends(s, dirSet) {
 /** DIRSET's dirs' summed values per point (absent as 0): the slider's shadow. */
 function dirSetTotal(dirSet) {
   const total = new Array(data.times.length).fill(0);
-  for (const path of dirSet.paths) data[metric][path].forEach((v, i) => (total[i] += v ?? 0));
+  for (const path of dirSet.paths) valuesOf(data, metric, path).forEach((v, i) => (total[i] += v ?? 0));
   return total;
 }
 
